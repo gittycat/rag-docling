@@ -1,0 +1,42 @@
+Python Programming Basics
+
+Python is a high-level, interpreted programming language known for its simplicity and readability. It was created by Guido van Rossum and first released in 1991.
+
+Key Features:
+- Easy to learn and read
+- Interpreted language (no compilation needed)
+- Dynamically typed
+- Extensive standard library
+- Cross-platform compatibility
+
+Basic Data Types:
+1. Numbers (int, float, complex)
+2. Strings (str)
+3. Lists (mutable sequences)
+4. Tuples (immutable sequences)
+5. Dictionaries (key-value pairs)
+6. Sets (unordered collections)
+
+Control Flow:
+Python uses indentation to define code blocks. Common control structures include:
+- if/elif/else statements
+- for loops
+- while loops
+- try/except for error handling
+
+Functions:
+Functions in Python are defined using the 'def' keyword. They can have default parameters, variable-length arguments, and return multiple values.
+
+Example:
+def greet(name, greeting="Hello"):
+    return f"{greeting}, {name}!"
+
+Object-Oriented Programming:
+Python supports OOP with classes and objects. It includes features like inheritance, encapsulation, and polymorphism.
+
+Popular Applications:
+- Web development (Django, Flask)
+- Data science and machine learning (NumPy, Pandas, scikit-learn)
+- Automation and scripting
+- Scientific computing
+- Game development
