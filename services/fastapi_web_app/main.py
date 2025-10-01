@@ -61,6 +61,54 @@ async def search(request: Request, query: str = Form(...)):
             }
         )
 
+@app.get("/admin")
+async def admin(request: Request):
+    """
+    Display admin page with list of indexed documents.
+    Fetches document list from RAG server.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{RAG_SERVER_URL}/documents",
+                timeout=10.0
+            )
+            response.raise_for_status()
+            documents = response.json().get("documents", [])
+    except httpx.HTTPError:
+        # If server not available, show empty list
+        documents = []
+
+    return templates.TemplateResponse(
+        request,
+        "admin.html",
+        {"documents": documents}
+    )
+
+@app.post("/admin/delete/{document_id}")
+async def delete_document(request: Request, document_id: str):
+    """
+    Delete a document from the RAG system.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{RAG_SERVER_URL}/documents/{document_id}",
+                timeout=10.0
+            )
+            response.raise_for_status()
+    except httpx.HTTPError:
+        pass  # Silently fail for now
+
+    # Redirect back to admin page
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/admin", status_code=303)
+
+@app.get("/about")
+async def about(request: Request):
+    """Display about page with system information"""
+    return templates.TemplateResponse(request, "about.html")
+
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
