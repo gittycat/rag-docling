@@ -25,6 +25,33 @@
             <p class="mt-2 text-gray-600">View and manage indexed documents</p>
         </div>
 
+        <!-- Upload Form -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-900 mb-4">Upload Documents</h2>
+            <form action="/admin/upload" method="POST" enctype="multipart/form-data">
+                <div class="mb-4">
+                    <label for="files" class="block text-sm font-medium text-gray-700 mb-2">
+                        Select files (txt, md, pdf, docx)
+                    </label>
+                    <input
+                        type="file"
+                        name="files"
+                        id="files"
+                        multiple
+                        accept=".txt,.md,.pdf,.docx"
+                        class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none p-2"
+                        required
+                    />
+                </div>
+                <button
+                    type="submit"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-lg transition duration-200"
+                >
+                    Upload Files
+                </button>
+            </form>
+        </div>
+
         <!-- Documents Table -->
         <div class="bg-white rounded-lg shadow-md overflow-hidden">
             <table class="min-w-full divide-y divide-gray-200">

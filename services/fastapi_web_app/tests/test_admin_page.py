@@ -43,3 +43,26 @@ def test_admin_page_has_delete_buttons():
     content = response.content.lower()
     # Should have actions column for delete functionality
     assert b'actions' in content
+
+def test_admin_page_has_upload_form():
+    """Admin page should have file upload form"""
+    response = client.get("/admin")
+    assert response.status_code == 200
+    content = response.content.lower()
+    assert b'<form' in content
+    assert b'enctype="multipart/form-data"' in content or b"enctype='multipart/form-data'" in content
+
+def test_admin_page_has_file_input():
+    """Admin page should have file input for uploads"""
+    response = client.get("/admin")
+    assert response.status_code == 200
+    content = response.content.lower()
+    assert b'type="file"' in content or b"type='file'" in content
+
+def test_admin_upload_accepts_multiple_files():
+    """File input should accept multiple files"""
+    response = client.get("/admin")
+    assert response.status_code == 200
+    content = response.content.lower()
+    # Should have multiple attribute on file input
+    assert b'multiple' in content

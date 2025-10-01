@@ -12,6 +12,7 @@ dependencies = [
     "ollama>=0.4.4",
     "httpx>=0.27.2",
     "markitdown>=0.0.1a2",
+    "python-multipart>=0.0.20",
 ]
 
 [dependency-groups]

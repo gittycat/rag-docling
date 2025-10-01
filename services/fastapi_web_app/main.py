@@ -1,9 +1,11 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
 from pathlib import Path
 import httpx
 import os
+from typing import List
 
 app = FastAPI(title="RAG System Web Interface")
 
@@ -85,6 +87,34 @@ async def admin(request: Request):
         {"documents": documents}
     )
 
+@app.post("/admin/upload")
+async def upload_documents(files: List[UploadFile] = File(...)):
+    """
+    Upload one or multiple documents to the RAG system.
+    Files are forwarded to the RAG server for processing and indexing.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Prepare files for upload
+            upload_files = []
+            for file in files:
+                content = await file.read()
+                upload_files.append(
+                    ("files", (file.filename, content, file.content_type))
+                )
+
+            # Forward to RAG server
+            response = await client.post(
+                f"{RAG_SERVER_URL}/upload",
+                files=upload_files
+            )
+            response.raise_for_status()
+    except httpx.HTTPError:
+        pass  # Silently fail for now
+
+    # Redirect back to admin page
+    return RedirectResponse(url="/admin", status_code=303)
+
 @app.post("/admin/delete/{document_id}")
 async def delete_document(request: Request, document_id: str):
     """
@@ -101,7 +131,6 @@ async def delete_document(request: Request, document_id: str):
         pass  # Silently fail for now
 
     # Redirect back to admin page
-    from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/admin", status_code=303)
 
 @app.get("/about")
