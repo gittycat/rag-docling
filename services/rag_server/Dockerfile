@@ -11,7 +11,7 @@ WORKDIR /app
 COPY services/rag_server/pyproject.toml ./
 
 # Install dependencies using uv
-RUN uv sync --frozen
+RUN uv sync
 
 # Copy application code
 COPY services/rag_server/ ./
