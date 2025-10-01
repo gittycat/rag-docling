@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -16,7 +16,23 @@ templates = Jinja2Templates(directory=str(templates_path))
 
 @app.get("/")
 async def home(request: Request):
-    return templates.TemplateResponse("home.html", {"request": request})
+    return templates.TemplateResponse(request, "home.html")
+
+@app.post("/search")
+async def search(request: Request, query: str = Form(...)):
+    # Placeholder: will connect to RAG server later
+    placeholder_answer = "This is a placeholder response. The RAG server integration will be implemented in Phase 3."
+    placeholder_sources = []
+
+    return templates.TemplateResponse(
+        request,
+        "results.html",
+        {
+            "query": query,
+            "answer": placeholder_answer,
+            "sources": placeholder_sources
+        }
+    )
 
 @app.get("/health")
 async def health():
