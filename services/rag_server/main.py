@@ -99,13 +99,17 @@ async def get_documents():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/upload", response_model=UploadResponse)
+@app.post("/upload")
 async def upload_documents(files: List[UploadFile] = File(...)):
     """
     Upload and index one or multiple documents.
     Supports txt, md, pdf, docx files.
     Files are processed, chunked, and added to ChromaDB.
     """
+    print(f"Upload endpoint called with {len(files)} files")
+    for f in files:
+        print(f"  - {f.filename} ({f.content_type})")
+
     uploaded_docs = []
     errors = []
 
@@ -131,10 +135,15 @@ async def upload_documents(files: List[UploadFile] = File(...)):
             Path(tmp_path).unlink()
 
         except Exception as e:
+            import traceback
+            print(f"Error processing {file.filename}: {str(e)}")
+            print(traceback.format_exc())
             errors.append(f"{file.filename}: {str(e)}")
 
     if not uploaded_docs and errors:
-        raise HTTPException(status_code=400, detail="; ".join(errors))
+        error_msg = "; ".join(errors)
+        print(f"Upload failed: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
     return UploadResponse(
         status="success",

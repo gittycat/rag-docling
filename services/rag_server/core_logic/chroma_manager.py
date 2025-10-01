@@ -76,18 +76,28 @@ def delete_document(collection, document_id: str):
 def list_documents(collection) -> List[Dict]:
     """
     List all documents in the collection.
+    Groups chunks by document_id and counts them.
 
     Returns:
-        List of dictionaries with id and metadata for each document
+        List of dictionaries with id, metadata, and chunk count for each document
     """
     results = collection.get()
 
-    documents = []
-    for i, doc_id in enumerate(results['ids']):
+    # Group chunks by document_id
+    doc_map = {}
+    for i, chunk_id in enumerate(results['ids']):
         metadata = results['metadatas'][i] if i < len(results['metadatas']) else {}
-        documents.append({
-            'id': doc_id,
-            **metadata
-        })
+        doc_id = metadata.get('document_id', chunk_id)
 
-    return documents
+        if doc_id not in doc_map:
+            doc_map[doc_id] = {
+                'id': doc_id,
+                'file_name': metadata.get('file_name', 'Unknown'),
+                'file_type': metadata.get('file_type', ''),
+                'path': metadata.get('path', ''),
+                'chunks': 0
+            }
+
+        doc_map[doc_id]['chunks'] += 1
+
+    return list(doc_map.values())

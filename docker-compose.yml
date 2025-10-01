@@ -18,7 +18,7 @@ services:
     secrets:
       - ollama_config
 
-  # RAG Server - Core processing service (private network only)
+  # RAG Server - Core processing service
   rag-server:
     build:
       context: .
@@ -26,10 +26,13 @@ services:
     environment:
       - CHROMADB_URL=http://chromadb:8000
       - OLLAMA_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - chromadb
     networks:
       - private
+      - public
     volumes:
       - ./data/indexed_documents:/app/documents
     secrets:

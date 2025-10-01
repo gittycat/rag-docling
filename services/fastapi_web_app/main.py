@@ -109,8 +109,11 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                 files=upload_files
             )
             response.raise_for_status()
-    except httpx.HTTPError:
-        pass  # Silently fail for now
+    except httpx.HTTPError as e:
+        print(f"Upload error: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response status: {e.response.status_code}")
+            print(f"Response body: {e.response.text}")
 
     # Redirect back to admin page
     return RedirectResponse(url="/admin", status_code=303)
