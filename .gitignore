@@ -1,0 +1,125 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+env/
+ENV/
+
+# Python specific
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Docker specific
+.dockerignore
+docker-compose.override.yml
+.docker/
+
+# Project specific data and volumes
+/data/
+/volumes/
+/chroma_db_data/
+/indexed_documents/
+
+# Secrets and configuration
+/secrets/
+*.env
+.env.*
+!.env.example
+ollama_config.env
+*.key
+*.pem
+*.crt
+
+# RAG system specific
+/services/*/logs/
+/services/*/temp/
+/services/*/cache/
+
+# ChromaDB data
+*.sqlite
+*.sqlite3
+chroma.sqlite3
+/chromadb_data/
+
+# Document processing temporary files
+*.tmp
+/temp_docs/
+/processed_docs/
+
+# Model files (large ML models)
+*.bin
+*.pt
+*.pth
+*.safetensors
+/models/
+/embeddings/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+test-results/
+test_data/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+/services/*/logs/
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Package files
+*.tar.gz
+*.zip
+*.rar
+
+# Node.js (for potential frontend build tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
