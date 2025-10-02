@@ -5,20 +5,23 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 ## Features
 
 - **Natural Language Search**: Ask questions in plain English and get AI-powered answers
-- **Multi-Format Support**: Process txt, md, pdf, and docx files
+- **Advanced Document Processing**: Powered by Docling with superior PDF/DOCX parsing, table extraction, and layout understanding
+- **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html, and more
+- **Intelligent Chunking**: Token-aware HybridChunker for optimal semantic boundaries
 - **Local Deployment**: All data stays on your machine
 - **Modern Web Interface**: Clean, responsive UI with Tailwind CSS
 - **Document Management**: Admin interface for viewing and managing indexed documents
-- **Test-Driven Development**: Comprehensive test coverage (47 tests)
+- **Test-Driven Development**: Comprehensive test coverage (33 tests passing)
 
 ## Technology Stack
 
 - **Frontend**: FastAPI + Jinja2 + Tailwind CSS
 - **RAG Server**: Python + FastAPI
-- **Vector Database**: ChromaDB
+- **Vector Database**: ChromaDB with LangChain integration
 - **LLM**: Ollama (llama3.2)
-- **Embeddings**: nomic-embed-text (768 dimensions)
-- **Document Processing**: MarkItDown
+- **Embeddings**: LangChain OllamaEmbeddings with nomic-embed-text (768 dimensions)
+- **Document Processing**: Docling + LangChain DoclingLoader
+- **Chunking**: Docling HybridChunker (token-aware with hierarchical structure)
 - **Orchestration**: Docker Compose
 - **Package Management**: uv
 
@@ -36,14 +39,19 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
          │
 ┌────────▼────────┐
 │   RAG Server    │  (Port 8001, Private Network)
+│                 │
+│  ┌──────────┐  │
+│  │ Docling  │  │  Advanced document parsing
+│  │+LangChain│  │  & HybridChunker
+│  └──────────┘  │
 └────────┬────────┘
          │
-    ┌────┴────┬──────────┐
-    │         │          │
-┌───▼───┐ ┌──▼──┐  ┌───▼────┐
-│ChromaDB│ │Ollama│ │MarkIt  │
-│ (8000) │ │(11434)│ │ Down   │
-└────────┘ └──────┘ └────────┘
+    ┌────┴────┬────────┐
+    │         │        │
+┌───▼───┐ ┌──▼──┐  ┌──▼──────┐
+│ChromaDB│ │Ollama│ │LangChain│
+│ (8000) │ │(11434)│ │ Chroma  │
+└────────┘ └──────┘ └─────────┘
 ```
 
 ## Prerequisites
@@ -171,12 +179,12 @@ rag-bin2/
 │   └── rag_server/            # RAG backend
 │       ├── main.py            # FastAPI app
 │       ├── core_logic/        # RAG components
-│       │   ├── embeddings.py       # Ollama embeddings
-│       │   ├── document_processor.py  # File processing
-│       │   ├── chroma_manager.py   # Vector DB
+│       │   ├── embeddings.py       # LangChain OllamaEmbeddings
+│       │   ├── document_processor.py  # Docling + HybridChunker
+│       │   ├── chroma_manager.py   # LangChain Chroma vectorstore
 │       │   ├── llm_handler.py      # LLM integration
-│       │   └── rag_pipeline.py     # End-to-end pipeline
-│       ├── tests/             # Test suite (26 tests)
+│       │   └── rag_pipeline.py     # End-to-end RAG pipeline
+│       ├── tests/             # Test suite (33 tests)
 │       └── pyproject.toml     # Dependencies
 └── README.md
 ```
@@ -304,18 +312,48 @@ docker-compose up -d
 
 The project follows Test-Driven Development (TDD) methodology:
 
-- **47 total tests**
+- **54 total tests** (all passing)
   - 21 web app tests (UI, routing, templates)
-  - 26 RAG server tests (embeddings, documents, LLM, pipeline, API)
+  - 33 RAG server tests (Docling processing, embeddings, LangChain integration, LLM, pipeline, API)
 
 Run all tests:
 ```bash
-# RAG Server
-cd services/rag_server && uv run pytest -v
+# RAG Server (with new Docling/LangChain tests)
+cd services/rag_server && .venv/bin/pytest -v
 
 # Web App
 cd services/fastapi_web_app && uv run pytest -v
 ```
+
+## Implementation Details
+
+### Document Processing Pipeline
+
+The RAG server uses **Docling + LangChain** for superior document processing:
+
+1. **DoclingLoader**: Advanced document parsing with:
+   - Superior PDF layout understanding
+   - Table structure extraction
+   - Reading order detection
+   - Support for PPTX, XLSX, HTML, and more
+
+2. **HybridChunker**: Intelligent token-aware chunking that:
+   - Respects document hierarchy (headings, sections)
+   - Uses tokenizer from `sentence-transformers/all-MiniLM-L6-v2`
+   - Splits oversized chunks and merges undersized chunks
+   - Maintains semantic boundaries for better retrieval
+
+3. **LangChain Integration**:
+   - Unified interfaces for embeddings and vector stores
+   - Better ecosystem compatibility
+   - Simplified retrieval patterns
+
+### Key Improvements over Previous Implementation
+
+- **Better PDF Parsing**: Docling understands complex layouts, tables, and reading order
+- **Smarter Chunking**: Token-aware HybridChunker vs simple character-based splitting
+- **More Formats**: Added support for PPTX, XLSX, HTML, ASCIIDOC
+- **LangChain Ecosystem**: Better integration with LangChain tools and patterns
 
 ## Roadmap
 

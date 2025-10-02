@@ -1,17 +1,20 @@
 import os
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+from langchain_ollama import OllamaEmbeddings
 
 def get_embedding_function():
     """
-    Create and return ChromaDB's Ollama embedding function.
+    Create and return LangChain's Ollama embedding function.
     Uses nomic-embed-text model (768 dimensions) for text embeddings.
+
+    This replaces ChromaDB's OllamaEmbeddingFunction with LangChain's
+    implementation for better integration with LangChain ecosystem.
     """
     ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
     model_name = "nomic-embed-text"
 
-    embedding_function = OllamaEmbeddingFunction(
-        url=f"{ollama_url}/api/embeddings",
-        model_name=model_name
+    embedding_function = OllamaEmbeddings(
+        base_url=ollama_url,
+        model=model_name
     )
 
     return embedding_function
