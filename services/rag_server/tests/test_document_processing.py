@@ -119,27 +119,34 @@ def test_unsupported_file_type():
 
 
 @patch('core_logic.document_processor.DoclingLoader')
-def test_chunk_document(mock_loader_class):
-    """Split document into chunks using HybridChunker"""
-    from core_logic.document_processor import chunk_document
+def test_chunk_document_with_txt_file(mock_loader_class):
+    """Split text file into chunks using HybridChunker"""
+    from core_logic.document_processor import chunk_document_from_file
 
-    long_text = "This is a sentence. " * 100  # 100 sentences
+    # Create a temporary text file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        long_text = "This is a sentence. " * 100  # 100 sentences
+        f.write(long_text)
+        temp_path = f.name
 
-    # Mock DoclingLoader to return chunked documents
-    mock_loader = MagicMock()
-    mock_chunks = [
-        MagicMock(page_content="Chunk 1 text"),
-        MagicMock(page_content="Chunk 2 text"),
-        MagicMock(page_content="Chunk 3 text"),
-    ]
-    mock_loader.load.return_value = mock_chunks
-    mock_loader_class.return_value = mock_loader
+    try:
+        # Mock DoclingLoader to return chunked documents
+        mock_loader = MagicMock()
+        mock_chunks = [
+            MagicMock(page_content="Chunk 1 text", metadata={"source": temp_path}),
+            MagicMock(page_content="Chunk 2 text", metadata={"source": temp_path}),
+            MagicMock(page_content="Chunk 3 text", metadata={"source": temp_path}),
+        ]
+        mock_loader.load.return_value = mock_chunks
+        mock_loader_class.return_value = mock_loader
 
-    chunks = chunk_document(long_text, chunk_size=200, chunk_overlap=50)
+        results = chunk_document_from_file(temp_path, chunk_size=200)
 
-    assert len(chunks) >= 1
-    assert all(isinstance(chunk, str) for chunk in chunks)
-    assert all(chunk for chunk in chunks)  # No empty chunks
+        assert len(results) >= 1
+        assert all('text' in r and 'metadata' in r for r in results)
+        assert all(r['text'] for r in results)  # No empty chunks
+    finally:
+        os.unlink(temp_path)
 
 
 def test_extract_metadata():

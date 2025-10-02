@@ -3,6 +3,9 @@ from typing import List, Dict
 from langchain_docling import DoclingLoader
 from langchain_docling.loader import ExportType
 from docling.chunking import HybridChunker
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Docling supports many more formats than the previous implementation
 SUPPORTED_EXTENSIONS = {
@@ -21,74 +24,38 @@ def process_document(file_path: str) -> str:
 
     Uses DoclingLoader with MARKDOWN export for complete document parsing.
     """
+    logger.info(f"[DOCLING] Starting to process document: {file_path}")
     file_path_obj = Path(file_path)
     extension = file_path_obj.suffix.lower()
+    logger.info(f"[DOCLING] File extension: {extension}")
 
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError(f"Unsupported file type: {extension}")
+        error_msg = f"Unsupported file type: {extension}"
+        logger.error(f"[DOCLING] {error_msg}")
+        raise ValueError(error_msg)
 
     # Use DoclingLoader with MARKDOWN export to get full document text
+    logger.info(f"[DOCLING] Initializing DoclingLoader with MARKDOWN export")
     loader = DoclingLoader(
         file_path=str(file_path),
         export_type=ExportType.MARKDOWN
     )
 
+    logger.info(f"[DOCLING] Loading document with DoclingLoader")
     docs = loader.load()
+    logger.info(f"[DOCLING] Loaded {len(docs)} document sections")
 
     if not docs:
-        raise ValueError(f"Could not load document: {file_path}")
+        error_msg = f"Could not load document: {file_path}"
+        logger.error(f"[DOCLING] {error_msg}")
+        raise ValueError(error_msg)
 
     # Combine all document chunks into single text
     # DoclingLoader may split into multiple docs, so join them
     full_text = "\n\n".join(doc.page_content for doc in docs)
+    logger.info(f"[DOCLING] Extracted {len(full_text)} characters of text")
 
     return full_text
-
-
-def chunk_document(text: str, chunk_size: int = 500, chunk_overlap: int = 50) -> List[str]:
-    """
-    Split document text into overlapping chunks using Docling's HybridChunker.
-
-    HybridChunker provides token-aware chunking with hierarchical document structure,
-    which is superior to simple character-based chunking.
-
-    Args:
-        text: Document text to chunk
-        chunk_size: Target token size for each chunk (default 500 tokens)
-        chunk_overlap: Not used with HybridChunker (uses merge_peers strategy instead)
-
-    Returns:
-        List of text chunks
-    """
-    # For direct text chunking, we need to use DoclingLoader with DOC_CHUNKS
-    # Save text to temp file and process with DoclingLoader
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-        f.write(text)
-        temp_path = f.name
-
-    try:
-        # Use DoclingLoader with DOC_CHUNKS and HybridChunker
-        loader = DoclingLoader(
-            file_path=temp_path,
-            export_type=ExportType.DOC_CHUNKS,
-            chunker=HybridChunker(
-                tokenizer=EMBED_MODEL_TOKENIZER,
-                max_tokens=chunk_size
-            )
-        )
-
-        docs = loader.load()
-
-        # Extract text chunks from LangChain documents
-        chunks = [doc.page_content for doc in docs if doc.page_content.strip()]
-
-        return chunks
-
-    finally:
-        # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
 
 
 def chunk_document_from_file(file_path: str, chunk_size: int = 500) -> List[Dict]:
@@ -96,8 +63,8 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500) -> List[Dict
     Process and chunk a document file directly using Docling.
     Returns list of dicts with chunk text and metadata.
 
-    This is more efficient than process_document() + chunk_document()
-    as it uses Docling's native chunking in one pass.
+    This preserves document structure (layout, formatting, tables) by passing
+    the original file to Docling, rather than extracting text first.
 
     Args:
         file_path: Path to document file
@@ -106,13 +73,19 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500) -> List[Dict
     Returns:
         List of dicts with 'text' and 'metadata' keys
     """
+    logger.info(f"[DOCLING] chunk_document_from_file called for: {file_path}")
     file_path_obj = Path(file_path)
     extension = file_path_obj.suffix.lower()
+    logger.info(f"[DOCLING] File extension: {extension}, chunk_size: {chunk_size}")
 
     if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError(f"Unsupported file type: {extension}")
+        error_msg = f"Unsupported file type: {extension}"
+        logger.error(f"[DOCLING] {error_msg}")
+        raise ValueError(error_msg)
 
     # Use DoclingLoader with DOC_CHUNKS for efficient chunking
+    logger.info(f"[DOCLING] Initializing DoclingLoader with DOC_CHUNKS export")
+    logger.info(f"[DOCLING] HybridChunker settings: tokenizer={EMBED_MODEL_TOKENIZER}, max_tokens={chunk_size}")
     loader = DoclingLoader(
         file_path=str(file_path),
         export_type=ExportType.DOC_CHUNKS,
@@ -122,17 +95,22 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500) -> List[Dict
         )
     )
 
+    logger.info(f"[DOCLING] Loading and chunking document")
     docs = loader.load()
+    logger.info(f"[DOCLING] DoclingLoader returned {len(docs)} chunks")
 
     # Convert LangChain documents to our format
     chunks = []
-    for doc in docs:
+    for i, doc in enumerate(docs):
         if doc.page_content.strip():
+            chunk_preview = doc.page_content[:80] + "..." if len(doc.page_content) > 80 else doc.page_content
+            logger.debug(f"[DOCLING] Chunk {i}: {len(doc.page_content)} chars - {chunk_preview}")
             chunks.append({
                 'text': doc.page_content,
                 'metadata': doc.metadata
             })
 
+    logger.info(f"[DOCLING] Created {len(chunks)} valid chunks (filtered out empty chunks)")
     return chunks
 
 
