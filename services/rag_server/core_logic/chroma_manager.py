@@ -3,6 +3,9 @@ from typing import List, Dict
 import chromadb
 from langchain_chroma import Chroma
 from core_logic.embeddings import get_embedding_function
+import logging
+
+logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "documents"
 
@@ -22,14 +25,19 @@ def get_or_create_collection():
     This now uses LangChain's Chroma wrapper for better integration with
     LangChain retrieval patterns.
     """
+    logger.info(f"[CHROMA] Getting or creating collection: {COLLECTION_NAME}")
     client = get_chroma_client()
+    logger.info(f"[CHROMA] ChromaDB client initialized")
+
     embedding_function = get_embedding_function()
+    logger.info(f"[CHROMA] Embedding function retrieved")
 
     vectorstore = Chroma(
         client=client,
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_function
     )
+    logger.info(f"[CHROMA] Vectorstore initialized for collection: {COLLECTION_NAME}")
 
     return vectorstore
 
@@ -45,12 +53,22 @@ def add_documents(collection, documents: List[str], metadatas: List[Dict], ids: 
         metadatas: List of metadata dicts
         ids: List of unique document IDs
     """
+    logger.info(f"[CHROMA] Adding {len(documents)} documents to collection")
+    logger.info(f"[CHROMA] Document IDs: {ids[:3]}..." if len(ids) > 3 else f"[CHROMA] Document IDs: {ids}")
+
+    # Log first document preview
+    if documents:
+        preview = documents[0][:100] + "..." if len(documents[0]) > 100 else documents[0]
+        logger.info(f"[CHROMA] First document preview: {preview}")
+
     # LangChain Chroma uses add_texts method
+    logger.info(f"[CHROMA] Calling add_texts on vectorstore (will generate embeddings)")
     collection.add_texts(
         texts=documents,
         metadatas=metadatas,
         ids=ids
     )
+    logger.info(f"[CHROMA] Successfully added {len(documents)} documents to ChromaDB")
 
 
 def query_documents(collection, query_text: str, n_results: int = 5) -> Dict:
