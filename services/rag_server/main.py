@@ -34,10 +34,6 @@ class UploadResponse(BaseModel):
     documents: list[dict]
 
 def process_and_index_document(file_path: str, filename: str) -> dict:
-    """
-    Process a document file and add it to ChromaDB.
-    Returns document info.
-    """
     logger.info(f"[UPLOAD] Starting to process document: {filename}")
     logger.info(f"[UPLOAD] File path: {file_path}, Size: {Path(file_path).stat().st_size} bytes")
 
@@ -87,12 +83,6 @@ async def health():
 
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
-    """
-    Process a RAG query:
-    1. Retrieve relevant documents from ChromaDB
-    2. Generate answer using Ollama LLM with context
-    3. Return answer with sources
-    """
     try:
         result = query_rag(request.query)
         return QueryResponse(
@@ -104,10 +94,6 @@ async def query(request: QueryRequest):
 
 @app.get("/documents", response_model=DocumentListResponse)
 async def get_documents():
-    """
-    List all indexed documents in ChromaDB.
-    Returns document metadata including id, file_name, file_type, and path.
-    """
     try:
         collection = get_or_create_collection()
         documents = list_documents(collection)
@@ -117,11 +103,6 @@ async def get_documents():
 
 @app.post("/upload")
 async def upload_documents(files: List[UploadFile] = File(...)):
-    """
-    Upload and index one or multiple documents.
-    Supports txt, md, pdf, docx files.
-    Files are processed, chunked, and added to ChromaDB.
-    """
     logger.info(f"[UPLOAD] Upload endpoint called with {len(files)} files")
     for f in files:
         logger.info(f"[UPLOAD] File: {f.filename} (Content-Type: {f.content_type})")
@@ -178,9 +159,6 @@ async def upload_documents(files: List[UploadFile] = File(...)):
 
 @app.delete("/documents/{document_id}", response_model=DeleteResponse)
 async def delete_document_by_id(document_id: str):
-    """
-    Delete a document from ChromaDB by its ID.
-    """
     try:
         collection = get_or_create_collection()
         delete_document(collection, document_id)

@@ -3,23 +3,6 @@ from core_logic.chroma_manager import get_or_create_collection, query_documents
 from core_logic.llm_handler import generate_response
 
 def query_rag(query_text: str, n_results: int = 3) -> Dict:
-    """
-    End-to-end RAG query pipeline using Docling + LangChain.
-
-    Steps:
-    1. Get LangChain Chroma vectorstore (uses Docling-processed documents)
-    2. Query for similar documents (embeddings generated automatically via LangChain)
-    3. Extract relevant context from results
-    4. Generate LLM response using context
-    5. Return answer with sources
-
-    Args:
-        query_text: User's question
-        n_results: Number of similar documents to retrieve
-
-    Returns:
-        Dictionary with 'answer' and 'sources' keys
-    """
     # Step 1: Get vectorstore (now returns LangChain Chroma instance)
     collection = get_or_create_collection()
 

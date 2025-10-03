@@ -27,10 +27,6 @@ async def home(request: Request):
 
 @app.post("/search")
 async def search(request: Request, query: str = Form(...)):
-    """
-    Handle search requests by querying the RAG server
-    and displaying results to the user.
-    """
     try:
         # Call RAG server
         async with httpx.AsyncClient() as client:
@@ -65,10 +61,6 @@ async def search(request: Request, query: str = Form(...)):
 
 @app.get("/admin")
 async def admin(request: Request):
-    """
-    Display admin page with list of indexed documents.
-    Fetches document list from RAG server.
-    """
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -89,10 +81,6 @@ async def admin(request: Request):
 
 @app.post("/admin/upload")
 async def upload_documents(files: List[UploadFile] = File(...)):
-    """
-    Upload one or multiple documents to the RAG system.
-    Files are forwarded to the RAG server for processing and indexing.
-    """
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Prepare files for upload
@@ -120,9 +108,6 @@ async def upload_documents(files: List[UploadFile] = File(...)):
 
 @app.post("/admin/delete/{document_id}")
 async def delete_document(request: Request, document_id: str):
-    """
-    Delete a document from the RAG system.
-    """
     try:
         async with httpx.AsyncClient() as client:
             response = await client.delete(
@@ -138,7 +123,6 @@ async def delete_document(request: Request, document_id: str):
 
 @app.get("/about")
 async def about(request: Request):
-    """Display about page with system information"""
     return templates.TemplateResponse(request, "about.html")
 
 @app.get("/health")

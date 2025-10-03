@@ -18,12 +18,6 @@ SUPPORTED_EXTENSIONS = {
 EMBED_MODEL_TOKENIZER = "sentence-transformers/all-MiniLM-L6-v2"
 
 def process_document(file_path: str) -> str:
-    """
-    Process a document file using Docling and return its text content.
-    Supports: txt, md, pdf, docx, pptx, xlsx, html, asciidoc
-
-    Uses DoclingLoader with MARKDOWN export for complete document parsing.
-    """
     logger.info(f"[DOCLING] Starting to process document: {file_path}")
     file_path_obj = Path(file_path)
     extension = file_path_obj.suffix.lower()
@@ -59,20 +53,6 @@ def process_document(file_path: str) -> str:
 
 
 def chunk_document_from_file(file_path: str, chunk_size: int = 500) -> List[Dict]:
-    """
-    Process and chunk a document file directly using Docling.
-    Returns list of dicts with chunk text and metadata.
-
-    This preserves document structure (layout, formatting, tables) by passing
-    the original file to Docling, rather than extracting text first.
-
-    Args:
-        file_path: Path to document file
-        chunk_size: Target token size for each chunk
-
-    Returns:
-        List of dicts with 'text' and 'metadata' keys
-    """
     logger.info(f"[DOCLING] chunk_document_from_file called for: {file_path}")
     file_path_obj = Path(file_path)
     extension = file_path_obj.suffix.lower()
@@ -115,12 +95,6 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500) -> List[Dict
 
 
 def extract_metadata(file_path: str) -> Dict[str, str]:
-    """
-    Extract metadata from a document file path.
-
-    Returns:
-        Dictionary with file_name, file_type, and path
-    """
     file_path_obj = Path(file_path)
 
     return {
