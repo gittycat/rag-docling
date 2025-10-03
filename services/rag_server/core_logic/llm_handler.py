@@ -34,7 +34,7 @@ def construct_prompt_balanced(query: str, context_docs: List[str]) -> str:
         for i, doc in enumerate(context_docs, 1)
     )
 
-    prompt = f"""You are a helpful assistant. Answer questions using ONLY the information in the provided context below.
+    prompt = f"""Answer the question using ONLY the information in the provided context below.
 
 Rules:
 - Use ONLY the provided context to answer
@@ -61,7 +61,7 @@ def construct_prompt_precise(query: str, context_docs: List[str]) -> str:
         for i, doc in enumerate(context_docs, 1)
     )
 
-    prompt = f"""You are a helpful assistant. Answer questions using ONLY the provided context below.
+    prompt = f"""Answer the question using ONLY the provided context below.
 
 <instruction>
 1. Read the context documents carefully
@@ -90,7 +90,7 @@ def construct_prompt_comprehensive(query: str, context_docs: List[str]) -> str:
         for i, doc in enumerate(context_docs, 1)
     )
 
-    prompt = f"""You are a helpful assistant. Answer questions using ONLY the provided context below.
+    prompt = f"""Answer the question using ONLY the provided context below.
 
 <instruction>
 Follow this step-by-step process:
