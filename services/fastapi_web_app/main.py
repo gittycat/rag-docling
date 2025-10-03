@@ -4,8 +4,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from pathlib import Path
 import httpx
-import os
 from typing import List
+from env_config import get_required_env
 
 app = FastAPI(title="RAG System Web Interface")
 
@@ -19,7 +19,7 @@ templates_path = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(templates_path))
 
 # RAG server URL
-RAG_SERVER_URL = os.getenv("RAG_SERVER_URL", "http://rag-server:8001")
+RAG_SERVER_URL = get_required_env("RAG_SERVER_URL")
 
 @app.get("/")
 async def home(request: Request):

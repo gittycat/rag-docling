@@ -1,8 +1,8 @@
-import os
 from typing import List, Dict
 import chromadb
 from langchain_chroma import Chroma
 from core_logic.embeddings import get_embedding_function
+from core_logic.env_config import get_required_env
 import logging
 
 logger = logging.getLogger(__name__)
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 COLLECTION_NAME = "documents"
 
 def get_chroma_client():
-    chroma_url = os.getenv("CHROMADB_URL", "http://chromadb:8000")
+    chroma_url = get_required_env("CHROMADB_URL")
     host = chroma_url.replace("http://", "").replace("https://", "").split(":")[0]
     port = int(chroma_url.split(":")[-1])
     return chromadb.HttpClient(host=host, port=port)

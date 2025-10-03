@@ -1,12 +1,12 @@
-import os
 from typing import List
 import ollama
+from core_logic.env_config import get_required_env
 
 def get_llm_model():
-    return os.getenv("LLM_MODEL", "llama3.2")
+    return get_required_env("LLM_MODEL")
 
 def get_prompt_strategy():
-    return os.getenv("PROMPT_STRATEGY", "balanced").lower()
+    return get_required_env("PROMPT_STRATEGY").lower()
 
 def construct_prompt_fast(query: str, context_docs: List[str]) -> str:
     """Fast strategy: minimal instructions for quick responses with simple documents"""
@@ -135,7 +135,7 @@ def construct_prompt(query: str, context_docs: List[str]) -> str:
         return construct_prompt_balanced(query, context_docs)
 
 def generate_response(query: str, context: str) -> str:
-    ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
+    ollama_url = get_required_env("OLLAMA_URL")
     model = get_llm_model()
 
     # Create Ollama client
