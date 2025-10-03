@@ -26,5 +26,5 @@ COPY services/rag_server/ ./
 # Expose port
 EXPOSE 8001
 
-# Run with uv
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Run using the pre-built virtual environment directly
+CMD [".venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

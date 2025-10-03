@@ -19,5 +19,5 @@ COPY services/fastapi_web_app/ ./
 # Expose port
 EXPOSE 8000
 
-# Run with uv
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run using the pre-built virtual environment directly
+CMD [".venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
