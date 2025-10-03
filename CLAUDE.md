@@ -102,6 +102,48 @@ uv sync --upgrade
 - `query_documents()` uses `similarity_search_with_score()` then converts to ChromaDB format for backward compatibility
 - Direct ChromaDB access via `._collection` for deletion/listing
 
+### Prompt Engineering Strategies
+
+**LLM Prompt Construction** (`services/rag_server/core_logic/llm_handler.py`):
+- Four configurable strategies via `PROMPT_STRATEGY` env var
+- All use XML structure (optimal for Llama 3.2)
+- Designed to reduce hallucination and improve context grounding
+
+**Available Strategies:**
+
+1. **fast** - Minimal instructions for quick responses
+   - Use case: Simple documents, speed-critical applications
+   - Features: Basic context grounding, minimal overhead
+   - Trade-off: Less rigorous hallucination prevention
+
+2. **balanced** (default) - Good accuracy/speed balance
+   - Use case: General purpose RAG applications
+   - Features: Clear grounding rules, explicit "I don't know" fallback, numbered context IDs
+   - Trade-off: Recommended starting point
+
+3. **precise** - Strong anti-hallucination with step-by-step reasoning
+   - Use case: Applications requiring high accuracy
+   - Features: Explicit 5-step instructions, citation requirements, defensive "err on side of don't know"
+   - Trade-off: Slightly slower, more verbose responses
+
+4. **comprehensive** - Maximum accuracy with chain-of-thought
+   - Use case: Complex documents, critical accuracy requirements
+   - Features: Multi-step reasoning process, self-critique, mandatory citations
+   - Trade-off: Slowest, generates longest responses
+
+**Configuration:**
+```yaml
+# In docker-compose.yml
+environment:
+  - PROMPT_STRATEGY=balanced  # Change to: fast, balanced, precise, comprehensive
+```
+
+**Best Practices:**
+- Start with `balanced` and adjust based on observed hallucination rates
+- Use `fast` for high-volume, low-stakes queries
+- Use `comprehensive` for technical documentation or legal documents
+- Monitor response quality and adjust strategy accordingly
+
 ### Docker Build Issues
 
 **PyTorch CPU Index Problem:**

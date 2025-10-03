@@ -26,6 +26,9 @@ services:
     environment:
       - CHROMADB_URL=http://chromadb:8000
       - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBEDDING_MODEL=nomic-embed-text
+      - LLM_MODEL=llama3.2:latest
+      - PROMPT_STRATEGY=balanced  # Options: fast, balanced, precise, comprehensive
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
