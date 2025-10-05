@@ -8,3 +8,6 @@ def get_required_env(var_name: str) -> str:
         print(f"Please define {var_name} in docker-compose.yml", file=sys.stderr)
         sys.exit(1)
     return value
+
+def get_optional_env(var_name: str, default: str = "") -> str:
+    return os.getenv(var_name, default)

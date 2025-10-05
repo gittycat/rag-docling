@@ -20,14 +20,16 @@ Local RAG system with two FastAPI services using Docling + LlamaIndex for docume
 **Document Processing Flow:**
 1. Documents uploaded → `rag-server` `/upload` endpoint
 2. DoclingReader parses (PDF/DOCX/PPTX/XLSX/HTML) → DoclingNodeParser creates nodes
-3. LlamaIndex OllamaEmbedding generates vectors (nomic-embed-text, 768-dim)
+3. LlamaIndex OllamaEmbedding generates vectors (qwen3-embedding:8b, 768-dim)
 4. Stored in ChromaDB via VectorStoreIndex
-5. Query → query_engine retrieves + LLM (llama3.2) generates answer with custom PromptTemplate
+5. Query → retrieval (top-k=10) → reranking → threshold filtering → LLM (gemma3:4b) generates answer
 
 **Key Implementation Pattern:**
 - Documents stored as nodes with `document_id` metadata
 - Each node has ID: `{doc_id}-chunk-{i}`
 - Deletion removes all nodes with matching `document_id`
+- Two-stage retrieval: High-recall embedding search (top-10) → precision reranking (threshold-based)
+- Dynamic context: Returns 0-10 nodes based on relevance scores, not fixed top-k
 - Uses query_engine with custom PromptTemplate (4 strategies: fast, balanced, precise, comprehensive)
 
 ## Common Commands
@@ -109,8 +111,20 @@ uv sync --upgrade
 **RAG Pipeline** (`services/rag_server/core_logic/rag_pipeline.py`):
 - `PromptTemplate` wraps strategy-specific template string
 - `index.as_query_engine()` with `text_qa_template=qa_prompt`
-- `query_engine.query()` handles retrieval + generation
-- Returns sources from `response.source_nodes`
+- Two-stage node postprocessing:
+  1. `SentenceTransformerRerank`: Cross-encoder reranks top-10 results
+  2. `SimilarityPostprocessor`: Filters nodes below threshold (default: 0.65)
+- `query_engine.query()` handles retrieval + reranking + generation
+- Returns sources from `response.source_nodes` (dynamic 0-10 nodes)
+
+**Reranking Strategy**:
+- Model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (~80MB, HuggingFace)
+- Auto-downloads from HuggingFace on first query (NOT from Ollama)
+- Cached in `~/.cache/huggingface/` for subsequent queries
+- Combined approach: Rerank ALL retrieved nodes, then apply similarity threshold
+- Adaptive context window: Only includes nodes above relevance threshold
+- Configurable via env vars: `ENABLE_RERANKER`, `RERANKER_MODEL`, `RERANKER_SIMILARITY_THRESHOLD`, `RETRIEVAL_TOP_K`
+- Can be disabled by setting `ENABLE_RERANKER=false`
 
 **Settings** (`services/rag_server/core_logic/settings.py`):
 - Global `Settings.llm` and `Settings.embed_model`
@@ -134,12 +148,14 @@ RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strat
 **Prerequisites:**
 - Docker & Docker Compose v2+
 - Ollama running on host with models:
-  - `ollama pull llama3.2`
-  - `ollama pull nomic-embed-text`
+  - `ollama pull gemma3:4b` (LLM)
+  - `ollama pull qwen3-embedding:8b` (embeddings)
+- Reranker model auto-downloads from HuggingFace (no manual installation needed)
 
 **Environment Variables:**
 - Web App: `RAG_SERVER_URL=http://rag-server:8001`
-- RAG Server: `CHROMADB_URL=http://chromadb:8000`, `OLLAMA_URL=http://host.docker.internal:11434`, `LLM_MODEL=llama3.2`
+- RAG Server (required): `CHROMADB_URL`, `OLLAMA_URL`, `EMBEDDING_MODEL`, `LLM_MODEL`, `PROMPT_STRATEGY`
+- RAG Server (reranker): `ENABLE_RERANKER=true`, `RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2`, `RERANKER_SIMILARITY_THRESHOLD=0.65`, `RETRIEVAL_TOP_K=10`
 
 ### Testing
 
@@ -166,12 +182,13 @@ RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strat
 
 ## Key Files
 
-- `services/rag_server/core_logic/rag_pipeline.py`: query_engine with PromptTemplate
+- `services/rag_server/core_logic/rag_pipeline.py`: query_engine with reranking + PromptTemplate
 - `services/rag_server/core_logic/document_processor.py`: DoclingReader + DoclingNodeParser
 - `services/rag_server/core_logic/chroma_manager.py`: VectorStoreIndex
 - `services/rag_server/core_logic/embeddings.py`: OllamaEmbedding
 - `services/rag_server/core_logic/llm_handler.py`: Ollama LLM + PromptTemplate strategies
 - `services/rag_server/core_logic/settings.py`: Global Settings initialization
+- `services/rag_server/core_logic/env_config.py`: Required and optional env var helpers
 - `services/rag_server/main.py`: FastAPI endpoints
 
 ## Common Issues
@@ -186,3 +203,7 @@ docker compose exec rag-server curl http://host.docker.internal:11434/api/tags
 **Docker build fails with certifi error:** Ensure `--index-strategy unsafe-best-match` is in Dockerfile RUN command.
 
 **Tests fail with ModuleNotFoundError:** Use `.venv/bin/pytest` directly instead of `uv run pytest` to avoid path issues.
+
+**Reranker performance:** First query downloads cross-encoder model from HuggingFace (~80MB). Subsequent queries use cached model from `~/.cache/huggingface/`. Adds ~100-300ms latency per query. Disable with `ENABLE_RERANKER=false` if not needed.
+
+**Tuning reranker threshold:** Lower `RERANKER_SIMILARITY_THRESHOLD` (e.g., 0.5) for broader information, raise (e.g., 0.75) for more precise responses. Monitor "I don't know" frequency - too high means threshold is too strict.
