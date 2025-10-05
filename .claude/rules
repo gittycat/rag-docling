@@ -1,0 +1,5 @@
+# Claude Code Rules
+
+# Directory Exclusions
+# Do not read, list, or access any files in these directories:
+/research/**
