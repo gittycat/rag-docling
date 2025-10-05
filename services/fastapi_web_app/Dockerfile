@@ -7,14 +7,18 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency file first for layer caching
 COPY services/fastapi_web_app/pyproject.toml ./
 
 # Install dependencies using uv
 RUN uv sync
 
-# Copy application code
-COPY services/fastapi_web_app/ ./
+# Copy application code (exclude pyproject.toml to avoid overwriting .venv)
+COPY services/fastapi_web_app/main.py ./
+COPY services/fastapi_web_app/env_config.py ./
+COPY services/fastapi_web_app/templates ./templates
+COPY services/fastapi_web_app/static ./static
+COPY services/fastapi_web_app/tests ./tests
 
 # Expose port
 EXPOSE 8000

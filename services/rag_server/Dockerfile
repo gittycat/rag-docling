@@ -13,15 +13,17 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency file first for layer caching
 COPY services/rag_server/pyproject.toml ./
 
 # Install dependencies using uv with CPU-only PyTorch for smaller image
 # Use unsafe-best-match to allow finding best versions across all indexes
 RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
 
-# Copy application code
-COPY services/rag_server/ ./
+# Copy application code (exclude pyproject.toml to avoid overwriting .venv)
+COPY services/rag_server/core_logic ./core_logic
+COPY services/rag_server/tests ./tests
+COPY services/rag_server/main.py ./
 
 # Expose port
 EXPOSE 8001

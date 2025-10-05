@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Local RAG (Retrieval Augmented Generation) system with two FastAPI services using Docling + LangChain for document processing, ChromaDB for vector storage, and Ollama for LLM inference.
+Local RAG system with two FastAPI services using Docling + LlamaIndex for document processing, ChromaDB for vector storage, and Ollama for LLM inference.
 
 ## Architecture
 
@@ -19,16 +19,16 @@ Local RAG (Retrieval Augmented Generation) system with two FastAPI services usin
 
 **Document Processing Flow:**
 1. Documents uploaded → `rag-server` `/upload` endpoint
-2. Docling parses (PDF/DOCX/PPTX/XLSX/HTML) → extracts text, tables, layout
-3. HybridChunker splits with token-aware semantic boundaries
-4. LangChain OllamaEmbeddings generates vectors (nomic-embed-text, 768-dim)
-5. Stored in ChromaDB via LangChain Chroma wrapper
-6. Query → retrieval → LLM (llama3.2) generates answer
+2. DoclingReader parses (PDF/DOCX/PPTX/XLSX/HTML) → DoclingNodeParser creates nodes
+3. LlamaIndex OllamaEmbedding generates vectors (nomic-embed-text, 768-dim)
+4. Stored in ChromaDB via VectorStoreIndex
+5. Query → query_engine retrieves + LLM (llama3.2) generates answer with custom PromptTemplate
 
 **Key Implementation Pattern:**
-- Documents stored as chunks with `document_id` metadata
-- Each chunk has ID: `{doc_id}-chunk-{i}`
-- Deletion removes all chunks with matching `document_id`
+- Documents stored as nodes with `document_id` metadata
+- Each node has ID: `{doc_id}-chunk-{i}`
+- Deletion removes all nodes with matching `document_id`
+- Uses query_engine with custom PromptTemplate (4 strategies: fast, balanced, precise, comprehensive)
 
 ## Common Commands
 
@@ -82,67 +82,39 @@ uv sync --upgrade
 
 ## Critical Implementation Details
 
-### Docling + LangChain Integration
+### Docling + LlamaIndex Integration
 
 **Document Processing** (`services/rag_server/core_logic/document_processor.py`):
-- Uses `DoclingLoader` from `langchain-docling`
-- `ExportType.MARKDOWN` for full text extraction
-- `ExportType.DOC_CHUNKS` with HybridChunker for automatic chunking
-- HybridChunker tokenizer: `sentence-transformers/all-MiniLM-L6-v2` (compatible with nomic-embed-text)
+- `DoclingReader` from `llama-index-readers-docling` loads documents
+- `DoclingNodeParser` from `llama-index-node-parser-docling` creates nodes
+- Returns LlamaIndex Node objects
 
 **Embeddings** (`services/rag_server/core_logic/embeddings.py`):
-- LangChain `OllamaEmbeddings` wrapper (not ChromaDB's native function)
-- Model: `nomic-embed-text`
+- `OllamaEmbedding` from `llama-index-embeddings-ollama`
+- Model: `nomic-embed-text` (parameter: `model_name`)
 - URL from `OLLAMA_URL` env var
 
 **Vector Store** (`services/rag_server/core_logic/chroma_manager.py`):
-- Uses `langchain-chroma.Chroma` wrapper
-- Returns vectorstore instance (not raw ChromaDB collection)
-- `add_documents()` uses `add_texts()` method
-- `query_documents()` uses `similarity_search_with_score()` then converts to ChromaDB format for backward compatibility
-- Direct ChromaDB access via `._collection` for deletion/listing
+- `ChromaVectorStore` wraps ChromaDB collection
+- `VectorStoreIndex.from_vector_store()` creates index
+- `index.insert_nodes()` adds documents
+- `index.as_retriever()` for retrieval operations
+- Direct ChromaDB access via `._vector_store._collection` for deletion/listing
 
-### Prompt Engineering Strategies
+**LLM** (`services/rag_server/core_logic/llm_handler.py`):
+- `Ollama` from `llama-index-llms-ollama`
+- Returns prompt templates (not direct LLM calls)
+- 4 strategies: fast, balanced (default), precise, comprehensive
 
-**LLM Prompt Construction** (`services/rag_server/core_logic/llm_handler.py`):
-- Four configurable strategies via `PROMPT_STRATEGY` env var
-- All use XML structure (optimal for Llama 3.2)
-- Designed to reduce hallucination and improve context grounding
+**RAG Pipeline** (`services/rag_server/core_logic/rag_pipeline.py`):
+- `PromptTemplate` wraps strategy-specific template string
+- `index.as_query_engine()` with `text_qa_template=qa_prompt`
+- `query_engine.query()` handles retrieval + generation
+- Returns sources from `response.source_nodes`
 
-**Available Strategies:**
-
-1. **fast** - Minimal instructions for quick responses
-   - Use case: Simple documents, speed-critical applications
-   - Features: Basic context grounding, minimal overhead
-   - Trade-off: Less rigorous hallucination prevention
-
-2. **balanced** (default) - Good accuracy/speed balance
-   - Use case: General purpose RAG applications
-   - Features: Clear grounding rules, explicit "I don't know" fallback, numbered context IDs
-   - Trade-off: Recommended starting point
-
-3. **precise** - Strong anti-hallucination with step-by-step reasoning
-   - Use case: Applications requiring high accuracy
-   - Features: Explicit 5-step instructions, citation requirements, defensive "err on side of don't know"
-   - Trade-off: Slightly slower, more verbose responses
-
-4. **comprehensive** - Maximum accuracy with chain-of-thought
-   - Use case: Complex documents, critical accuracy requirements
-   - Features: Multi-step reasoning process, self-critique, mandatory citations
-   - Trade-off: Slowest, generates longest responses
-
-**Configuration:**
-```yaml
-# In docker-compose.yml
-environment:
-  - PROMPT_STRATEGY=balanced  # Change to: fast, balanced, precise, comprehensive
-```
-
-**Best Practices:**
-- Start with `balanced` and adjust based on observed hallucination rates
-- Use `fast` for high-volume, low-stakes queries
-- Use `comprehensive` for technical documentation or legal documents
-- Monitor response quality and adjust strategy accordingly
+**Settings** (`services/rag_server/core_logic/settings.py`):
+- Global `Settings.llm` and `Settings.embed_model`
+- Initialized on app startup via `@app.on_event("startup")`
 
 ### Docker Build Issues
 
@@ -169,39 +141,38 @@ RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strat
 - Web App: `RAG_SERVER_URL=http://rag-server:8001`
 - RAG Server: `CHROMADB_URL=http://chromadb:8000`, `OLLAMA_URL=http://host.docker.internal:11434`, `LLM_MODEL=llama3.2`
 
-### Testing Patterns
+### Testing
 
-**Mocking Strategy:**
-- DoclingLoader mocked to return `MagicMock` documents with `page_content`
-- LangChain components mocked via `@patch` decorators
-- Chroma vectorstore mocked with `._collection` attribute for underlying ChromaDB access
+**Mocking:**
+- `DoclingReader` and `DoclingNodeParser` mocked to return Node objects
+- LlamaIndex components mocked via `@patch`
+- VectorStoreIndex mocked with `._vector_store._collection` for ChromaDB access
 
-**Test Structure:**
-- `test_embeddings.py`: LangChain OllamaEmbeddings initialization
-- `test_document_processing.py`: Docling parsing + HybridChunker
-- `test_chroma_collection.py`: LangChain Chroma wrapper operations
-- `test_llm_integration.py`: Ollama LLM responses
-- `test_document_api.py`, `test_upload_api.py`: FastAPI endpoints
+**Test Files:**
+- `test_embeddings.py`: OllamaEmbedding with `model_name` parameter
+- `test_document_processing.py`: DoclingReader → DoclingNodeParser
+- `test_chroma_collection.py`: VectorStoreIndex operations
 
 ## API Endpoints
 
 **RAG Server** (port 8001):
-- `POST /query`: RAG query with context retrieval + LLM generation
+- `POST /query`: query_engine.query() with custom PromptTemplate
 - `GET /documents`: List all indexed documents (grouped by document_id)
 - `POST /upload`: Upload documents (supports multiple files)
-- `DELETE /documents/{document_id}`: Delete document and all chunks
+- `DELETE /documents/{document_id}`: Delete document and all nodes
 
 **Supported Formats:**
 `.txt`, `.md`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.html`, `.htm`, `.asciidoc`, `.adoc`
 
 ## Key Files
 
-- `services/rag_server/core_logic/rag_pipeline.py`: Main RAG query flow
-- `services/rag_server/core_logic/document_processor.py`: Docling + HybridChunker
-- `services/rag_server/core_logic/chroma_manager.py`: LangChain Chroma wrapper
-- `services/rag_server/core_logic/embeddings.py`: LangChain OllamaEmbeddings
+- `services/rag_server/core_logic/rag_pipeline.py`: query_engine with PromptTemplate
+- `services/rag_server/core_logic/document_processor.py`: DoclingReader + DoclingNodeParser
+- `services/rag_server/core_logic/chroma_manager.py`: VectorStoreIndex
+- `services/rag_server/core_logic/embeddings.py`: OllamaEmbedding
+- `services/rag_server/core_logic/llm_handler.py`: Ollama LLM + PromptTemplate strategies
+- `services/rag_server/core_logic/settings.py`: Global Settings initialization
 - `services/rag_server/main.py`: FastAPI endpoints
-- `docker-compose.yml`: Service orchestration with network isolation
 
 ## Common Issues
 

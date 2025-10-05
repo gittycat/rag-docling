@@ -1,41 +1,34 @@
-from typing import Dict, List
-from core_logic.chroma_manager import get_or_create_collection, query_documents
-from core_logic.llm_handler import generate_response
+from typing import Dict
+from llama_index.core import PromptTemplate
+from core_logic.chroma_manager import get_or_create_collection
+from core_logic.llm_handler import get_prompt_template
 
 def query_rag(query_text: str, n_results: int = 3) -> Dict:
-    # Step 1: Get vectorstore (now returns LangChain Chroma instance)
-    collection = get_or_create_collection()
+    index = get_or_create_collection()
 
-    # Step 2: Query for similar documents
-    results = query_documents(collection, query_text, n_results=n_results)
+    prompt_template_str = get_prompt_template()
+    qa_prompt = PromptTemplate(prompt_template_str)
 
-    # Step 3: Extract context and sources
-    context_docs = []
+    query_engine = index.as_query_engine(
+        similarity_top_k=n_results,
+        text_qa_template=qa_prompt
+    )
+
+    response = query_engine.query(query_text)
+
     sources = []
+    for node in response.source_nodes:
+        metadata = node.metadata
+        source = {
+            'document_name': metadata.get('file_name', 'Unknown'),
+            'excerpt': node.get_content()[:200] + '...' if len(node.get_content()) > 200 else node.get_content(),
+            'path': metadata.get('path', ''),
+            'distance': 1.0 - node.score if hasattr(node, 'score') and node.score else None
+        }
+        sources.append(source)
 
-    if results['documents'] and len(results['documents'][0]) > 0:
-        for i, doc in enumerate(results['documents'][0]):
-            context_docs.append(doc)
-
-            # Extract source information
-            metadata = results['metadatas'][0][i] if i < len(results['metadatas'][0]) else {}
-            source = {
-                'document_name': metadata.get('file_name', 'Unknown'),
-                'excerpt': doc[:200] + '...' if len(doc) > 200 else doc,
-                'path': metadata.get('path', ''),
-                'distance': results['distances'][0][i] if i < len(results['distances'][0]) else None
-            }
-            sources.append(source)
-
-    # Combine context
-    context = "\n\n".join(context_docs) if context_docs else ""
-
-    # Step 4: Generate response
-    answer = generate_response(query_text, context)
-
-    # Step 5: Return result
     return {
-        'answer': answer,
+        'answer': str(response),
         'sources': sources,
         'query': query_text
     }

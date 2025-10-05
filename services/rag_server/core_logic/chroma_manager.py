@@ -1,6 +1,7 @@
 from typing import List, Dict
 import chromadb
-from langchain_chroma import Chroma
+from llama_index.core import VectorStoreIndex
+from llama_index.vector_stores.chroma import ChromaVectorStore
 from core_logic.embeddings import get_embedding_function
 from core_logic.env_config import get_required_env
 import logging
@@ -21,60 +22,52 @@ def get_or_create_collection():
     client = get_chroma_client()
     logger.info(f"[CHROMA] ChromaDB client initialized")
 
+    chroma_collection = client.get_or_create_collection(name=COLLECTION_NAME)
+    logger.info(f"[CHROMA] ChromaDB collection retrieved")
+
     embedding_function = get_embedding_function()
     logger.info(f"[CHROMA] Embedding function retrieved")
 
-    vectorstore = Chroma(
-        client=client,
-        collection_name=COLLECTION_NAME,
-        embedding_function=embedding_function
+    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+    logger.info(f"[CHROMA] ChromaVectorStore created")
+
+    index = VectorStoreIndex.from_vector_store(
+        vector_store=vector_store,
+        embed_model=embedding_function
     )
-    logger.info(f"[CHROMA] Vectorstore initialized for collection: {COLLECTION_NAME}")
+    logger.info(f"[CHROMA] VectorStoreIndex initialized for collection: {COLLECTION_NAME}")
 
-    return vectorstore
-
-
-def add_documents(collection, documents: List[str], metadatas: List[Dict], ids: List[str]):
-    logger.info(f"[CHROMA] Adding {len(documents)} documents to collection")
-    logger.info(f"[CHROMA] Document IDs: {ids[:3]}..." if len(ids) > 3 else f"[CHROMA] Document IDs: {ids}")
-
-    # Log first document preview
-    if documents:
-        preview = documents[0][:100] + "..." if len(documents[0]) > 100 else documents[0]
-        logger.info(f"[CHROMA] First document preview: {preview}")
-
-    # LangChain Chroma uses add_texts method
-    logger.info(f"[CHROMA] Calling add_texts on vectorstore (will generate embeddings)")
-    collection.add_texts(
-        texts=documents,
-        metadatas=metadatas,
-        ids=ids
-    )
-    logger.info(f"[CHROMA] Successfully added {len(documents)} documents to ChromaDB")
+    return index
 
 
-def query_documents(collection, query_text: str, n_results: int = 5) -> Dict:
-    # Use similarity_search_with_score for compatible results
-    results_with_scores = collection.similarity_search_with_score(
-        query=query_text,
-        k=n_results
-    )
+def add_documents(index, nodes: List):
+    logger.info(f"[CHROMA] Adding {len(nodes)} nodes to index")
 
-    # Convert LangChain format to ChromaDB-compatible format
+    if nodes:
+        first_text = nodes[0].get_content()
+        preview = first_text[:100] + "..." if len(first_text) > 100 else first_text
+        logger.info(f"[CHROMA] First node preview: {preview}")
+
+    logger.info(f"[CHROMA] Calling insert_nodes (will generate embeddings)")
+    index.insert_nodes(nodes)
+    logger.info(f"[CHROMA] Successfully added {len(nodes)} nodes to ChromaDB")
+
+
+def query_documents(index, query_text: str, n_results: int = 5) -> Dict:
+    retriever = index.as_retriever(similarity_top_k=n_results)
+    nodes = retriever.retrieve(query_text)
+
     documents = []
     metadatas = []
     distances = []
     ids = []
 
-    for doc, score in results_with_scores:
-        documents.append(doc.page_content)
-        metadatas.append(doc.metadata)
-        # ChromaDB uses distance (lower is better), score from similarity_search is similarity (higher is better)
-        # Convert similarity to distance: distance = 1 - similarity (approximate)
-        distances.append(1.0 - score if score <= 1.0 else score)
-        ids.append(doc.metadata.get('id', ''))
+    for node in nodes:
+        documents.append(node.get_content())
+        metadatas.append(node.metadata)
+        distances.append(1.0 - node.score if hasattr(node, 'score') and node.score else 0.0)
+        ids.append(node.node_id)
 
-    # Return in ChromaDB query format (nested lists for batch queries)
     return {
         'documents': [documents],
         'metadatas': [metadatas],
@@ -83,28 +76,22 @@ def query_documents(collection, query_text: str, n_results: int = 5) -> Dict:
     }
 
 
-def delete_document(collection, document_id: str):
-    # Get underlying ChromaDB collection for deletion
-    chroma_collection = collection._collection
+def delete_document(index, document_id: str):
+    chroma_collection = index._vector_store._collection
 
-    # Query for all chunks with this document_id
     results = chroma_collection.get(
         where={"document_id": document_id}
     )
 
-    # Delete all matching chunk IDs
     if results and results['ids']:
         chroma_collection.delete(ids=results['ids'])
 
 
-def list_documents(collection) -> List[Dict]:
-    # Access underlying ChromaDB collection
-    chroma_collection = collection._collection
+def list_documents(index) -> List[Dict]:
+    chroma_collection = index._vector_store._collection
 
-    # Get all documents
     results = chroma_collection.get()
 
-    # Group chunks by document_id
     doc_map = {}
     for i, chunk_id in enumerate(results['ids']):
         metadata = results['metadatas'][i] if i < len(results['metadatas']) else {}

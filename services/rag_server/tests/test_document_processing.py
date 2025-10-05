@@ -7,144 +7,53 @@ import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-def test_process_text_file():
-    """Process plain text file using Docling and return content"""
-    from core_logic.document_processor import process_document
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write("This is a test document.\nIt has multiple lines.")
-        temp_path = f.name
-
-    try:
-        with patch('core_logic.document_processor.DoclingLoader') as mock_loader_class:
-            # Mock the loader instance and its load method
-            mock_loader = MagicMock()
-            mock_doc = MagicMock()
-            mock_doc.page_content = "This is a test document.\nIt has multiple lines."
-            mock_loader.load.return_value = [mock_doc]
-            mock_loader_class.return_value = mock_loader
-
-            result = process_document(temp_path)
-            assert result is not None
-            assert "test document" in result.lower()
-            assert "multiple lines" in result.lower()
-    finally:
-        os.unlink(temp_path)
 
 
-def test_process_markdown_file():
-    """Process markdown file using Docling and return content"""
-    from core_logic.document_processor import process_document
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
-        f.write("# Header\n\nThis is **bold** text.")
-        temp_path = f.name
-
-    try:
-        with patch('core_logic.document_processor.DoclingLoader') as mock_loader_class:
-            mock_loader = MagicMock()
-            mock_doc = MagicMock()
-            mock_doc.page_content = "# Header\n\nThis is **bold** text."
-            mock_loader.load.return_value = [mock_doc]
-            mock_loader_class.return_value = mock_loader
-
-            result = process_document(temp_path)
-            assert result is not None
-            assert "header" in result.lower()
-            assert "bold" in result.lower()
-    finally:
-        os.unlink(temp_path)
-
-
-@patch('core_logic.document_processor.DoclingLoader')
-def test_process_pdf_file(mock_loader_class):
-    """Process PDF file using Docling"""
-    from core_logic.document_processor import process_document
-
-    # Mock DoclingLoader
-    mock_loader = MagicMock()
-    mock_doc = MagicMock()
-    mock_doc.page_content = "PDF content here"
-    mock_loader.load.return_value = [mock_doc]
-    mock_loader_class.return_value = mock_loader
-
-    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
-        temp_path = f.name
-
-    try:
-        result = process_document(temp_path)
-        assert result is not None
-        assert "PDF content" in result
-        mock_loader_class.assert_called_once()
-    finally:
-        os.unlink(temp_path)
-
-
-@patch('core_logic.document_processor.DoclingLoader')
-def test_process_docx_file(mock_loader_class):
-    """Process DOCX file using Docling"""
-    from core_logic.document_processor import process_document
-
-    # Mock DoclingLoader
-    mock_loader = MagicMock()
-    mock_doc = MagicMock()
-    mock_doc.page_content = "DOCX content here"
-    mock_loader.load.return_value = [mock_doc]
-    mock_loader_class.return_value = mock_loader
-
-    with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as f:
-        temp_path = f.name
-
-    try:
-        result = process_document(temp_path)
-        assert result is not None
-        assert "DOCX content" in result
-        mock_loader_class.assert_called_once()
-    finally:
-        os.unlink(temp_path)
 
 
 def test_unsupported_file_type():
     """Raise error for unsupported file types"""
-    from core_logic.document_processor import process_document
+    from core_logic.document_processor import chunk_document_from_file
 
     with tempfile.NamedTemporaryFile(suffix='.xyz', delete=False) as f:
         temp_path = f.name
 
     try:
         with pytest.raises(ValueError, match="Unsupported file type"):
-            process_document(temp_path)
+            chunk_document_from_file(temp_path)
     finally:
         os.unlink(temp_path)
 
 
-@patch('core_logic.document_processor.DoclingLoader')
-def test_chunk_document_with_txt_file(mock_loader_class):
-    """Split text file into chunks using HybridChunker"""
+@patch('core_logic.document_processor.DoclingNodeParser')
+@patch('core_logic.document_processor.DoclingReader')
+def test_chunk_document_with_txt_file(mock_reader_class, mock_parser_class):
+    """Split text file into nodes using DoclingReader + DoclingNodeParser"""
     from core_logic.document_processor import chunk_document_from_file
 
-    # Create a temporary text file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        long_text = "This is a sentence. " * 100  # 100 sentences
+        long_text = "This is a sentence. " * 100
         f.write(long_text)
         temp_path = f.name
 
     try:
-        # Mock DoclingLoader to return chunked documents
-        mock_loader = MagicMock()
-        mock_chunks = [
-            MagicMock(page_content="Chunk 1 text", metadata={"source": temp_path}),
-            MagicMock(page_content="Chunk 2 text", metadata={"source": temp_path}),
-            MagicMock(page_content="Chunk 3 text", metadata={"source": temp_path}),
-        ]
-        mock_loader.load.return_value = mock_chunks
-        mock_loader_class.return_value = mock_loader
+        mock_reader = MagicMock()
+        mock_doc = MagicMock()
+        mock_reader.load_data.return_value = [mock_doc]
+        mock_reader_class.return_value = mock_reader
+
+        mock_parser = MagicMock()
+        mock_node1 = MagicMock()
+        mock_node1.get_content.return_value = "Chunk 1 text"
+        mock_node2 = MagicMock()
+        mock_node2.get_content.return_value = "Chunk 2 text"
+        mock_parser.get_nodes_from_documents.return_value = [mock_node1, mock_node2]
+        mock_parser_class.return_value = mock_parser
 
         results = chunk_document_from_file(temp_path, chunk_size=200)
 
-        assert len(results) >= 1
-        assert all('text' in r and 'metadata' in r for r in results)
-        assert all(r['text'] for r in results)  # No empty chunks
+        assert len(results) == 2
+        assert all(hasattr(n, 'get_content') for n in results)
     finally:
         os.unlink(temp_path)
 
@@ -161,52 +70,36 @@ def test_extract_metadata():
     assert "test_folder" in metadata["path"]
 
 
-@patch('core_logic.document_processor.DoclingLoader')
-def test_chunk_document_from_file(mock_loader_class):
+@patch('core_logic.document_processor.DoclingNodeParser')
+@patch('core_logic.document_processor.DoclingReader')
+def test_chunk_document_from_file(mock_reader_class, mock_parser_class):
     """Test efficient file chunking with chunk_document_from_file"""
     from core_logic.document_processor import chunk_document_from_file
-
-    # Mock DoclingLoader to return chunked documents with metadata
-    mock_loader = MagicMock()
-    mock_chunks = [
-        MagicMock(page_content="Chunk 1", metadata={"page": 1, "source": "test.pdf"}),
-        MagicMock(page_content="Chunk 2", metadata={"page": 2, "source": "test.pdf"}),
-    ]
-    mock_loader.load.return_value = mock_chunks
-    mock_loader_class.return_value = mock_loader
 
     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
         temp_path = f.name
 
     try:
+        mock_reader = MagicMock()
+        mock_doc = MagicMock()
+        mock_reader.load_data.return_value = [mock_doc]
+        mock_reader_class.return_value = mock_reader
+
+        mock_parser = MagicMock()
+        mock_node1 = MagicMock()
+        mock_node1.get_content.return_value = "Chunk 1"
+        mock_node1.metadata = {"page": 1, "source": "test.pdf"}
+        mock_node2 = MagicMock()
+        mock_node2.get_content.return_value = "Chunk 2"
+        mock_node2.metadata = {"page": 2, "source": "test.pdf"}
+        mock_parser.get_nodes_from_documents.return_value = [mock_node1, mock_node2]
+        mock_parser_class.return_value = mock_parser
+
         results = chunk_document_from_file(temp_path, chunk_size=500)
 
         assert len(results) == 2
-        assert all('text' in r and 'metadata' in r for r in results)
-        assert results[0]['text'] == "Chunk 1"
-        assert results[1]['text'] == "Chunk 2"
-        assert 'page' in results[0]['metadata']
-    finally:
-        os.unlink(temp_path)
-
-
-@patch('core_logic.document_processor.DoclingLoader')
-def test_process_pptx_file(mock_loader_class):
-    """Test that PPTX files are now supported via Docling"""
-    from core_logic.document_processor import process_document
-
-    mock_loader = MagicMock()
-    mock_doc = MagicMock()
-    mock_doc.page_content = "Presentation content"
-    mock_loader.load.return_value = [mock_doc]
-    mock_loader_class.return_value = mock_loader
-
-    with tempfile.NamedTemporaryFile(suffix='.pptx', delete=False) as f:
-        temp_path = f.name
-
-    try:
-        result = process_document(temp_path)
-        assert result is not None
-        assert "Presentation content" in result
+        assert results[0].get_content() == "Chunk 1"
+        assert results[1].get_content() == "Chunk 2"
+        assert 'page' in results[0].metadata
     finally:
         os.unlink(temp_path)

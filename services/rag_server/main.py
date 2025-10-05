@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from core_logic.rag_pipeline import query_rag
 from core_logic.chroma_manager import get_or_create_collection, list_documents, delete_document, add_documents
 from core_logic.document_processor import chunk_document_from_file, extract_metadata, SUPPORTED_EXTENSIONS
+from core_logic.settings import initialize_settings
 from typing import List
 from pathlib import Path
 import tempfile
@@ -10,9 +11,13 @@ import uuid
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
 
 app = FastAPI(title="RAG Server")
+
+@app.on_event("startup")
+async def startup_event():
+    initialize_settings()
 
 class QueryRequest(BaseModel):
     query: str
@@ -34,46 +39,37 @@ class UploadResponse(BaseModel):
     documents: list[dict]
 
 def process_and_index_document(file_path: str, filename: str) -> dict:
-    logger.info(f"[UPLOAD] Starting to process document: {filename}")
-    logger.info(f"[UPLOAD] File path: {file_path}, Size: {Path(file_path).stat().st_size} bytes")
-
-    # Chunk document directly from file (preserves format for Docling)
     logger.info(f"[CHUNKING] Calling chunk_document_from_file for {filename}")
-    chunk_dicts = chunk_document_from_file(file_path)
-    chunks = [chunk['text'] for chunk in chunk_dicts]
-    logger.info(f"[CHUNKING] Created {len(chunks)} chunks from {filename}")
+    nodes = chunk_document_from_file(file_path)
+    logger.info(f"[CHUNKING] Created {len(nodes)} nodes from {filename}")
 
-    # Log first chunk preview
-    if chunks:
-        preview = chunks[0][:100] + "..." if len(chunks[0]) > 100 else chunks[0]
-        logger.info(f"[CHUNKING] First chunk preview: {preview}")
+    if nodes:
+        first_text = nodes[0].get_content()
+        preview = first_text[:100] + "..." if len(first_text) > 100 else first_text
+        logger.info(f"[CHUNKING] First node preview: {preview}")
 
-    # Extract metadata
     metadata = extract_metadata(file_path)
-    metadata["file_name"] = filename  # Use original filename
+    metadata["file_name"] = filename
     logger.info(f"[METADATA] Extracted metadata: {metadata}")
 
-    # Generate unique IDs for chunks
     doc_id = str(uuid.uuid4())
-    chunk_ids = [f"{doc_id}-chunk-{i}" for i in range(len(chunks))]
     logger.info(f"[INDEXING] Generated document ID: {doc_id}")
 
-    # Prepare metadata for each chunk
-    metadatas = [
-        {**metadata, "chunk_index": i, "document_id": doc_id}
-        for i in range(len(chunks))
-    ]
+    for i, node in enumerate(nodes):
+        node.metadata.update(metadata)
+        node.metadata["chunk_index"] = i
+        node.metadata["document_id"] = doc_id
+        node.id_ = f"{doc_id}-chunk-{i}"
 
-    # Add to ChromaDB
-    logger.info(f"[INDEXING] Adding {len(chunks)} chunks to ChromaDB")
-    collection = get_or_create_collection()
-    add_documents(collection, chunks, metadatas, chunk_ids)
+    logger.info(f"[INDEXING] Adding {len(nodes)} nodes to index")
+    index = get_or_create_collection()
+    add_documents(index, nodes)
     logger.info(f"[INDEXING] Successfully indexed document {filename} with ID {doc_id}")
 
     return {
         "id": doc_id,
         "file_name": filename,
-        "chunks": len(chunks),
+        "chunks": len(nodes),
         "status": "success"
     }
 
@@ -95,8 +91,8 @@ async def query(request: QueryRequest):
 @app.get("/documents", response_model=DocumentListResponse)
 async def get_documents():
     try:
-        collection = get_or_create_collection()
-        documents = list_documents(collection)
+        index = get_or_create_collection()
+        documents = list_documents(index)
         return DocumentListResponse(documents=documents)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -160,8 +156,8 @@ async def upload_documents(files: List[UploadFile] = File(...)):
 @app.delete("/documents/{document_id}", response_model=DeleteResponse)
 async def delete_document_by_id(document_id: str):
     try:
-        collection = get_or_create_collection()
-        delete_document(collection, document_id)
+        index = get_or_create_collection()
+        delete_document(index, document_id)
         return DeleteResponse(
             status="success",
             message=f"Document {document_id} deleted successfully"

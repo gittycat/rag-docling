@@ -1,100 +1,73 @@
 from pathlib import Path
-from typing import List, Dict
-from langchain_docling import DoclingLoader
-from langchain_docling.loader import ExportType
-from docling.chunking import HybridChunker
+from typing import List
+from llama_index.readers.docling import DoclingReader
+from llama_index.node_parser.docling import DoclingNodeParser
+from llama_index.core import SimpleDirectoryReader
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import Document
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Docling supports many more formats than the previous implementation
 SUPPORTED_EXTENSIONS = {
     '.txt', '.md', '.pdf', '.docx', '.pptx', '.xlsx',
     '.html', '.htm', '.asciidoc', '.adoc'
 }
 
-# Tokenizer for chunking - use sentence-transformers/all-MiniLM-L6-v2 (compatible with nomic-embed-text)
-# This is a HuggingFace model that HybridChunker can download
-EMBED_MODEL_TOKENIZER = "sentence-transformers/all-MiniLM-L6-v2"
+SIMPLE_TEXT_EXTENSIONS = {'.txt', '.md'}
 
-def process_document(file_path: str) -> str:
-    logger.info(f"[DOCLING] Starting to process document: {file_path}")
-    file_path_obj = Path(file_path)
-    extension = file_path_obj.suffix.lower()
-    logger.info(f"[DOCLING] File extension: {extension}")
-
-    if extension not in SUPPORTED_EXTENSIONS:
-        error_msg = f"Unsupported file type: {extension}"
-        logger.error(f"[DOCLING] {error_msg}")
-        raise ValueError(error_msg)
-
-    # Use DoclingLoader with MARKDOWN export to get full document text
-    logger.info(f"[DOCLING] Initializing DoclingLoader with MARKDOWN export")
-    loader = DoclingLoader(
-        file_path=str(file_path),
-        export_type=ExportType.MARKDOWN
-    )
-
-    logger.info(f"[DOCLING] Loading document with DoclingLoader")
-    docs = loader.load()
-    logger.info(f"[DOCLING] Loaded {len(docs)} document sections")
-
-    if not docs:
-        error_msg = f"Could not load document: {file_path}"
-        logger.error(f"[DOCLING] {error_msg}")
-        raise ValueError(error_msg)
-
-    # Combine all document chunks into single text
-    # DoclingLoader may split into multiple docs, so join them
-    full_text = "\n\n".join(doc.page_content for doc in docs)
-    logger.info(f"[DOCLING] Extracted {len(full_text)} characters of text")
-
-    return full_text
-
-
-def chunk_document_from_file(file_path: str, chunk_size: int = 500) -> List[Dict]:
+def chunk_document_from_file(file_path: str, chunk_size: int = 500):
     logger.info(f"[DOCLING] chunk_document_from_file called for: {file_path}")
     file_path_obj = Path(file_path)
     extension = file_path_obj.suffix.lower()
     logger.info(f"[DOCLING] File extension: {extension}, chunk_size: {chunk_size}")
 
     if extension not in SUPPORTED_EXTENSIONS:
-        error_msg = f"Unsupported file type: {extension}"
-        logger.error(f"[DOCLING] {error_msg}")
-        raise ValueError(error_msg)
+        raise ValueError(f"Unsupported file type: {extension}")
 
-    # Use DoclingLoader with DOC_CHUNKS for efficient chunking
-    logger.info(f"[DOCLING] Initializing DoclingLoader with DOC_CHUNKS export")
-    logger.info(f"[DOCLING] HybridChunker settings: tokenizer={EMBED_MODEL_TOKENIZER}, max_tokens={chunk_size}")
-    loader = DoclingLoader(
-        file_path=str(file_path),
-        export_type=ExportType.DOC_CHUNKS,
-        chunker=HybridChunker(
-            tokenizer=EMBED_MODEL_TOKENIZER,
-            max_tokens=chunk_size
-        )
-    )
+    if extension in SIMPLE_TEXT_EXTENSIONS:
+        logger.info(f"[DOCLING] Using SimpleDirectoryReader for text file")
+        reader = SimpleDirectoryReader(input_files=[str(file_path)])
+        documents = reader.load_data()
+        logger.info(f"[DOCLING] SimpleDirectoryReader returned {len(documents)} documents")
 
-    logger.info(f"[DOCLING] Loading and chunking document")
-    docs = loader.load()
-    logger.info(f"[DOCLING] DoclingLoader returned {len(docs)} chunks")
+        if not documents:
+            error_msg = f"Could not load document: {file_path}"
+            logger.error(f"[DOCLING] {error_msg}")
+            raise ValueError(error_msg)
 
-    # Convert LangChain documents to our format
-    chunks = []
-    for i, doc in enumerate(docs):
-        if doc.page_content.strip():
-            chunk_preview = doc.page_content[:80] + "..." if len(doc.page_content) > 80 else doc.page_content
-            logger.debug(f"[DOCLING] Chunk {i}: {len(doc.page_content)} chars - {chunk_preview}")
-            chunks.append({
-                'text': doc.page_content,
-                'metadata': doc.metadata
-            })
+        logger.info(f"[DOCLING] Using SentenceSplitter for chunking")
+        splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=50)
+        nodes = splitter.get_nodes_from_documents(documents)
+        logger.info(f"[DOCLING] SentenceSplitter returned {len(nodes)} nodes")
+    else:
+        logger.info(f"[DOCLING] Using DoclingReader for complex document")
+        reader = DoclingReader()
 
-    logger.info(f"[DOCLING] Created {len(chunks)} valid chunks (filtered out empty chunks)")
-    return chunks
+        logger.info(f"[DOCLING] Loading document with DoclingReader")
+        documents = reader.load_data(file_path=str(file_path))
+        logger.info(f"[DOCLING] DoclingReader returned {len(documents)} documents")
+
+        if not documents:
+            error_msg = f"Could not load document: {file_path}"
+            logger.error(f"[DOCLING] {error_msg}")
+            raise ValueError(error_msg)
+
+        logger.info(f"[DOCLING] Using DoclingNodeParser")
+        node_parser = DoclingNodeParser()
+        nodes = node_parser.get_nodes_from_documents(documents)
+        logger.info(f"[DOCLING] DoclingNodeParser returned {len(nodes)} nodes")
+
+    if nodes:
+        first_text = nodes[0].get_content()
+        preview = first_text[:80] + "..." if len(first_text) > 80 else first_text
+        logger.info(f"[DOCLING] First node preview: {preview}")
+
+    logger.info(f"[DOCLING] Created {len(nodes)} nodes from {file_path_obj.name}")
+    return nodes
 
 
-def extract_metadata(file_path: str) -> Dict[str, str]:
+def extract_metadata(file_path: str) -> dict[str, str]:
     file_path_obj = Path(file_path)
 
     return {
