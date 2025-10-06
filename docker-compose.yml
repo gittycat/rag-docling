@@ -33,6 +33,7 @@ services:
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RERANKER_SIMILARITY_THRESHOLD=0.65
       - RETRIEVAL_TOP_K=10
+      - REDIS_URL=redis://redis:6379/0
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -42,6 +43,7 @@ services:
       - public
     volumes:
       - ./data/indexed_documents:/app/documents
+      - shared_temp:/tmp/shared
     secrets:
       - ollama_config
 
@@ -57,6 +59,44 @@ services:
       - private
     restart: unless-stopped
 
+  # Redis - Message broker and result backend for Celery
+  redis:
+    image: redis:7-alpine
+    networks:
+      - private
+    restart: unless-stopped
+
+  # Celery Worker - Async document processing
+  celery-worker:
+    build:
+      context: .
+      dockerfile: ./services/rag_server/Dockerfile
+    command: [".venv/bin/celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    environment:
+      - CHROMADB_URL=http://chromadb:8000
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBEDDING_MODEL=qwen3-embedding:8b
+      - LLM_MODEL=gemma3:4b
+      - PROMPT_STRATEGY=comprehensive
+      - ENABLE_RERANKER=true
+      - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+      - RERANKER_SIMILARITY_THRESHOLD=0.65
+      - RETRIEVAL_TOP_K=10
+      - REDIS_URL=redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+      - chromadb
+    networks:
+      - private
+      - public
+    volumes:
+      - ./data/indexed_documents:/app/documents
+      - shared_temp:/tmp/shared
+    secrets:
+      - ollama_config
+
 # Network configuration for security isolation
 networks:
   public:
@@ -68,6 +108,8 @@ networks:
 # Persistent volumes
 volumes:
   chroma_db_data:
+    driver: local
+  shared_temp:
     driver: local
 
 # Secrets management

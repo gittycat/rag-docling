@@ -4,6 +4,8 @@ from core_logic.rag_pipeline import query_rag
 from core_logic.chroma_manager import get_or_create_collection, list_documents, delete_document, add_documents
 from core_logic.document_processor import chunk_document_from_file, extract_metadata, SUPPORTED_EXTENSIONS
 from core_logic.settings import initialize_settings
+from core_logic.progress_tracker import create_batch, get_batch_progress
+from tasks import process_document_task
 from typing import List
 from pathlib import Path
 import tempfile
@@ -37,6 +39,21 @@ class UploadResponse(BaseModel):
     status: str
     uploaded: int
     documents: list[dict]
+
+class TaskInfo(BaseModel):
+    task_id: str
+    filename: str
+
+class BatchUploadResponse(BaseModel):
+    status: str
+    batch_id: str
+    tasks: list[TaskInfo]
+
+class BatchProgressResponse(BaseModel):
+    batch_id: str
+    total: int
+    completed: int
+    tasks: dict
 
 def process_and_index_document(file_path: str, filename: str) -> dict:
     logger.info(f"[CHUNKING] Calling chunk_document_from_file for {filename}")
@@ -86,6 +103,9 @@ async def query(request: QueryRequest):
             sources=result['sources']
         )
     except Exception as e:
+        import traceback
+        logger.error(f"[QUERY] Error processing query: {str(e)}")
+        logger.error(f"[QUERY] Traceback:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/documents", response_model=DocumentListResponse)
@@ -97,18 +117,18 @@ async def get_documents():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/upload")
+@app.post("/upload", response_model=BatchUploadResponse)
 async def upload_documents(files: List[UploadFile] = File(...)):
     logger.info(f"[UPLOAD] Upload endpoint called with {len(files)} files")
     for f in files:
         logger.info(f"[UPLOAD] File: {f.filename} (Content-Type: {f.content_type})")
 
-    uploaded_docs = []
+    batch_id = str(uuid.uuid4())
+    task_infos = []
     errors = []
 
     for file in files:
         try:
-            # Check file extension
             file_ext = Path(file.filename).suffix.lower()
             logger.info(f"[UPLOAD] Processing {file.filename} with extension: {file_ext}")
 
@@ -118,40 +138,59 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                 errors.append(error_msg)
                 continue
 
-            # Save file temporarily
             logger.info(f"[UPLOAD] Saving {file.filename} to temporary file")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir="/tmp/shared") as tmp:
                 content = await file.read()
                 tmp.write(content)
                 tmp_path = tmp.name
             logger.info(f"[UPLOAD] Saved to: {tmp_path}")
 
-            # Process and index
-            doc_info = process_and_index_document(tmp_path, file.filename)
-            uploaded_docs.append(doc_info)
-
-            # Clean up temp file
-            Path(tmp_path).unlink()
-            logger.info(f"[UPLOAD] Cleaned up temporary file for {file.filename}")
+            task = process_document_task.apply_async(
+                args=[tmp_path, file.filename, batch_id]
+            )
+            task_infos.append(TaskInfo(task_id=task.id, filename=file.filename))
+            logger.info(f"[UPLOAD] Queued task {task.id} for {file.filename}")
 
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            logger.error(f"[UPLOAD] Error processing {file.filename}: {str(e)}")
+            logger.error(f"[UPLOAD] Error queueing {file.filename}: {str(e)}")
             logger.error(f"[UPLOAD] Traceback:\n{error_trace}")
             errors.append(f"{file.filename}: {str(e)}")
 
-    if not uploaded_docs and errors:
+    if not task_infos and errors:
         error_msg = "; ".join(errors)
         logger.error(f"[UPLOAD] Upload failed: {error_msg}")
         raise HTTPException(status_code=400, detail=error_msg)
 
-    logger.info(f"[UPLOAD] Successfully uploaded {len(uploaded_docs)} documents")
-    return UploadResponse(
-        status="success",
-        uploaded=len(uploaded_docs),
-        documents=uploaded_docs
+    task_ids = [ti.task_id for ti in task_infos]
+    filenames = [ti.filename for ti in task_infos]
+    create_batch(batch_id, task_ids, filenames)
+
+    logger.info(f"[UPLOAD] Created batch {batch_id} with {len(task_infos)} tasks")
+    return BatchUploadResponse(
+        status="queued",
+        batch_id=batch_id,
+        tasks=task_infos
     )
+
+@app.get("/tasks/{batch_id}/status", response_model=BatchProgressResponse)
+async def get_batch_status(batch_id: str):
+    try:
+        progress = get_batch_progress(batch_id)
+        if not progress:
+            raise HTTPException(status_code=404, detail=f"Batch {batch_id} not found")
+
+        return BatchProgressResponse(
+            batch_id=progress["batch_id"],
+            total=progress["total"],
+            completed=progress["completed"],
+            tasks=progress["tasks"]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/documents/{document_id}", response_model=DeleteResponse)
 async def delete_document_by_id(document_id: str):

@@ -2,8 +2,11 @@ from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
+from sse_starlette.sse import EventSourceResponse
 from pathlib import Path
 import httpx
+import asyncio
+import json
 from typing import List
 from env_config import get_required_env
 
@@ -82,8 +85,7 @@ async def admin(request: Request):
 @app.post("/admin/upload")
 async def upload_documents(files: List[UploadFile] = File(...)):
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            # Prepare files for upload
+        async with httpx.AsyncClient(timeout=30.0) as client:
             upload_files = []
             for file in files:
                 content = await file.read()
@@ -91,22 +93,25 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                     ("files", (file.filename, content, file.content_type))
                 )
 
-            # Forward to RAG server
             response = await client.post(
                 f"{RAG_SERVER_URL}/upload",
                 files=upload_files
             )
             response.raise_for_status()
-    except httpx.TimeoutException as e:
-        print(f"[UPLOAD TIMEOUT] Upload exceeded 120s timeout: {e}")
+            result = response.json()
+            batch_id = result.get("batch_id")
+
+            if batch_id:
+                return RedirectResponse(url=f"/admin/upload/progress/{batch_id}", status_code=303)
+            else:
+                return RedirectResponse(url="/admin", status_code=303)
+
     except Exception as e:
         print(f"Upload error: {type(e).__name__}: {e}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"Response status: {e.response.status_code}")
             print(f"Response body: {e.response.text}")
-
-    # Redirect back to admin page
-    return RedirectResponse(url="/admin", status_code=303)
+        return RedirectResponse(url="/admin", status_code=303)
 
 @app.post("/admin/delete/{document_id}")
 async def delete_document(request: Request, document_id: str):
@@ -122,6 +127,58 @@ async def delete_document(request: Request, document_id: str):
 
     # Redirect back to admin page
     return RedirectResponse(url="/admin", status_code=303)
+
+@app.get("/admin/upload/progress/{batch_id}")
+async def upload_progress_page(request: Request, batch_id: str):
+    return templates.TemplateResponse(
+        request,
+        "upload_progress.html",
+        {"batch_id": batch_id}
+    )
+
+@app.get("/admin/upload/progress/{batch_id}/stream")
+async def upload_progress_stream(batch_id: str):
+    async def event_generator():
+        try:
+            while True:
+                async with httpx.AsyncClient() as client:
+                    try:
+                        response = await client.get(
+                            f"{RAG_SERVER_URL}/tasks/{batch_id}/status",
+                            timeout=5.0
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            yield {
+                                "event": "progress",
+                                "data": json.dumps(data)
+                            }
+
+                            if data["completed"] >= data["total"]:
+                                yield {
+                                    "event": "complete",
+                                    "data": json.dumps({"message": "All tasks completed"})
+                                }
+                                break
+                        else:
+                            yield {
+                                "event": "error",
+                                "data": json.dumps({"message": "Batch not found"})
+                            }
+                            break
+                    except httpx.RequestError as e:
+                        yield {
+                            "event": "error",
+                            "data": json.dumps({"message": f"Connection error: {str(e)}"})
+                        }
+                        break
+
+                await asyncio.sleep(0.5)
+
+        except asyncio.CancelledError:
+            pass
+
+    return EventSourceResponse(event_generator())
 
 @app.get("/about")
 async def about(request: Request):

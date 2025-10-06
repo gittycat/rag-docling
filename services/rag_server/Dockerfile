@@ -24,6 +24,8 @@ RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strat
 COPY services/rag_server/core_logic ./core_logic
 COPY services/rag_server/tests ./tests
 COPY services/rag_server/main.py ./
+COPY services/rag_server/celery_app.py ./
+COPY services/rag_server/tasks.py ./
 
 # Expose port
 EXPOSE 8001

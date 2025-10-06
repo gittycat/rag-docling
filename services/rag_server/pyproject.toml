@@ -19,6 +19,11 @@ dependencies = [
     "llama-index-vector-stores-chroma>=0.4.1",
     "llama-index-postprocessor-sbert-rerank>=0.4.0",
     "docling>=2.53.0",
+    "arq>=0.26.3",
+    "sse-starlette>=3.0.2",
+    "celery>=5.4.0",
+    "redis>=5.2.0",
+    "sentence-transformers>=3.3.0",
 ]
 
 [dependency-groups]
