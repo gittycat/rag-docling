@@ -82,7 +82,7 @@ async def admin(request: Request):
 @app.post("/admin/upload")
 async def upload_documents(files: List[UploadFile] = File(...)):
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             # Prepare files for upload
             upload_files = []
             for file in files:
@@ -97,8 +97,10 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                 files=upload_files
             )
             response.raise_for_status()
-    except httpx.HTTPError as e:
-        print(f"Upload error: {e}")
+    except httpx.TimeoutException as e:
+        print(f"[UPLOAD TIMEOUT] Upload exceeded 120s timeout: {e}")
+    except Exception as e:
+        print(f"Upload error: {type(e).__name__}: {e}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"Response status: {e.response.status_code}")
             print(f"Response body: {e.response.text}")
