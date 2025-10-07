@@ -25,22 +25,6 @@
             <p class="mt-2 text-gray-600">Processing your documents...</p>
         </div>
 
-        <!-- Overall Progress -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Overall Progress</h2>
-            <div class="mb-2">
-                <div class="flex justify-between mb-1">
-                    <span class="text-sm font-medium text-gray-700">
-                        <span id="completed-count">0</span> of <span id="total-count">0</span> completed
-                    </span>
-                    <span class="text-sm font-medium text-gray-700" id="progress-percentage">0%</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-4">
-                    <div id="progress-bar" class="bg-blue-600 h-4 rounded-full transition-all duration-300" style="width: 0%"></div>
-                </div>
-            </div>
-        </div>
-
         <!-- Individual Files Progress -->
         <div class="bg-white rounded-lg shadow-md p-6 mb-6">
             <h2 class="text-xl font-semibold text-gray-900 mb-4">Files</h2>
@@ -67,17 +51,7 @@
         const eventSource = new EventSource(`/admin/upload/progress/${batchId}/stream`);
 
         function updateProgress(data) {
-            const progressBar = document.getElementById('progress-bar');
-            const progressPercentage = document.getElementById('progress-percentage');
-            const completedCount = document.getElementById('completed-count');
-            const totalCount = document.getElementById('total-count');
             const filesContainer = document.getElementById('files-container');
-
-            const percentage = Math.round((data.completed / data.total) * 100);
-            progressBar.style.width = `${percentage}%`;
-            progressPercentage.textContent = `${percentage}%`;
-            completedCount.textContent = data.completed;
-            totalCount.textContent = data.total;
 
             filesContainer.innerHTML = '';
             for (const [taskId, task] of Object.entries(data.tasks)) {
@@ -103,14 +77,15 @@
                 }
 
                 const message = task.data.message || '';
-                const chunks = task.data.chunks || '';
-                const chunkInfo = chunks ? ` (${chunks} chunks)` : '';
+                const totalChunks = task.total_chunks || 0;
+                const completedChunks = task.completed_chunks || 0;
+                const filePercentage = totalChunks > 0 ? Math.round((completedChunks / totalChunks) * 100) : 0;
 
                 fileDiv.innerHTML = `
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-center justify-between mb-2">
                         <div class="flex-1">
                             <div class="font-medium text-gray-900">${task.filename}</div>
-                            <div class="text-sm text-gray-600">${message}${chunkInfo}</div>
+                            <div class="text-sm text-gray-600">${message}</div>
                         </div>
                         <div class="ml-4">
                             <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-${statusColor}-100 text-${statusColor}-800">
@@ -118,6 +93,17 @@
                             </span>
                         </div>
                     </div>
+                    ${totalChunks > 0 ? `
+                    <div class="mt-2">
+                        <div class="flex justify-between mb-1">
+                            <span class="text-xs text-gray-500">${completedChunks}/${totalChunks} chunks</span>
+                            <span class="text-xs text-gray-500">${filePercentage}%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: ${filePercentage}%"></div>
+                        </div>
+                    </div>
+                    ` : ''}
                 `;
 
                 filesContainer.appendChild(fileDiv);

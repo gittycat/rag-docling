@@ -1,7 +1,7 @@
 from celery_app import celery_app
 from core_logic.document_processor import chunk_document_from_file, extract_metadata
 from core_logic.chroma_manager import get_or_create_collection, add_documents
-from core_logic.progress_tracker import update_task_progress
+from core_logic.progress_tracker import update_task_progress, set_task_total_chunks, increment_task_chunk_progress
 from core_logic.settings import initialize_settings
 import logging
 from pathlib import Path
@@ -25,9 +25,11 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
         nodes = chunk_document_from_file(file_path)
         logger.info(f"[TASK {task_id}] Created {len(nodes)} nodes from {filename}")
 
+        set_task_total_chunks(batch_id, task_id, len(nodes))
+
         update_task_progress(batch_id, task_id, "processing", {
             "filename": filename,
-            "message": f"Created {len(nodes)} chunks, indexing..."
+            "message": f"Created {len(nodes)} chunks, starting embedding..."
         })
 
         metadata = extract_metadata(file_path)
@@ -46,7 +48,15 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
 
         logger.info(f"[TASK {task_id}] Adding {len(nodes)} nodes to index")
         index = get_or_create_collection()
-        add_documents(index, nodes)
+
+        def embedding_progress(current: int, total: int):
+            increment_task_chunk_progress(batch_id, task_id)
+            update_task_progress(batch_id, task_id, "processing", {
+                "filename": filename,
+                "message": f"Embedding chunk {current}/{total}..."
+            })
+
+        add_documents(index, nodes, progress_callback=embedding_progress)
         logger.info(f"[TASK {task_id}] Successfully indexed document {filename} with ID {doc_id}")
 
         result = {

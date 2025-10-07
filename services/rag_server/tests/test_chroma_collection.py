@@ -26,18 +26,45 @@ def test_get_or_create_collection(mock_client_class, mock_index_class):
 
 
 def test_add_documents_to_collection():
-    """Add nodes to VectorStoreIndex"""
+    """Add nodes to VectorStoreIndex one at a time"""
     from core_logic.chroma_manager import add_documents
 
     mock_index = MagicMock()
 
     mock_node1 = MagicMock()
+    mock_node1.get_content.return_value = "Test content 1"
     mock_node2 = MagicMock()
+    mock_node2.get_content.return_value = "Test content 2"
     nodes = [mock_node1, mock_node2]
 
     add_documents(mock_index, nodes)
 
-    mock_index.insert_nodes.assert_called_once_with(nodes)
+    assert mock_index.insert_nodes.call_count == 2
+    mock_index.insert_nodes.assert_any_call([mock_node1])
+    mock_index.insert_nodes.assert_any_call([mock_node2])
+
+
+def test_add_documents_with_progress_callback():
+    """Verify progress callback is called for each chunk"""
+    from core_logic.chroma_manager import add_documents
+
+    mock_index = MagicMock()
+    mock_callback = MagicMock()
+
+    mock_node1 = MagicMock()
+    mock_node1.get_content.return_value = "Test content 1"
+    mock_node2 = MagicMock()
+    mock_node2.get_content.return_value = "Test content 2"
+    mock_node3 = MagicMock()
+    mock_node3.get_content.return_value = "Test content 3"
+    nodes = [mock_node1, mock_node2, mock_node3]
+
+    add_documents(mock_index, nodes, progress_callback=mock_callback)
+
+    assert mock_callback.call_count == 3
+    mock_callback.assert_any_call(1, 3)
+    mock_callback.assert_any_call(2, 3)
+    mock_callback.assert_any_call(3, 3)
 
 
 def test_query_collection():

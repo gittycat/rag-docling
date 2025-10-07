@@ -40,7 +40,7 @@ def get_or_create_collection():
     return index
 
 
-def add_documents(index, nodes: List):
+def add_documents(index, nodes: List, progress_callback=None):
     logger.info(f"[CHROMA] Adding {len(nodes)} nodes to index")
 
     if nodes:
@@ -48,8 +48,15 @@ def add_documents(index, nodes: List):
         preview = first_text[:100] + "..." if len(first_text) > 100 else first_text
         logger.info(f"[CHROMA] First node preview: {preview}")
 
-    logger.info(f"[CHROMA] Calling insert_nodes (will generate embeddings)")
-    index.insert_nodes(nodes)
+    total_nodes = len(nodes)
+
+    for i, node in enumerate(nodes, 1):
+        logger.info(f"[CHROMA] Embedding chunk {i}/{total_nodes}")
+        index.insert_nodes([node])
+
+        if progress_callback:
+            progress_callback(i, total_nodes)
+
     logger.info(f"[CHROMA] Successfully added {len(nodes)} nodes to ChromaDB")
 
 
