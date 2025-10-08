@@ -3,44 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG System - Results</title>
+    <title>RAG System</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-white min-h-screen">
+    <!-- Subtle Top Menu -->
+    <nav class="absolute top-0 right-0 p-6">
+        <div class="flex space-x-6 text-sm">
+            <a href="/admin" class="text-gray-600 hover:text-gray-900 transition">Admin</a>
+            <a href="/about" class="text-gray-600 hover:text-gray-900 transition">About</a>
+        </div>
+    </nav>
+
     <!-- Main Content -->
-    <main class="max-w-4xl mx-auto mt-8 px-4 sm:px-6 lg:px-8">
-        <!-- Back Button -->
-        <div class="mb-6">
-            <a href="/" class="inline-flex items-center text-blue-600 hover:text-blue-800 font-medium">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                </svg>
-                Back to Home
-            </a>
+    <main class="max-w-5xl mx-auto mt-20 px-4 sm:px-6 lg:px-8 pb-12">
+        <!-- User Query Bubble (Top Right) -->
+        <div class="flex justify-end mb-8">
+            <div class="bg-blue-50 rounded-3xl px-6 py-4 max-w-2xl shadow-sm">
+                <p class="text-base text-gray-900">{{ query }}</p>
+            </div>
         </div>
 
-        <!-- Query -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 class="text-sm font-medium text-gray-500 mb-2">Your Question</h2>
-            <p class="text-lg text-gray-900">{{ query }}</p>
-        </div>
-
-        <!-- Answer -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h2 class="text-lg font-semibold text-gray-900 mb-4">Answer</h2>
-            <div class="prose max-w-none text-gray-700">
+        <!-- Answer Section -->
+        <div class="mb-8">
+            <div class="prose max-w-none text-gray-800 text-base leading-relaxed">
                 {{ answer }}
             </div>
         </div>
 
         <!-- Sources -->
         {% if sources %}
-        <div class="bg-white rounded-lg shadow-md p-6">
-            <h2 class="text-lg font-semibold text-gray-900 mb-4">Sources</h2>
+        <div class="mt-12 pt-8 border-t border-gray-200">
+            <h2 class="text-sm font-semibold text-gray-600 mb-4 uppercase tracking-wide">Sources</h2>
             <div class="space-y-4">
                 {% for source in sources %}
-                <div class="border-l-4 border-blue-500 pl-4 py-2">
-                    <h3 class="font-medium text-gray-900">{{ source.document_name }}</h3>
+                <div class="border-l-4 border-blue-500 pl-4 py-2 bg-gray-50 rounded-r">
+                    <h3 class="font-medium text-gray-900 text-sm">{{ source.document_name }}</h3>
                     {% if source.excerpt %}
                     <p class="text-sm text-gray-600 mt-1">{{ source.excerpt }}</p>
                     {% endif %}
@@ -52,6 +50,94 @@
             </div>
         </div>
         {% endif %}
+
+        <!-- New Query Input (Bottom) -->
+        <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+            <div class="max-w-5xl mx-auto px-4 py-4">
+                <form action="/search" method="POST" class="w-full" id="searchForm">
+                    <div class="relative">
+                        <input
+                            type="text"
+                            name="query"
+                            id="queryInput"
+                            placeholder="Ask a follow-up question..."
+                            class="w-full px-6 py-4 text-base border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-md transition pr-14"
+                            required
+                        />
+                        <button
+                            type="submit"
+                            id="submitBtn"
+                            disabled
+                            class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-2.5 transition duration-200 shadow-md disabled:bg-gray-300 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                            aria-label="Submit query"
+                        >
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+                            </svg>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Loading Indicator Container -->
+        <div id="loadingContainer" class="hidden fixed bottom-24 left-1/2 -translate-x-1/2">
+            <div class="flex items-center space-x-3 bg-blue-50 px-6 py-3 rounded-full shadow-lg">
+                <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-sm text-gray-700">Thinking...</span>
+            </div>
+        </div>
     </main>
+
+    <script>
+        const queryInput = document.getElementById('queryInput');
+        const submitBtn = document.getElementById('submitBtn');
+        const searchForm = document.getElementById('searchForm');
+        const loadingContainer = document.getElementById('loadingContainer');
+        let isSubmitting = false;
+
+        // Update button state based on input
+        function updateButtonState() {
+            const hasContent = queryInput.value.trim().length >= 3;
+            submitBtn.disabled = !hasContent || isSubmitting;
+        }
+
+        // Enable/disable submit button based on input length
+        queryInput.addEventListener('input', updateButtonState);
+
+        // Handle form submission
+        searchForm.addEventListener('submit', function(e) {
+            // Prevent double submission
+            if (isSubmitting) {
+                e.preventDefault();
+                return;
+            }
+
+            // Validate input
+            if (queryInput.value.trim().length < 3) {
+                e.preventDefault();
+                return;
+            }
+
+            // Set submitting state
+            isSubmitting = true;
+
+            // Update UI to show loading state
+            submitBtn.disabled = true;
+            queryInput.disabled = true;
+            queryInput.classList.add('bg-gray-50');
+
+            // Show loading indicator
+            loadingContainer.classList.remove('hidden');
+
+            // Let form submit naturally (don't preventDefault)
+        });
+
+        // Initialize button state on page load
+        updateButtonState();
+    </script>
 </body>
 </html>

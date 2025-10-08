@@ -63,7 +63,7 @@ services:
 
   # Redis - Message broker and result backend for Celery
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     networks:
       - private
     restart: unless-stopped

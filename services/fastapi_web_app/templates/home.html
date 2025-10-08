@@ -3,48 +3,108 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG System - Home</title>
+    <title>RAG System</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-50 min-h-screen">
-    <!-- Top Menu -->
-    <nav class="bg-white shadow-sm">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-center space-x-8 h-16 items-center">
-                <span class="text-gray-400 cursor-default font-medium">Home</span>
-                <a href="/admin" class="text-gray-600 hover:text-gray-900 font-medium">Admin</a>
-                <a href="/about" class="text-gray-600 hover:text-gray-900 font-medium">About</a>
-            </div>
+<body class="bg-white min-h-screen flex flex-col">
+    <!-- Subtle Top Menu -->
+    <nav class="absolute top-0 right-0 p-6">
+        <div class="flex space-x-6 text-sm">
+            <a href="/admin" class="text-gray-600 hover:text-gray-900 transition">Admin</a>
+            <a href="/about" class="text-gray-600 hover:text-gray-900 transition">About</a>
         </div>
     </nav>
 
-    <!-- Main Content -->
-    <main class="max-w-4xl mx-auto mt-16 px-4 sm:px-6 lg:px-8">
-        <div class="text-center mb-12">
-            <h1 class="text-4xl font-bold text-gray-900 mb-4">Document Search</h1>
-            <p class="text-lg text-gray-600">Ask questions about your documents using natural language</p>
-        </div>
-
-        <!-- Search Form -->
-        <form action="/search" method="POST" class="w-full">
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <div class="mb-4">
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col items-center justify-center px-4 max-w-5xl mx-auto w-full">
+        <div class="w-full max-w-3xl">
+            <!-- Search Form -->
+            <form action="/search" method="POST" class="w-full" id="searchForm">
+                <div class="relative">
                     <input
                         type="text"
                         name="query"
-                        placeholder="Enter your question..."
-                        class="w-full px-4 py-3 text-lg border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        id="queryInput"
+                        placeholder="Ask me about your docs"
+                        class="w-full px-6 py-5 text-base border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-lg transition pr-14"
                         required
                     />
+                    <button
+                        type="submit"
+                        id="submitBtn"
+                        disabled
+                        class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-2.5 transition duration-200 shadow-md disabled:bg-gray-300 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                        aria-label="Submit query"
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+                        </svg>
+                    </button>
                 </div>
-                <button
-                    type="submit"
-                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200"
-                >
-                    Search
-                </button>
-            </div>
-        </form>
+            </form>
+        </div>
     </main>
+
+    <script>
+        const queryInput = document.getElementById('queryInput');
+        const submitBtn = document.getElementById('submitBtn');
+        const searchForm = document.getElementById('searchForm');
+        let isSubmitting = false;
+
+        // Update button state based on input
+        function updateButtonState() {
+            const hasContent = queryInput.value.trim().length >= 3;
+            submitBtn.disabled = !hasContent || isSubmitting;
+        }
+
+        // Enable/disable submit button based on input length
+        queryInput.addEventListener('input', updateButtonState);
+
+        // Handle form submission
+        searchForm.addEventListener('submit', function(e) {
+            // Prevent double submission
+            if (isSubmitting) {
+                e.preventDefault();
+                return;
+            }
+
+            // Validate input
+            if (queryInput.value.trim().length < 3) {
+                e.preventDefault();
+                return;
+            }
+
+            // Set submitting state
+            isSubmitting = true;
+
+            // Update UI to show loading state
+            submitBtn.disabled = true;
+            queryInput.disabled = true;
+            queryInput.classList.add('bg-gray-50');
+
+            // Show loading indicator
+            showLoadingIndicator();
+
+            // Let form submit naturally (don't preventDefault)
+        });
+
+        function showLoadingIndicator() {
+            const loadingHTML = `
+                <div id="loadingIndicator" class="flex items-center justify-center mt-8">
+                    <div class="flex items-center space-x-3 bg-blue-50 px-6 py-3 rounded-full shadow-sm">
+                        <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="text-sm text-gray-700">Thinking...</span>
+                    </div>
+                </div>
+            `;
+            searchForm.insertAdjacentHTML('afterend', loadingHTML);
+        }
+
+        // Initialize button state on page load
+        updateButtonState();
+    </script>
 </body>
 </html>
