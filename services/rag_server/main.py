@@ -16,7 +16,7 @@ import uuid
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
 
 app = FastAPI(title="RAG Server")
 

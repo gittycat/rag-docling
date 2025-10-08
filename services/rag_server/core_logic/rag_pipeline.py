@@ -60,6 +60,20 @@ def query_rag(query_text: str, n_results: int = 3) -> Dict:
 
     response = query_engine.query(query_text)
 
+    logger.info(f"[RAG] Retrieved {len(response.source_nodes)} nodes for context")
+
+    if response.source_nodes:
+        total_context_length = 0
+        for i, node in enumerate(response.source_nodes):
+            node_text = node.get_content()
+            total_context_length += len(node_text)
+            score_info = f" (score: {node.score:.4f})" if hasattr(node, 'score') and node.score else ""
+            logger.debug(f"[RAG] Node {i+1}{score_info}: {node_text[:150]}...")
+
+        logger.info(f"[RAG] Total context length: {total_context_length} characters ({len(response.source_nodes)} nodes)")
+    else:
+        logger.warning("[RAG] No context nodes retrieved - LLM will respond without context")
+
     sources = []
     for node in response.source_nodes:
         metadata = node.metadata

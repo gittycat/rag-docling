@@ -4,7 +4,7 @@ from core_logic.env_config import get_required_env
 def get_llm_client():
     ollama_url = get_required_env("OLLAMA_URL")
     model = get_required_env("LLM_MODEL")
-    return Ollama(model=model, base_url=ollama_url)
+    return Ollama(model=model, base_url=ollama_url, request_timeout=120.0)
 
 def get_prompt_strategy():
     return get_required_env("PROMPT_STRATEGY").lower()
