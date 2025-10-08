@@ -1,0 +1,72 @@
+[
+  {
+    "question": "What are the three qualities that work must have to do great work?",
+    "answer": "The work must have three qualities: something you have a natural aptitude for, that you have a deep interest in, and that offers scope to do great work.",
+    "document": "greatwork.html",
+    "context_hint": "The essay discusses the first step in doing great work",
+    "query_type": "factual"
+  },
+  {
+    "question": "According to the essay, what happens when you start writing?",
+    "answer": "Something comes over most people when they start writing. They write in a different language than they'd use if they were talking to a friend. The sentence structure and even the words are different.",
+    "document": "talk.html",
+    "context_hint": "The essay's main thesis about the difference between written and spoken language",
+    "query_type": "factual"
+  },
+  {
+    "question": "What is the simple trick for getting more people to read what you write?",
+    "answer": "Write in spoken language.",
+    "document": "talk.html",
+    "context_hint": "The opening sentence of the essay",
+    "query_type": "factual"
+  },
+  {
+    "question": "What are the four quadrants of conformism?",
+    "answer": "The four quadrants are: aggressively conventional-minded (upper left), passively conventional-minded (lower left), passively independent-minded (lower right), and aggressively independent-minded (upper right).",
+    "document": "conformism.html",
+    "context_hint": "The essay defines a coordinate system with conventional-minded to independent-minded on horizontal axis and passive to aggressive on vertical axis",
+    "query_type": "factual"
+  },
+  {
+    "question": "What are the distinctive calls of each type of person in the conformism framework?",
+    "answer": "The call of the aggressively conventional-minded is 'Crush <outgroup>!', the passively conventional-minded is 'What will the neighbors think?', the passively independent-minded is 'To each his own', and the aggressively independent-minded is 'Eppur si muove'.",
+    "document": "conformism.html",
+    "context_hint": "The essay describes how to recognize each type by their distinctive calls",
+    "query_type": "factual"
+  },
+  {
+    "question": "Why is informal language better for expressing complex ideas?",
+    "answer": "When specialists talk about ideas in their field, they don't use sentences any more complex than when talking about what to have for lunch. The harder the subject, the more informally experts speak, because they have less to prove and the harder the ideas, the less you can afford to let language get in the way. Informal language is the athletic clothing of ideas.",
+    "document": "talk.html",
+    "context_hint": "The essay discusses how experts communicate",
+    "query_type": "reasoning"
+  },
+  {
+    "question": "How do you write in spoken language according to the essay?",
+    "answer": "Write your first draft as usual, then look at each sentence and ask 'Is this the way I'd say this if I were talking to a friend?' If it isn't, imagine what you would say and use that instead. Read it out loud and fix everything that doesn't sound like conversation.",
+    "document": "talk.html",
+    "context_hint": "The essay provides a practical solution for writing in spoken language",
+    "query_type": "factual"
+  },
+  {
+    "question": "Why are the independent-minded important according to the conformism essay?",
+    "answer": "The independent-minded have all the new ideas. To be a successful scientist or startup CEO, you have to be right when everyone else is wrong, which conventional-minded people can't do. Societies prosper only to the extent that they have customs for keeping the conventional-minded at bay and protecting the independent-minded.",
+    "document": "conformism.html",
+    "context_hint": "The essay discusses the importance of protecting independent-minded people",
+    "query_type": "reasoning"
+  },
+  {
+    "question": "What are the two reasons we need to discuss even 'bad' ideas?",
+    "answer": "First, any process for deciding which ideas to ban is bound to make mistakes, and when a process makes mistakes, you need to leave a margin for error. Second, ideas are more closely related than they look, so restricting discussion of some topics propagates back into any topic that yields implications in the forbidden ones.",
+    "document": "conformism.html",
+    "context_hint": "The essay discusses the dangers of banning ideas",
+    "query_type": "factual"
+  },
+  {
+    "question": "Where have the independent-minded traditionally protected themselves?",
+    "answer": "The independent-minded traditionally protected themselves by congregating in courts, and later in universities, where they could make their own rules. Places where people work with ideas tend to have customs protecting free inquiry.",
+    "document": "conformism.html",
+    "context_hint": "The essay discusses historical safe spaces for independent thinkers",
+    "query_type": "factual"
+  }
+]
