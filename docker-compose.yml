@@ -5,6 +5,7 @@ services:
       context: .
       dockerfile: ./services/fastapi_web_app/Dockerfile
     user: "1000:1000"
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
@@ -25,6 +26,7 @@ services:
       context: .
       dockerfile: ./services/rag_server/Dockerfile
     user: "1000:1000"
+    restart: unless-stopped
     environment:
       - CHROMADB_URL=http://chromadb:8000
       - OLLAMA_URL=http://host.docker.internal:11434
@@ -76,6 +78,7 @@ services:
       dockerfile: ./services/rag_server/Dockerfile
     command: [".venv/bin/celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=2"]
     user: "1000:1000"
+    restart: unless-stopped
     environment:
       - CHROMADB_URL=http://chromadb:8000
       - OLLAMA_URL=http://host.docker.internal:11434
