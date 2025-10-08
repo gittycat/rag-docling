@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message=".*validate_default.*")
+
 from celery_app import celery_app
 from core_logic.document_processor import chunk_document_from_file, extract_metadata
 from core_logic.chroma_manager import get_or_create_collection, add_documents

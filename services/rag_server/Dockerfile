@@ -27,6 +27,15 @@ COPY services/rag_server/main.py ./
 COPY services/rag_server/celery_app.py ./
 COPY services/rag_server/tasks.py ./
 
+# Create non-root user and set ownership
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app && \
+    mkdir -p /tmp/shared && \
+    chown -R appuser:appuser /tmp/shared
+
+# Switch to non-root user
+USER appuser
+
 # Expose port
 EXPOSE 8001
 

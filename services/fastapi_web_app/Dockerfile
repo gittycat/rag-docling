@@ -20,6 +20,13 @@ COPY services/fastapi_web_app/templates ./templates
 COPY services/fastapi_web_app/static ./static
 COPY services/fastapi_web_app/tests ./tests
 
+# Create non-root user and set ownership
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
 # Expose port
 EXPOSE 8000
 
