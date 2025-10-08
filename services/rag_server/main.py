@@ -14,9 +14,11 @@ from pathlib import Path
 import tempfile
 import uuid
 import logging
+import os
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
+log_level = os.getenv('LOG_LEVEL', 'DEBUG').upper()
+logging.basicConfig(level=getattr(logging, log_level), format='%(name)s - %(levelname)s - %(message)s')
 
 app = FastAPI(title="RAG Server")
 
@@ -148,7 +150,7 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                 tmp_path = tmp.name
             logger.info(f"[UPLOAD] Saved to: {tmp_path}")
 
-            task = process_document_task.apply_async(
+            task = process_document_task.apply_async(  # type: ignore[attr-defined]
                 args=[tmp_path, file.filename, batch_id]
             )
             task_infos.append(TaskInfo(task_id=task.id, filename=file.filename))

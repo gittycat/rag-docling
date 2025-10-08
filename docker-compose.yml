@@ -36,6 +36,7 @@ services:
       - RERANKER_SIMILARITY_THRESHOLD=0.3
       - RETRIEVAL_TOP_K=10
       - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=DEBUG
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -86,6 +87,7 @@ services:
       - RERANKER_SIMILARITY_THRESHOLD=0.3
       - RETRIEVAL_TOP_K=10
       - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
