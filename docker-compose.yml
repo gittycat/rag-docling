@@ -26,7 +26,7 @@ services:
     environment:
       - CHROMADB_URL=http://chromadb:8000
       - OLLAMA_URL=http://host.docker.internal:11434
-      - EMBEDDING_MODEL=qwen3-embedding:8b
+      - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b
       - PROMPT_STRATEGY=comprehensive  # Options: fast, balanced, precise, comprehensive
       - ENABLE_RERANKER=true
@@ -75,7 +75,7 @@ services:
     environment:
       - CHROMADB_URL=http://chromadb:8000
       - OLLAMA_URL=http://host.docker.internal:11434
-      - EMBEDDING_MODEL=qwen3-embedding:8b
+      - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b
       - PROMPT_STRATEGY=comprehensive
       - ENABLE_RERANKER=true
