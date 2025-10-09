@@ -5,135 +5,168 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RAG System - Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class'
+        }
+    </script>
+    <script>
+        // Initialize theme before page renders to prevent flash
+        (function() {
+            const theme = localStorage.getItem('theme') ||
+                         (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            if (theme === 'dark') {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+    </script>
 </head>
-<body class="bg-gray-50 min-h-screen">
-    <!-- Top Menu -->
-    <nav class="bg-white shadow-sm">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-center space-x-8 h-16 items-center">
-                <a href="/" class="text-gray-600 hover:text-gray-900 font-medium">Home</a>
-                <span class="text-gray-400 cursor-default font-medium">Admin</span>
-                <a href="/about" class="text-gray-600 hover:text-gray-900 font-medium">About</a>
-            </div>
+<body class="bg-white dark:bg-gray-900 min-h-screen transition-colors duration-200">
+    <!-- Subtle Top Menu -->
+    <nav class="absolute top-0 right-0 p-6">
+        <div class="flex items-center space-x-6 text-sm">
+            <button
+                id="themeToggle"
+                class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-label="Toggle theme"
+            >
+                <svg id="sunIcon" class="w-5 h-5 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                </svg>
+                <svg id="moonIcon" class="w-5 h-5 block dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                </svg>
+            </button>
+            <a href="/" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">Home</a>
+            <a href="/about" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">About</a>
         </div>
     </nav>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto mt-8 px-4 sm:px-6 lg:px-8">
+    <main class="max-w-7xl mx-auto mt-24 px-4 sm:px-6 lg:px-8 pb-12">
         <div class="mb-8">
-            <h1 class="text-3xl font-bold text-gray-900">Document Management</h1>
-            <p class="mt-2 text-gray-600">View and manage indexed documents</p>
+            <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100">Document Management</h1>
+            <p class="mt-2 text-gray-600 dark:text-gray-400">Upload and manage indexed documents</p>
         </div>
 
-        <!-- Upload Form -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-            <h2 class="text-xl font-semibold text-gray-900 mb-4">Upload Documents</h2>
-            <form id="uploadForm" action="/admin/upload" method="POST" enctype="multipart/form-data">
-                <div class="mb-4">
-                    <label for="files" class="block text-sm font-medium text-gray-700 mb-2">
-                        Select files or folder (txt, md, pdf, docx)
-                    </label>
-                    <input
-                        type="file"
-                        name="files"
-                        id="files"
-                        multiple
-                        webkitdirectory
-                        directory
-                        accept=".txt,.md,.pdf,.docx"
-                        class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none p-2"
-                    />
-                    <p class="mt-2 text-xs text-gray-500">
-                        Select multiple files or an entire folder. Only supported file types will be uploaded.
-                    </p>
-                </div>
-                <div class="flex gap-3">
-                    <button
-                        type="button"
-                        id="selectFiles"
-                        class="bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-6 rounded-lg transition duration-200"
-                    >
-                        Select Files
-                    </button>
-                    <button
-                        type="button"
-                        id="selectFolder"
-                        class="bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-6 rounded-lg transition duration-200"
-                    >
-                        Select Folder
-                    </button>
-                    <button
-                        type="submit"
-                        class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-lg transition duration-200"
-                    >
-                        Upload
-                    </button>
-                </div>
+        <!-- Upload Section -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8 transition-colors duration-200">
+            <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Upload Documents</h2>
+            <form id="uploadForm" action="/admin/upload" method="POST" enctype="multipart/form-data" class="hidden">
+                <input
+                    type="file"
+                    name="files"
+                    id="fileInput"
+                    multiple
+                    webkitdirectory
+                    accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.html,.htm,.asciidoc,.adoc"
+                    class="hidden"
+                />
             </form>
+
+            <div class="flex flex-col items-center justify-center py-8">
+                <button
+                    type="button"
+                    id="selectButton"
+                    class="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-medium py-3 px-8 rounded-lg transition duration-200 shadow-md flex items-center space-x-2"
+                >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    </svg>
+                    <span>Choose Files or Folder</span>
+                </button>
+                <p class="mt-4 text-sm text-gray-500 dark:text-gray-400 text-center">
+                    Select one or more files, or pick an entire folder to upload
+                </p>
+                <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                    Supported: txt, md, pdf, docx, pptx, xlsx, html, asciidoc
+                </p>
+            </div>
+
+            <!-- Upload Progress -->
+            <div id="uploadProgress" class="hidden mt-4">
+                <div class="flex items-center justify-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-lg">
+                    <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="text-sm text-gray-700 dark:text-gray-300">Uploading documents...</span>
+                </div>
+            </div>
         </div>
 
         <script>
-            const fileInput = document.getElementById('files');
-            const selectFiles = document.getElementById('selectFiles');
-            const selectFolder = document.getElementById('selectFolder');
+            const fileInput = document.getElementById('fileInput');
+            const selectButton = document.getElementById('selectButton');
+            const uploadForm = document.getElementById('uploadForm');
+            const uploadProgress = document.getElementById('uploadProgress');
 
-            selectFiles.addEventListener('click', () => {
-                fileInput.removeAttribute('webkitdirectory');
-                fileInput.removeAttribute('directory');
+            // File picker that supports multiple files AND folders
+            selectButton.addEventListener('click', () => {
+                // Reset attributes to allow both files and directories
+                fileInput.setAttribute('multiple', '');
+                fileInput.setAttribute('webkitdirectory', '');
                 fileInput.click();
             });
 
-            selectFolder.addEventListener('click', () => {
-                fileInput.setAttribute('webkitdirectory', '');
-                fileInput.setAttribute('directory', '');
-                fileInput.click();
+            // Auto-submit on file selection
+            fileInput.addEventListener('change', (e) => {
+                if (fileInput.files && fileInput.files.length > 0) {
+                    // Show upload progress
+                    uploadProgress.classList.remove('hidden');
+                    selectButton.disabled = true;
+                    selectButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+                    // Submit the form
+                    uploadForm.submit();
+                }
             });
         </script>
 
         <!-- Documents Table -->
-        <div class="bg-white rounded-lg shadow-md overflow-hidden">
-            <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transition-colors duration-200">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead class="bg-gray-50 dark:bg-gray-700">
                     <tr>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                             Document Name
                         </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                             Type
                         </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                             Chunks
                         </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                             Path
                         </th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                             Actions
                         </th>
                     </tr>
                 </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
+                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                     {% if documents %}
                         {% for doc in documents %}
-                        <tr>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                                 {{ doc.file_name }}
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                                 {{ doc.file_type }}
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
                                     {{ doc.chunks }} embeddings
                                 </span>
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                                 {{ doc.path }}
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                 <form method="POST" action="/admin/delete/{{ doc.id }}" class="inline"
                                       onsubmit="return confirm('Are you sure you want to delete this document?');">
-                                    <button type="submit" class="text-red-600 hover:text-red-900">
+                                    <button type="submit" class="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition">
                                         Delete
                                     </button>
                                 </form>
@@ -142,7 +175,7 @@
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="5" class="px-6 py-8 text-center text-gray-500">
+                            <td colspan="5" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
                                 No documents indexed yet
                             </td>
                         </tr>
@@ -151,5 +184,23 @@
             </table>
         </div>
     </main>
+
+    <script>
+        // Theme toggle functionality
+        const themeToggle = document.getElementById('themeToggle');
+
+        themeToggle.addEventListener('click', function() {
+            const html = document.documentElement;
+            const isDark = html.classList.contains('dark');
+
+            if (isDark) {
+                html.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+            } else {
+                html.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+            }
+        });
+    </script>
 </body>
 </html>
