@@ -19,7 +19,7 @@ def get_reranker_config() -> Dict:
     }
 
 def create_reranker_postprocessors() -> Optional[List]:
-    """Create combined reranker strategy with threshold-based filtering"""
+    """Create reranker with top-n selection"""
     config = get_reranker_config()
 
     if not config['enabled']:
@@ -27,19 +27,18 @@ def create_reranker_postprocessors() -> Optional[List]:
         return None
 
     logger.info(f"[RERANKER] Initializing with model: {config['model']}")
-    logger.info(f"[RERANKER] Similarity threshold: {config['similarity_threshold']}")
+    # Use top_n to select best reranked nodes (usually 5-7 for good coverage)
+    top_n = max(5, config['retrieval_top_k'] // 2)  # Return half of retrieved, min 5
+    logger.info(f"[RERANKER] Returning top {top_n} nodes after reranking")
 
     postprocessors = [
         SentenceTransformerRerank(
             model=config['model'],
-            top_n=config['retrieval_top_k']
-        ),
-        SimilarityPostprocessor(
-            similarity_cutoff=config['similarity_threshold']
+            top_n=top_n
         )
     ]
 
-    logger.info("[RERANKER] Postprocessors initialized successfully")
+    logger.info("[RERANKER] Postprocessor initialized successfully")
     return postprocessors
 
 def query_rag(query_text: str, n_results: int = 3) -> Dict:
@@ -49,7 +48,8 @@ def query_rag(query_text: str, n_results: int = 3) -> Dict:
     prompt_template_str = get_prompt_template()
     qa_prompt = PromptTemplate(prompt_template_str)
 
-    retrieval_top_k = config['retrieval_top_k'] if config['enabled'] else n_results
+    # Always use configured retrieval_top_k for better coverage with granular Docling chunks
+    retrieval_top_k = config['retrieval_top_k']
     logger.info(f"[RAG] Using retrieval_top_k={retrieval_top_k}, reranker_enabled={config['enabled']}")
 
     query_engine = index.as_query_engine(
@@ -77,9 +77,11 @@ def query_rag(query_text: str, n_results: int = 3) -> Dict:
     sources = []
     for node in response.source_nodes:
         metadata = node.metadata
+        full_text = node.get_content()
         source = {
             'document_name': metadata.get('file_name', 'Unknown'),
-            'excerpt': node.get_content()[:200] + '...' if len(node.get_content()) > 200 else node.get_content(),
+            'excerpt': full_text[:200] + '...' if len(full_text) > 200 else full_text,
+            'full_text': full_text,
             'path': metadata.get('path', ''),
             'distance': 1.0 - node.score if hasattr(node, 'score') and node.score else None
         }

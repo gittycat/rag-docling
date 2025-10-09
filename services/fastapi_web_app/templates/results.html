@@ -45,11 +45,43 @@
     <!-- Main Content -->
     <main class="max-w-5xl mx-auto mt-20 px-4 sm:px-6 lg:px-8 pb-12">
         <!-- User Query Bubble (Top Right) -->
-        <div class="flex justify-end mb-8">
+        <div class="flex justify-end mb-4">
             <div class="bg-blue-50 dark:bg-blue-900/30 rounded-3xl px-6 py-4 max-w-2xl shadow-sm">
                 <p class="text-base text-gray-900 dark:text-gray-100">{{ query }}</p>
             </div>
         </div>
+
+        <!-- LLM Context Dropdown -->
+        {% if sources %}
+        <div class="flex justify-end mb-8">
+            <div class="max-w-2xl w-full">
+                <details class="group">
+                    <summary class="cursor-pointer list-none">
+                        <div class="flex items-center justify-end space-x-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition">
+                            <span>View LLM Context ({{ sources|length }} chunks)</span>
+                            <svg class="w-4 h-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </div>
+                    </summary>
+                    <div class="mt-3 space-y-3 bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                        <p class="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                            These are the text chunks retrieved and reranked, sent to the LLM as context:
+                        </p>
+                        {% for source in sources %}
+                        <div class="bg-white dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-600">
+                            <div class="flex items-start justify-between mb-2">
+                                <span class="text-xs font-medium text-gray-700 dark:text-gray-300">{{ source.document_name }}</span>
+                                <span class="text-xs text-gray-500 dark:text-gray-500">Chunk {{ loop.index }}</span>
+                            </div>
+                            <div class="text-xs text-gray-600 dark:text-gray-400 font-mono whitespace-pre-wrap break-words">{{ source.full_text }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- Answer Section -->
         <div class="mb-8">
