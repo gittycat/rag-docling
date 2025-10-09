@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Use Python 3.12 slim image
 FROM python:3.12-slim
 
@@ -27,7 +28,9 @@ COPY --chown=appuser:appuser services/rag_server/pyproject.toml ./
 
 # Install dependencies using uv with CPU-only PyTorch for smaller image
 # Use unsafe-best-match to allow finding best versions across all indexes
-RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+# Cache mount persists downloaded packages across builds
+RUN --mount=type=cache,target=/home/appuser/.cache/uv,uid=1000,gid=1000 \
+    uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
 
 # Copy application code (exclude pyproject.toml to avoid overwriting .venv)
 COPY --chown=appuser:appuser services/rag_server/core_logic ./core_logic

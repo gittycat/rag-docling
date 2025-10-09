@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Use Python 3.12 slim image
 FROM python:3.12-slim
 
@@ -18,7 +19,9 @@ USER appuser
 COPY --chown=appuser:appuser services/fastapi_web_app/pyproject.toml ./
 
 # Install dependencies using uv
-RUN uv sync
+# Cache mount persists downloaded packages across builds
+RUN --mount=type=cache,target=/home/appuser/.cache/uv,uid=1000,gid=1000 \
+    uv sync
 
 # Copy application code (exclude pyproject.toml to avoid overwriting .venv)
 COPY --chown=appuser:appuser services/fastapi_web_app/main.py ./
