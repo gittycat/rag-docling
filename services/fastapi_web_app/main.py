@@ -26,10 +26,13 @@ RAG_SERVER_URL = get_required_env("RAG_SERVER_URL")
 
 @app.get("/")
 async def home(request: Request):
-    return templates.TemplateResponse(request, "home.html")
+    return templates.TemplateResponse(
+        request=request,
+        name="home.html"
+    )
 
-@app.post("/search")
-async def search(request: Request, query: str = Form(...)):
+@app.post("/")
+async def home_search(request: Request, query: str = Form(...)):
     try:
         # Call RAG server
         # Timeout set to 120s to handle first-time reranker model download (~80MB)
@@ -43,9 +46,9 @@ async def search(request: Request, query: str = Form(...)):
             result = response.json()
 
         return templates.TemplateResponse(
-            request,
-            "results.html",
-            {
+            request=request,
+            name="home.html",
+            context={
                 "query": query,
                 "answer": result.get("answer", "No answer generated"),
                 "sources": result.get("sources", [])
@@ -54,14 +57,19 @@ async def search(request: Request, query: str = Form(...)):
     except httpx.HTTPError as e:
         # Handle connection errors gracefully
         return templates.TemplateResponse(
-            request,
-            "results.html",
-            {
+            request=request,
+            name="home.html",
+            context={
                 "query": query,
                 "answer": f"Error connecting to RAG server: {str(e)}",
                 "sources": []
             }
         )
+
+# Legacy endpoint for backward compatibility
+@app.post("/search")
+async def search(request: Request, query: str = Form(...)):
+    return await home_search(request, query)
 
 @app.get("/admin")
 async def admin(request: Request):
@@ -78,9 +86,9 @@ async def admin(request: Request):
         documents = []
 
     return templates.TemplateResponse(
-        request,
-        "admin.html",
-        {"documents": documents}
+        request=request,
+        name="admin.html",
+        context={"documents": documents}
     )
 
 @app.post("/admin/upload")
@@ -132,9 +140,9 @@ async def delete_document(request: Request, document_id: str):
 @app.get("/admin/upload/progress/{batch_id}")
 async def upload_progress_page(request: Request, batch_id: str):
     return templates.TemplateResponse(
-        request,
-        "upload_progress.html",
-        {"batch_id": batch_id}
+        request=request,
+        name="upload_progress.html",
+        context={"batch_id": batch_id}
     )
 
 @app.get("/admin/upload/progress/{batch_id}/stream")
@@ -183,7 +191,10 @@ async def upload_progress_stream(batch_id: str):
 
 @app.get("/about")
 async def about(request: Request):
-    return templates.TemplateResponse(request, "about.html")
+    return templates.TemplateResponse(
+        request=request,
+        name="about.html"
+    )
 
 @app.get("/health")
 async def health():
