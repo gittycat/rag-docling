@@ -12,6 +12,8 @@ dependencies = [
     "pydantic>=2.9.2",
     "pydantic-settings>=2.6.0",
     "sse-starlette>=3.0.2",
+    "markdown>=3.9",
+    "bleach>=6.2.0",
 ]
 
 [dependency-groups]

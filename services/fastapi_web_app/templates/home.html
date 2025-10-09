@@ -10,6 +10,65 @@
             darkMode: 'class'
         }
     </script>
+    <style>
+        /* Override prose colors to match theme */
+        .answer-content p,
+        .answer-content li,
+        .answer-content {
+            color: inherit;
+        }
+
+        .answer-content strong {
+            color: inherit;
+            font-weight: 600;
+        }
+
+        .answer-content code {
+            color: inherit;
+            background-color: rgba(107, 114, 128, 0.1);
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+            font-size: 0.875em;
+        }
+
+        .dark .answer-content code {
+            background-color: rgba(156, 163, 175, 0.2);
+        }
+
+        .answer-content pre {
+            background-color: rgba(107, 114, 128, 0.05);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+        }
+
+        .dark .answer-content pre {
+            background-color: rgba(31, 41, 55, 0.5);
+        }
+
+        .answer-content ul, .answer-content ol {
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .answer-content li {
+            margin-top: 0.25rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .answer-content p {
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .answer-content p:first-child {
+            margin-top: 0;
+        }
+
+        .answer-content p:last-child {
+            margin-bottom: 0;
+        }
+    </style>
     <script>
         // Initialize theme before page renders to prevent flash
         (function() {
@@ -115,8 +174,8 @@
 
             <!-- Answer Section -->
             <div class="mb-8">
-                <div class="prose max-w-none text-gray-800 dark:text-gray-200 text-base leading-relaxed">
-                    {{ answer }}
+                <div class="answer-content text-base leading-relaxed text-gray-900 dark:text-gray-100">
+                    {{ answer|safe }}
                 </div>
             </div>
 

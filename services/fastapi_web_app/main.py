@@ -7,6 +7,8 @@ from pathlib import Path
 import httpx
 import asyncio
 import json
+import markdown
+import bleach
 from typing import List
 from env_config import get_required_env
 
@@ -23,6 +25,34 @@ templates = Jinja2Templates(directory=str(templates_path))
 
 # RAG server URL
 RAG_SERVER_URL = get_required_env("RAG_SERVER_URL")
+
+def markdown_to_html(text: str) -> str:
+    """Convert markdown text to HTML with proper formatting and sanitization."""
+    md = markdown.Markdown(extensions=['nl2br', 'fenced_code'])
+    html = md.convert(text)
+
+    allowed_tags = [
+        'p', 'br', 'strong', 'em', 'u', 'code', 'pre',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'ul', 'ol', 'li',
+        'blockquote',
+        'a', 'span', 'div'
+    ]
+
+    allowed_attributes = {
+        'a': ['href', 'title'],
+        'code': ['class'],
+        'pre': ['class']
+    }
+
+    sanitized_html = bleach.clean(
+        html,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        strip=True
+    )
+
+    return sanitized_html
 
 @app.get("/")
 async def home(request: Request):
@@ -45,12 +75,15 @@ async def home_search(request: Request, query: str = Form(...)):
             response.raise_for_status()
             result = response.json()
 
+        answer_text = result.get("answer", "No answer generated")
+        answer_html = markdown_to_html(answer_text)
+
         return templates.TemplateResponse(
             request=request,
             name="home.html",
             context={
                 "query": query,
-                "answer": result.get("answer", "No answer generated"),
+                "answer": answer_html,
                 "sources": result.get("sources", [])
             }
         )
