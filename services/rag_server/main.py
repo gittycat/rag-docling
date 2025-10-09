@@ -27,6 +27,13 @@ app = FastAPI(title="RAG Server")
 async def startup_event():
     initialize_settings()
 
+    # Pre-initialize reranker to download model during startup
+    # This prevents timeout on first query when model downloads from HuggingFace
+    from core_logic.rag_pipeline import create_reranker_postprocessors
+    logger.info("[STARTUP] Pre-initializing reranker model...")
+    create_reranker_postprocessors()
+    logger.info("[STARTUP] Reranker model ready")
+
 class QueryRequest(BaseModel):
     query: str
 

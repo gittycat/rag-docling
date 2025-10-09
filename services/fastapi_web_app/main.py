@@ -32,11 +32,12 @@ async def home(request: Request):
 async def search(request: Request, query: str = Form(...)):
     try:
         # Call RAG server
+        # Timeout set to 120s to handle first-time reranker model download (~80MB)
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{RAG_SERVER_URL}/query",
                 json={"query": query},
-                timeout=30.0
+                timeout=120.0
             )
             response.raise_for_status()
             result = response.json()
