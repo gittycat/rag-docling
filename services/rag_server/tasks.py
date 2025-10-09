@@ -11,8 +11,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-initialize_settings()
-
 @celery_app.task(bind=True, name="tasks.process_document_task")
 def process_document_task(self, file_path: str, filename: str, batch_id: str):
     task_id = self.request.id

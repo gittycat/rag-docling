@@ -42,7 +42,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - chromadb
+      chromadb:
+        condition: service_started
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 1s
+      timeout: 2s
+      retries: 5
+      start_period: 3s
     networks:
       - private
       - public
@@ -67,6 +76,7 @@ services:
   # Redis - Message broker and result backend for Celery
   redis:
     image: redis:8-alpine
+    command: redis-server --loglevel warning --save "" --appendonly no
     networks:
       - private
     restart: unless-stopped
@@ -76,7 +86,7 @@ services:
     build:
       context: .
       dockerfile: ./services/rag_server/Dockerfile
-    command: [".venv/bin/celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    command: [".venv/bin/celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=2", "--without-mingle", "--without-gossip"]
     user: "1000:1000"
     restart: unless-stopped
     environment:
@@ -96,6 +106,7 @@ services:
     depends_on:
       - redis
       - chromadb
+      - rag-server
     networks:
       - private
       - public

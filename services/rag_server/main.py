@@ -16,9 +16,10 @@ import uuid
 import logging
 import os
 
+from core_logic.logging_config import configure_logging
+
+configure_logging()
 logger = logging.getLogger(__name__)
-log_level = os.getenv('LOG_LEVEL', 'DEBUG').upper()
-logging.basicConfig(level=getattr(logging, log_level), format='%(name)s - %(levelname)s - %(message)s')
 
 app = FastAPI(title="RAG Server")
 
