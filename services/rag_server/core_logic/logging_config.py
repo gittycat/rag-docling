@@ -67,3 +67,7 @@ def configure_logging(log_level: str = None):
     # Configure httpx/httpcore to not show full request details
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    # Reduce noise from HuggingFace model downloads (filelock and urllib3)
+    logging.getLogger("filelock").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
