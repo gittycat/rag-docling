@@ -33,7 +33,7 @@ services:
       - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
       - PROMPT_STRATEGY=balanced  # Options: fast, balanced, precise, comprehensive
-      - ENABLE_RERANKER=false
+      - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RERANKER_SIMILARITY_THRESHOLD=0.3
       - RETRIEVAL_TOP_K=10
@@ -57,7 +57,7 @@ services:
       - public
     volumes:
       - ./data/indexed_documents:/app/documents
-      - shared_temp:/tmp/shared
+      - docs_repo:/tmp/shared
     secrets:
       - ollama_config
 
@@ -95,7 +95,7 @@ services:
       - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
       - PROMPT_STRATEGY=balanced
-      - ENABLE_RERANKER=false
+      - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RERANKER_SIMILARITY_THRESHOLD=0.3
       - RETRIEVAL_TOP_K=10
@@ -112,7 +112,7 @@ services:
       - public
     volumes:
       - ./data/indexed_documents:/app/documents
-      - shared_temp:/tmp/shared
+      - docs_repo:/tmp/shared
     secrets:
       - ollama_config
 
@@ -128,7 +128,7 @@ networks:
 volumes:
   chroma_db_data:
     driver: local
-  shared_temp:
+  docs_repo:
     driver: local
 
 # Secrets management
