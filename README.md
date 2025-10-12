@@ -7,23 +7,27 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 - **Natural Language Search**: Ask questions in plain English and get AI-powered answers
 - **Advanced Document Processing**: Powered by Docling with superior PDF/DOCX parsing, table extraction, and layout understanding
 - **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html, and more
-- **Intelligent Chunking**: Token-aware HybridChunker for optimal semantic boundaries
+- **Intelligent Chunking**: Structural chunking that preserves document hierarchy (headings, sections, tables)
+- **Two-Stage Retrieval**: Vector search (top-10) + cross-encoder reranking for better precision
 - **Local Deployment**: All data stays on your machine
-- **Modern Web Interface**: Clean, responsive UI with Tailwind CSS
+- **Modern Web Interface**: Clean, responsive UI with Tailwind CSS and dark mode support
 - **Document Management**: Admin interface for viewing and managing indexed documents
-- **Test-Driven Development**: Comprehensive test coverage (33 tests passing)
+- **RAG Evaluation**: RAGAS framework integration for measuring retrieval and generation quality
+- **Test-Driven Development**: Comprehensive test coverage (60 tests: 33 core + 27 evaluation)
 
 ## Technology Stack
 
 - **Frontend**: FastAPI + Jinja2 + Tailwind CSS
 - **RAG Server**: Python + FastAPI
-- **Vector Database**: ChromaDB with LangChain integration
-- **LLM**: Ollama (llama3.2)
-- **Embeddings**: LangChain OllamaEmbeddings with nomic-embed-text (768 dimensions)
-- **Document Processing**: Docling + LangChain DoclingLoader
-- **Chunking**: Docling HybridChunker (token-aware with hierarchical structure)
+- **Vector Database**: ChromaDB with LlamaIndex integration
+- **LLM**: Ollama (gemma3:4b for generation, gemma3:4b for evaluation)
+- **Embeddings**: LlamaIndex OllamaEmbedding with qwen3-embedding:8b (768 dimensions)
+- **Document Processing**: Docling + LlamaIndex DoclingReader/DoclingNodeParser
+- **Chunking**: Docling structural chunking (preserves document hierarchy)
+- **Reranking**: SentenceTransformer cross-encoder (ms-marco-MiniLM-L-6-v2)
 - **Orchestration**: Docker Compose
 - **Package Management**: uv
+- **Task Queue**: Celery + Redis (for async document processing)
 
 ## Architecture
 
@@ -66,8 +70,8 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
    curl https://ollama.ai/install.sh | sh
 
    # Pull required models
-   ollama pull llama3.2
-   ollama pull nomic-embed-text
+   ollama pull gemma3:4b           # LLM for generation
+   ollama pull qwen3-embedding:8b  # Embeddings (768-dim)
    ```
 
 3. **Python 3.12+** (for local development/testing)
@@ -346,16 +350,20 @@ docker-compose up -d
 
 The project follows Test-Driven Development (TDD) methodology:
 
-- **54 total tests** (all passing)
+- **60 total tests** (all passing)
   - 21 web app tests (UI, routing, templates)
-  - 33 RAG server tests (Docling processing, embeddings, LangChain integration, LLM, pipeline, API)
+  - 33 RAG server core tests (Docling processing, embeddings, LlamaIndex integration, LLM, pipeline, API)
+  - 27 evaluation tests (RAGAS metrics, dataset loading, report generation)
 
 Run all tests:
 ```bash
-# RAG Server (with new Docling/LangChain tests)
+# RAG Server core tests
 cd services/rag_server && .venv/bin/pytest -v
 
-# Web App
+# RAG Server evaluation tests
+cd services/rag_server && .venv/bin/pytest tests/evaluation/ -v
+
+# Web App tests
 cd services/fastapi_web_app && uv run pytest -v
 ```
 
@@ -363,31 +371,38 @@ cd services/fastapi_web_app && uv run pytest -v
 
 ### Document Processing Pipeline
 
-The RAG server uses **Docling + LangChain** for superior document processing:
+The RAG server uses **Docling + LlamaIndex** for superior document processing:
 
-1. **DoclingLoader**: Advanced document parsing with:
+1. **DoclingReader** (llama-index-readers-docling): Advanced document parsing with:
    - Superior PDF layout understanding
    - Table structure extraction
    - Reading order detection
    - Support for PPTX, XLSX, HTML, and more
+   - **Critical**: Must use `export_type=DoclingReader.ExportType.JSON` for compatibility
 
-2. **HybridChunker**: Intelligent token-aware chunking that:
-   - Respects document hierarchy (headings, sections)
-   - Uses tokenizer from `sentence-transformers/all-MiniLM-L6-v2`
-   - Splits oversized chunks and merges undersized chunks
-   - Maintains semantic boundaries for better retrieval
+2. **DoclingNodeParser** (llama-index-node-parser-docling): Structural chunking that:
+   - Preserves document hierarchy (headings, sections, tables)
+   - Creates one node per structural element
+   - Variable node sizes (9 chars to 27KB) based on document structure
+   - Metadata extraction for each node
 
-3. **LangChain Integration**:
-   - Unified interfaces for embeddings and vector stores
-   - Better ecosystem compatibility
-   - Simplified retrieval patterns
+3. **Two-Stage Retrieval**:
+   - **Stage 1**: Vector similarity search (top-10 results, high recall)
+   - **Stage 2**: Cross-encoder reranking (ms-marco-MiniLM-L-6-v2, high precision)
+   - **Threshold filtering**: Only nodes above 0.65 similarity included in context
+   - **Adaptive context**: Returns 0-10 nodes based on relevance
 
-### Key Improvements over Previous Implementation
+4. **LlamaIndex Integration**:
+   - ChromaVectorStore with VectorStoreIndex
+   - Query engine with custom PromptTemplate (4 strategies)
+   - Node postprocessors for reranking and filtering
 
-- **Better PDF Parsing**: Docling understands complex layouts, tables, and reading order
-- **Smarter Chunking**: Token-aware HybridChunker vs simple character-based splitting
-- **More Formats**: Added support for PPTX, XLSX, HTML, ASCIIDOC
-- **LangChain Ecosystem**: Better integration with LangChain tools and patterns
+### Key Features
+
+- **Document Structure Preservation**: Maintains headings, sections, tables as separate nodes
+- **Two-Stage Retrieval**: Combines recall of vector search with precision of reranking
+- **Dynamic Context Window**: Only includes relevant nodes above similarity threshold
+- **Multiple Prompt Strategies**: fast, balanced, precise, comprehensive
 
 ## Roadmap
 

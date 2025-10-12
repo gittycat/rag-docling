@@ -94,6 +94,11 @@ htmlcov/
 test-results/
 test_data/
 
+# Development artifacts
+/test_*.html
+TECH_DOCS.json
+*.bak.md
+
 # OS generated files
 .DS_Store
 .DS_Store?
