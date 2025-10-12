@@ -25,23 +25,22 @@ def test_results_page_displays_sources():
     assert response.status_code == 200
     assert b'source' in response.content.lower() or b'document' in response.content.lower()
 
-def test_results_page_has_back_button():
-    """Results page should have a back/return to home button"""
+def test_results_page_has_follow_up_form():
+    """Results page should have a follow-up search form"""
     response = client.post("/search", data={"query": "test question"})
     assert response.status_code == 200
     content = response.content.lower()
-    assert b'back' in content or b'home' in content or b'return' in content
+    # Should have a form for follow-up questions
+    assert b'follow-up' in content or b'form' in content
 
-def test_results_page_no_top_menu():
-    """Results page should not have the top navigation menu"""
+def test_results_page_has_top_menu():
+    """Combined page should have the top navigation menu"""
     response = client.post("/search", data={"query": "test question"})
     assert response.status_code == 200
     content = response.content.decode()
-    # Check that it's not a full nav menu (should just have back button)
-    # The requirement is "No top menu visible on this page"
-    # We'll check that admin/about links are not present
-    has_full_nav = 'admin' in content.lower() and 'about' in content.lower()
-    assert not has_full_nav, "Results page should not have full top navigation menu"
+    # Combined page should have admin/about links in top nav
+    has_nav = 'admin' in content.lower() and 'about' in content.lower()
+    assert has_nav, "Combined page should have top navigation menu"
 
 def test_empty_query_returns_error():
     """Empty query should return an error or redirect"""

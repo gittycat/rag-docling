@@ -1,206 +1,266 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG System - Admin</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class'
-        }
-    </script>
-    <script>
-        // Initialize theme before page renders to prevent flash
-        (function() {
-            const theme = localStorage.getItem('theme') ||
-                         (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-            if (theme === 'dark') {
-                document.documentElement.classList.add('dark');
-            }
-        })();
-    </script>
-</head>
-<body class="bg-white dark:bg-gray-900 min-h-screen transition-colors duration-200">
-    <!-- Subtle Top Menu -->
-    <nav class="absolute top-0 right-0 p-6">
-        <div class="flex items-center space-x-6 text-sm">
-            <button
-                id="themeToggle"
-                class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-                aria-label="Toggle theme"
-            >
-                <svg id="sunIcon" class="w-5 h-5 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
-                </svg>
-                <svg id="moonIcon" class="w-5 h-5 block dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
-                </svg>
-            </button>
-            <a href="/" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">Home</a>
-            <a href="/about" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">About</a>
-        </div>
-    </nav>
+{% extends "base.html" %}
 
-    <!-- Main Content -->
-    <main class="max-w-7xl mx-auto mt-24 px-4 sm:px-6 lg:px-8 pb-12">
-        <div class="mb-8">
-            <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100">Document Management</h1>
-            <p class="mt-2 text-gray-600 dark:text-gray-400">Upload and manage indexed documents</p>
-        </div>
+{% block title %}RAG System - Admin{% endblock %}
 
-        <!-- Upload Section -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8 transition-colors duration-200">
-            <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Upload Documents</h2>
-            <form id="uploadForm" action="/admin/upload" method="POST" enctype="multipart/form-data" class="hidden">
-                <input
-                    type="file"
-                    name="files"
-                    id="fileInput"
-                    multiple
-                    webkitdirectory
-                    accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.html,.htm,.asciidoc,.adoc"
-                    class="hidden"
-                />
-            </form>
+{% block nav_links %}
+<a href="/" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">Home</a>
+<a href="/about" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">About</a>
+{% endblock %}
 
-            <div class="flex flex-col items-center justify-center py-8">
+{% block content %}
+<!-- Main Content -->
+<main class="max-w-7xl mx-auto mt-24 px-4 sm:px-6 lg:px-8 pb-12">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100">Document Management</h1>
+        <p class="mt-2 text-gray-600 dark:text-gray-400">Upload and manage indexed documents</p>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8 transition-colors duration-200">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Upload Documents</h2>
+        <form id="uploadForm" action="/admin/upload" method="POST" enctype="multipart/form-data" class="hidden">
+            <input
+                type="file"
+                name="files"
+                id="fileInput"
+                accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.html,.htm,.asciidoc,.adoc"
+                class="hidden"
+            />
+        </form>
+
+        <div class="flex flex-col items-center justify-center py-8">
+            <div class="flex flex-col sm:flex-row gap-3 mb-4">
                 <button
                     type="button"
-                    id="selectButton"
-                    class="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-medium py-3 px-8 rounded-lg transition duration-200 shadow-md flex items-center space-x-2"
+                    id="selectFilesButton"
+                    class="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-medium py-3 px-6 rounded-lg transition duration-200 shadow-md flex items-center space-x-2"
                 >
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
                     </svg>
-                    <span>Choose Files or Folder</span>
+                    <span>Select Files</span>
                 </button>
-                <p class="mt-4 text-sm text-gray-500 dark:text-gray-400 text-center">
-                    Select one or more files, or pick an entire folder to upload
-                </p>
-                <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                    Supported: txt, md, pdf, docx, pptx, xlsx, html, asciidoc
-                </p>
-            </div>
-
-            <!-- Upload Progress -->
-            <div id="uploadProgress" class="hidden mt-4">
-                <div class="flex items-center justify-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-lg">
-                    <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                <button
+                    type="button"
+                    id="selectFolderButton"
+                    class="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white font-medium py-3 px-6 rounded-lg transition duration-200 shadow-md flex items-center space-x-2"
+                >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                     </svg>
-                    <span class="text-sm text-gray-700 dark:text-gray-300">Uploading documents...</span>
-                </div>
+                    <span>Select Folder</span>
+                </button>
+            </div>
+            <p class="text-sm text-gray-500 dark:text-gray-400 text-center">
+                Choose individual files or an entire folder to upload
+            </p>
+            <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Supported: txt, md, pdf, docx, pptx, xlsx, html, asciidoc
+            </p>
+        </div>
+
+        <!-- Upload Progress -->
+        <div id="uploadProgress" class="hidden mt-4">
+            <div class="flex items-center justify-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-lg">
+                <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-sm text-gray-700 dark:text-gray-300">Uploading documents...</span>
             </div>
         </div>
+    </div>
 
-        <script>
-            const fileInput = document.getElementById('fileInput');
-            const selectButton = document.getElementById('selectButton');
-            const uploadForm = document.getElementById('uploadForm');
-            const uploadProgress = document.getElementById('uploadProgress');
-
-            // File picker that supports multiple files AND folders
-            selectButton.addEventListener('click', () => {
-                // Reset attributes to allow both files and directories
-                fileInput.setAttribute('multiple', '');
-                fileInput.setAttribute('webkitdirectory', '');
-                fileInput.click();
-            });
-
-            // Auto-submit on file selection
-            fileInput.addEventListener('change', (e) => {
-                if (fileInput.files && fileInput.files.length > 0) {
-                    // Show upload progress
-                    uploadProgress.classList.remove('hidden');
-                    selectButton.disabled = true;
-                    selectButton.classList.add('opacity-50', 'cursor-not-allowed');
-
-                    // Submit the form
-                    uploadForm.submit();
-                }
-            });
-        </script>
-
-        <!-- Documents Table -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transition-colors duration-200">
-            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead class="bg-gray-50 dark:bg-gray-700">
-                    <tr>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                            Document Name
-                        </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                            Type
-                        </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                            Chunks
-                        </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                            Path
-                        </th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                            Actions
-                        </th>
+    <!-- Documents Table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden transition-colors duration-200">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Document Name
+                    </th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Type
+                    </th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Chunks
+                    </th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Path
+                    </th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Actions
+                    </th>
+                </tr>
+            </thead>
+            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                {% if documents %}
+                    {% for doc in documents %}
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {{ doc.file_name }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {{ doc.file_type }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
+                                {{ doc.chunks }} embeddings
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {{ doc.path }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <form method="POST" action="/admin/delete/{{ doc.id }}" class="inline"
+                                  onsubmit="return confirm('Are you sure you want to delete this document?');">
+                                <button type="submit" class="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition">
+                                    Delete
+                                </button>
+                            </form>
+                        </td>
                     </tr>
-                </thead>
-                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                    {% if documents %}
-                        {% for doc in documents %}
-                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
-                                {{ doc.file_name }}
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                                {{ doc.file_type }}
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
-                                    {{ doc.chunks }} embeddings
-                                </span>
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                                {{ doc.path }}
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                <form method="POST" action="/admin/delete/{{ doc.id }}" class="inline"
-                                      onsubmit="return confirm('Are you sure you want to delete this document?');">
-                                    <button type="submit" class="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition">
-                                        Delete
-                                    </button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    {% else %}
-                        <tr>
-                            <td colspan="5" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
-                                No documents indexed yet
-                            </td>
-                        </tr>
-                    {% endif %}
-                </tbody>
-            </table>
-        </div>
-    </main>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="5" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                            No documents indexed yet
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</main>
+{% endblock %}
 
-    <script>
-        // Theme toggle functionality
-        const themeToggle = document.getElementById('themeToggle');
+{% block extra_scripts %}
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const selectFilesButton = document.getElementById('selectFilesButton');
+    const selectFolderButton = document.getElementById('selectFolderButton');
+    const uploadForm = document.getElementById('uploadForm');
+    const uploadProgress = document.getElementById('uploadProgress');
 
-        themeToggle.addEventListener('click', function() {
-            const html = document.documentElement;
-            const isDark = html.classList.contains('dark');
+    async function uploadFiles(files) {
+        if (!files || files.length === 0) return;
 
-            if (isDark) {
-                html.classList.remove('dark');
-                localStorage.setItem('theme', 'light');
+        // Show upload progress
+        uploadProgress.classList.remove('hidden');
+        selectFilesButton.disabled = true;
+        selectFolderButton.disabled = true;
+        selectFilesButton.classList.add('opacity-50', 'cursor-not-allowed');
+        selectFolderButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+        // Use FormData for modern upload
+        const formData = new FormData();
+        for (const file of files) {
+            // Preserve relative path if available
+            const filename = file.webkitRelativePath || file.name;
+            formData.append('files', file, filename);
+        }
+
+        try {
+            const response = await fetch('/admin/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                // Reload the page to show updated documents
+                window.location.reload();
             } else {
-                html.classList.add('dark');
-                localStorage.setItem('theme', 'dark');
+                alert('Upload failed. Please try again.');
+                uploadProgress.classList.add('hidden');
+                selectFilesButton.disabled = false;
+                selectFolderButton.disabled = false;
+                selectFilesButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                selectFolderButton.classList.remove('opacity-50', 'cursor-not-allowed');
             }
-        });
-    </script>
-</body>
-</html>
+        } catch (error) {
+            alert('Upload failed. Please try again.');
+            uploadProgress.classList.add('hidden');
+            selectFilesButton.disabled = false;
+            selectFolderButton.disabled = false;
+            selectFilesButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            selectFolderButton.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+    }
+
+    // Select Files button
+    selectFilesButton.addEventListener('click', async () => {
+        if ('showOpenFilePicker' in window) {
+            // Modern File System Access API (Chromium browsers)
+            try {
+                const handles = await window.showOpenFilePicker({
+                    multiple: true,
+                    types: [{
+                        description: 'Documents',
+                        accept: {
+                            'text/*': ['.txt', '.md', '.html', '.htm', '.asciidoc', '.adoc'],
+                            'application/pdf': ['.pdf'],
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+                            'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+                            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+                        }
+                    }]
+                });
+                const files = await Promise.all(handles.map(h => h.getFile()));
+                await uploadFiles(files);
+            } catch (err) {
+                // User cancelled or error occurred
+                if (err.name !== 'AbortError') {
+                    console.error('File selection error:', err);
+                }
+            }
+        } else {
+            // Fallback to traditional input
+            fileInput.multiple = true;
+            fileInput.removeAttribute('webkitdirectory');
+            fileInput.onchange = () => uploadFiles([...fileInput.files]);
+            fileInput.click();
+        }
+    });
+
+    // Select Folder button
+    selectFolderButton.addEventListener('click', async () => {
+        if ('showDirectoryPicker' in window) {
+            // Modern File System Access API (Chromium browsers)
+            try {
+                const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+                const files = [];
+
+                async function traverseDirectory(handle, path = handle.name) {
+                    for await (const entry of handle.values()) {
+                        const entryPath = `${path}/${entry.name}`;
+                        if (entry.kind === 'file') {
+                            const file = await entry.getFile();
+                            // Add webkitRelativePath for compatibility
+                            Object.defineProperty(file, 'webkitRelativePath', {
+                                get: () => entryPath
+                            });
+                            files.push(file);
+                        } else if (entry.kind === 'directory') {
+                            await traverseDirectory(entry, entryPath);
+                        }
+                    }
+                }
+
+                await traverseDirectory(dirHandle);
+                await uploadFiles(files);
+            } catch (err) {
+                // User cancelled or error occurred
+                if (err.name !== 'AbortError') {
+                    console.error('Directory selection error:', err);
+                }
+            }
+        } else {
+            // Fallback to traditional input with webkitdirectory
+            fileInput.multiple = true;
+            fileInput.setAttribute('webkitdirectory', '');
+            fileInput.onchange = () => uploadFiles([...fileInput.files]);
+            fileInput.click();
+        }
+    });
+</script>
+{% endblock %}
