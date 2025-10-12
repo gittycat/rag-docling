@@ -62,14 +62,18 @@ async def home(request: Request):
     )
 
 @app.post("/")
-async def home_search(request: Request, query: str = Form(...)):
+async def home_search(
+    request: Request,
+    query: str = Form(...),
+    session_id: str = Form(None)
+):
     try:
-        # Call RAG server
+        # Call RAG server with session_id
         # Timeout set to 120s to handle first-time reranker model download (~80MB)
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{RAG_SERVER_URL}/query",
-                json={"query": query},
+                json={"query": query, "session_id": session_id},
                 timeout=120.0
             )
             response.raise_for_status()
@@ -77,6 +81,22 @@ async def home_search(request: Request, query: str = Form(...)):
 
         answer_text = result.get("answer", "No answer generated")
         answer_html = markdown_to_html(answer_text)
+        returned_session_id = result.get("session_id")
+
+        # Get full chat history
+        chat_history = []
+        if returned_session_id:
+            try:
+                async with httpx.AsyncClient() as client:
+                    history_response = await client.get(
+                        f"{RAG_SERVER_URL}/chat/history/{returned_session_id}",
+                        timeout=10.0
+                    )
+                    if history_response.status_code == 200:
+                        history_data = history_response.json()
+                        chat_history = history_data.get("messages", [])
+            except Exception as e:
+                print(f"Error fetching chat history: {e}")
 
         return templates.TemplateResponse(
             request=request,
@@ -84,7 +104,9 @@ async def home_search(request: Request, query: str = Form(...)):
             context={
                 "query": query,
                 "answer": answer_html,
-                "sources": result.get("sources", [])
+                "sources": result.get("sources", []),
+                "session_id": returned_session_id,
+                "chat_history": chat_history
             }
         )
     except httpx.HTTPError as e:
@@ -95,14 +117,31 @@ async def home_search(request: Request, query: str = Form(...)):
             context={
                 "query": query,
                 "answer": f"Error connecting to RAG server: {str(e)}",
-                "sources": []
+                "sources": [],
+                "session_id": session_id,
+                "chat_history": []
             }
         )
 
 # Legacy endpoint for backward compatibility
 @app.post("/search")
-async def search(request: Request, query: str = Form(...)):
-    return await home_search(request, query)
+async def search(request: Request, query: str = Form(...), session_id: str = Form(None)):
+    return await home_search(request, query, session_id)
+
+@app.post("/new-chat")
+async def new_chat(request: Request, session_id: str = Form(...)):
+    """Clear chat history and redirect to home"""
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{RAG_SERVER_URL}/chat/clear",
+                json={"session_id": session_id},
+                timeout=10.0
+            )
+    except Exception as e:
+        print(f"Error clearing chat: {e}")
+
+    return RedirectResponse(url="/", status_code=303)
 
 @app.get("/admin")
 async def admin(request: Request):

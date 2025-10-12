@@ -4,7 +4,17 @@
 
 {% block extra_head %}
 <style>
-    /* Override prose colors to match theme */
+    /* Chat message styling */
+    .message-bubble {
+        animation: fadeIn 0.3s ease-in;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Answer content styling */
     .answer-content p,
     .answer-content li,
     .answer-content {
@@ -67,25 +77,33 @@
 {% block body_class %}bg-white dark:bg-gray-900 min-h-screen flex flex-col transition-colors duration-200{% endblock %}
 
 {% block nav_links %}
+{% if chat_history %}
+<button id="newChatBtn" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">New Chat</button>
+{% endif %}
 <a href="/admin" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">Admin</a>
 <a href="/about" class="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition">About</a>
 {% endblock %}
 
 {% block content %}
 <!-- Main Content Area -->
-<main class="px-4 max-w-5xl mx-auto w-full {% if query %}mt-20 pb-24{% else %}flex-1 flex flex-col items-center justify-center{% endif %}" data-has-results="{% if query %}true{% else %}false{% endif %}">
-    {% if not query %}
-    <!-- Initial Centered Search Form (No Results) -->
+<main class="px-4 max-w-5xl mx-auto w-full {% if chat_history %}flex-1 flex flex-col pb-32 pt-20{% else %}flex-1 flex flex-col items-center justify-center{% endif %}">
+    {% if not chat_history %}
+    <!-- Initial Centered Search Form (No Chat History) -->
     <div class="w-full max-w-3xl">
+        <h1 class="text-4xl font-bold text-center mb-8 text-gray-900 dark:text-gray-100">
+            Ask me about your docs
+        </h1>
         <form action="/" method="POST" class="w-full" id="searchForm">
+            <input type="hidden" name="session_id" id="sessionIdInput" value="">
             <div class="relative">
                 <input
                     type="text"
                     name="query"
                     id="queryInput"
-                    placeholder="Ask me about your docs"
+                    placeholder="What would you like to know?"
                     class="w-full px-6 py-5 text-base border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent shadow-lg transition pr-14 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-500 dark:placeholder:text-gray-400"
                     required
+                    autofocus
                 />
                 <button
                     type="submit"
@@ -102,22 +120,34 @@
         </form>
     </div>
     {% else %}
-    <!-- Results View -->
-    <div class="w-full max-w-3xl mx-auto">
-        <!-- User Query Bubble -->
-        <div class="flex justify-end mb-4">
-            <div class="bg-blue-50 dark:bg-blue-900/30 rounded-3xl px-6 py-4 max-w-2xl shadow-sm">
-                <p class="text-base text-gray-900 dark:text-gray-100">{{ query }}</p>
-            </div>
-        </div>
+    <!-- Chat History View -->
+    <div class="w-full max-w-3xl mx-auto flex-1 overflow-y-auto" id="chatContainer">
+        <div class="space-y-6 pb-6">
+            {% for message in chat_history %}
+                {% if message.role == 'user' %}
+                <!-- User Message -->
+                <div class="flex justify-end message-bubble">
+                    <div class="bg-blue-50 dark:bg-blue-900/30 rounded-3xl px-6 py-4 max-w-2xl shadow-sm">
+                        <p class="text-base text-gray-900 dark:text-gray-100">{{ message.content }}</p>
+                    </div>
+                </div>
+                {% elif message.role == 'assistant' %}
+                <!-- Assistant Message -->
+                <div class="message-bubble">
+                    <div class="answer-content text-base leading-relaxed text-gray-900 dark:text-gray-100">
+                        {{ message.content|safe }}
+                    </div>
+                </div>
+                {% endif %}
+            {% endfor %}
 
-        <!-- LLM Context Dropdown -->
-        {% if sources %}
-        <div class="flex justify-end mb-8">
-            <div class="max-w-2xl w-full">
-                <details class="group">
+            <!-- Sources for latest message (if available) -->
+            {% if sources %}
+            <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <!-- LLM Context Dropdown -->
+                <details class="group mb-6">
                     <summary class="cursor-pointer list-none">
-                        <div class="flex items-center justify-end space-x-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition">
+                        <div class="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition">
                             <span>View LLM Context ({{ sources|length }} chunks)</span>
                             <svg class="w-4 h-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
@@ -139,42 +169,34 @@
                         {% endfor %}
                     </div>
                 </details>
-            </div>
-        </div>
-        {% endif %}
 
-        <!-- Answer Section -->
-        <div class="mb-8">
-            <div class="answer-content text-base leading-relaxed text-gray-900 dark:text-gray-100">
-                {{ answer|safe }}
-            </div>
-        </div>
-
-        <!-- Sources -->
-        {% if sources %}
-        <div class="mt-12 pt-8 border-t border-gray-200 dark:border-gray-700">
-            <h2 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-4 uppercase tracking-wide">Sources</h2>
-            <div class="space-y-4">
-                {% for source in sources %}
-                <div class="border-l-4 border-blue-500 dark:border-blue-400 pl-4 py-2 bg-gray-50 dark:bg-gray-800 rounded-r">
-                    <h3 class="font-medium text-gray-900 dark:text-gray-100 text-sm">{{ source.document_name }}</h3>
-                    {% if source.excerpt %}
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ source.excerpt }}</p>
-                    {% endif %}
-                    {% if source.path %}
-                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ source.path }}</p>
-                    {% endif %}
+                <!-- Sources -->
+                <h2 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-4 uppercase tracking-wide">Sources</h2>
+                <div class="space-y-4">
+                    {% for source in sources %}
+                    <div class="border-l-4 border-blue-500 dark:border-blue-400 pl-4 py-2 bg-gray-50 dark:bg-gray-800 rounded-r">
+                        <h3 class="font-medium text-gray-900 dark:text-gray-100 text-sm">{{ source.document_name }}</h3>
+                        {% if source.excerpt %}
+                        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ source.excerpt }}</p>
+                        {% endif %}
+                        {% if source.path %}
+                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ source.path }}</p>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
             </div>
+            {% endif %}
         </div>
-        {% endif %}
     </div>
+    {% endif %}
 
-    <!-- Fixed Bottom Search Form (With Results) -->
+    <!-- Fixed Bottom Search Form (Always visible when chat history exists) -->
+    {% if chat_history %}
     <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 shadow-lg">
         <div class="max-w-3xl mx-auto px-4 py-4">
             <form action="/" method="POST" class="w-full" id="searchForm">
+                <input type="hidden" name="session_id" id="sessionIdInput" value="{{ session_id }}">
                 <div class="relative">
                     <input
                         type="text"
@@ -183,6 +205,7 @@
                         placeholder="Ask a follow-up question..."
                         class="w-full px-6 py-4 text-base border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent shadow-md transition pr-14 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-500 dark:placeholder:text-gray-400"
                         required
+                        autofocus
                     />
                     <button
                         type="submit"
@@ -199,9 +222,10 @@
             </form>
         </div>
     </div>
+    {% endif %}
 
     <!-- Loading Indicator Container -->
-    <div id="loadingContainer" class="hidden fixed bottom-24 left-1/2 -translate-x-1/2">
+    <div id="loadingContainer" class="hidden fixed bottom-24 left-1/2 -translate-x-1/2 z-50">
         <div class="flex items-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-full shadow-lg">
             <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -210,8 +234,12 @@
             <span class="text-sm text-gray-700 dark:text-gray-300">Thinking...</span>
         </div>
     </div>
-    {% endif %}
 </main>
+
+<!-- New Chat Form (Hidden) -->
+<form id="newChatForm" action="/new-chat" method="POST" class="hidden">
+    <input type="hidden" name="session_id" id="newChatSessionId" value="{{ session_id }}">
+</form>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -220,7 +248,57 @@
     const submitBtn = document.getElementById('submitBtn');
     const searchForm = document.getElementById('searchForm');
     const loadingContainer = document.getElementById('loadingContainer');
+    const sessionIdInput = document.getElementById('sessionIdInput');
+    const newChatBtn = document.getElementById('newChatBtn');
+    const newChatForm = document.getElementById('newChatForm');
+    const newChatSessionId = document.getElementById('newChatSessionId');
     let isSubmitting = false;
+
+    // Session management
+    function getSessionId() {
+        let sessionId = localStorage.getItem('rag_session_id');
+        if (!sessionId) {
+            sessionId = generateUUID();
+            localStorage.setItem('rag_session_id', sessionId);
+        }
+        return sessionId;
+    }
+
+    function generateUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    function clearSession() {
+        localStorage.removeItem('rag_session_id');
+    }
+
+    // Initialize session ID from backend or localStorage
+    {% if session_id %}
+    // Backend provided session_id, store it
+    localStorage.setItem('rag_session_id', '{{ session_id }}');
+    {% else %}
+    // No backend session, get or create one
+    if (sessionIdInput) {
+        sessionIdInput.value = getSessionId();
+    }
+    {% endif %}
+
+    // New Chat button handler
+    if (newChatBtn && newChatForm) {
+        newChatBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const currentSessionId = localStorage.getItem('rag_session_id');
+            if (currentSessionId && newChatSessionId) {
+                newChatSessionId.value = currentSessionId;
+            }
+            clearSession();
+            newChatForm.submit();
+        });
+    }
 
     // Update button state based on input
     function updateButtonState() {
@@ -245,6 +323,11 @@
             return;
         }
 
+        // Ensure session ID is set
+        if (sessionIdInput && !sessionIdInput.value) {
+            sessionIdInput.value = getSessionId();
+        }
+
         // Set submitting state
         isSubmitting = true;
 
@@ -254,32 +337,49 @@
         queryInput.classList.add('bg-gray-50', 'dark:bg-gray-700');
 
         // Show loading indicator
-        const mainElement = document.querySelector('main');
-        const hasResults = mainElement.getAttribute('data-has-results') === 'true';
-
-        if (hasResults && loadingContainer) {
-            // Results page - show fixed loading indicator
+        {% if chat_history %}
+        // Chat view - show fixed loading indicator
+        if (loadingContainer) {
             loadingContainer.classList.remove('hidden');
-        } else {
-            // Home page - show inline loading indicator
-            const loadingHTML = `
-                <div id="loadingIndicator" class="flex items-center justify-center mt-8">
-                    <div class="flex items-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-full shadow-sm">
-                        <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <span class="text-sm text-gray-700 dark:text-gray-300">Thinking...</span>
-                    </div>
-                </div>
-            `;
-            searchForm.insertAdjacentHTML('afterend', loadingHTML);
         }
+        {% else %}
+        // Home page - show inline loading indicator
+        const loadingHTML = `
+            <div id="loadingIndicator" class="flex items-center justify-center mt-8">
+                <div class="flex items-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-full shadow-sm">
+                    <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="text-sm text-gray-700 dark:text-gray-300">Thinking...</span>
+                </div>
+            </div>
+        `;
+        searchForm.insertAdjacentHTML('afterend', loadingHTML);
+        {% endif %}
 
         // Let form submit naturally (don't preventDefault)
     });
 
+    // Scroll to bottom of chat on page load
+    {% if chat_history %}
+    const chatContainer = document.getElementById('chatContainer');
+    if (chatContainer) {
+        // Scroll to bottom on page load
+        setTimeout(() => {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }, 100);
+    }
+    {% endif %}
+
     // Initialize button state on page load
     updateButtonState();
+
+    // Focus input if chat history exists
+    {% if chat_history %}
+    if (queryInput) {
+        queryInput.focus();
+    }
+    {% endif %}
 </script>
 {% endblock %}

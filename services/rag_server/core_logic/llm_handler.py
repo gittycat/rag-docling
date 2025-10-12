@@ -1,96 +1,61 @@
 from llama_index.llms.ollama import Ollama
 from core_logic.env_config import get_required_env
+from typing import Optional
 
 def get_llm_client():
     ollama_url = get_required_env("OLLAMA_URL")
     model = get_required_env("LLM_MODEL")
     return Ollama(model=model, base_url=ollama_url, request_timeout=120.0)
 
-def get_prompt_strategy():
-    return get_required_env("PROMPT_STRATEGY").lower()
+def get_system_prompt() -> str:
+    """
+    System-level instructions for LLM behavior.
 
-def get_prompt_template_fast() -> str:
-    """Fast strategy: minimal instructions for quick responses with simple documents"""
-    return """Answer the question using the provided context. If the answer isn't in the context, say "I don't know."
+    Defines the assistant's personality, response style, and general approach.
+    Applied to all LLM interactions including question condensation and answer generation.
+    """
+    return (
+        "You are a professional assistant providing accurate answers based on document context. "
+        "Be direct and concise. Avoid conversational fillers like 'Let me explain', 'Okay', 'Well', or 'Sure'. "
+        "Start responses immediately with the answer. "
+        "Use bullet points for lists when appropriate."
+    )
 
-Context information:
+def get_context_prompt() -> str:
+    """
+    Instructions for using retrieved context to answer questions.
+
+    Specifies strict grounding rules to prevent hallucination and ensure
+    answers are based only on the provided document context.
+
+    Placeholders:
+    - {context_str}: Retrieved document chunks (provided by LlamaIndex)
+    - {chat_history}: Previous conversation (provided by LlamaIndex)
+    """
+    return """Context from retrieved documents:
 {context_str}
-
-Question: {query_str}
-
-Answer:"""
-
-def get_prompt_template_balanced() -> str:
-    """Balanced strategy: good default with clear grounding and anti-hallucination measures"""
-    return """Answer the question using ONLY the information in the provided context below.
-
-Rules:
-- Use ONLY the provided context to answer
-- If the answer is not in the context, respond with: "I don't have enough information to answer this question."
-- Do not use prior knowledge or make assumptions
-- Be concise and accurate
-
-Context information:
-{context_str}
-
-Question: {query_str}
-
-Answer:"""
-
-def get_prompt_template_precise() -> str:
-    """Precise strategy: strong anti-hallucination with step-by-step reasoning"""
-    return """Answer the question using ONLY the provided context below.
 
 Instructions:
-1. Read the context documents carefully
-2. If the answer is found in the context, provide a clear answer
-3. If the answer is NOT in the context, respond EXACTLY with: "I don't have enough information in the provided context to answer this question."
-4. Do NOT use your prior knowledge or make assumptions beyond what's explicitly stated
-5. If you're uncertain, err on the side of saying you don't know
+- Answer using ONLY the context provided above
+- If the context does not contain sufficient information, respond: "I don't have enough information to answer this question."
+- Never use prior knowledge or make assumptions beyond what is explicitly stated
+- Be specific and cite details from the context when relevant
+- Previous conversation context is available for reference
 
-Context information:
-{context_str}
+Provide a direct, accurate answer based on the context:"""
 
-Question: {query_str}
+def get_condense_prompt() -> Optional[str]:
+    """
+    Optional: Custom question condensation prompt.
 
-Answer:"""
+    Controls how follow-up questions are reformulated into standalone queries.
+    Returns None to use LlamaIndex's built-in DEFAULT_CONDENSE_PROMPT.
 
-def get_prompt_template_comprehensive() -> str:
-    """Comprehensive strategy: maximum accuracy with chain-of-thought and self-critique"""
-    return """Answer the question using ONLY the provided context below.
+    The default prompt works well for most cases:
+    "Given a conversation (between Human and Assistant) and a follow up message from Human,
+    rewrite the message to be a standalone question that captures all relevant context."
 
-Instructions:
-Follow this step-by-step process:
-
-Step 1: Identify which context documents contain relevant information for the question
-Step 2: Extract the specific facts or statements that relate to the question
-Step 3: Formulate your answer using ONLY the extracted information
-Step 4: Review your answer to ensure it doesn't contain information not in the context
-Step 5: Cite which parts of the context you used
-
-If at any step you find insufficient information in the context:
-- Respond EXACTLY with: "I don't have enough information in the provided context to answer this question."
-- Do NOT use your prior knowledge
-- Do NOT make assumptions or inferences beyond what's explicitly stated
-
-If you're uncertain or the information is ambiguous, always err on the side of saying you don't know.
-
-Context information:
-{context_str}
-
-Question: {query_str}
-
-Let's work through this step by step:"""
-
-def get_prompt_template() -> str:
-    """Route to appropriate prompt template based on config"""
-    strategy = get_prompt_strategy()
-
-    if strategy == "fast":
-        return get_prompt_template_fast()
-    elif strategy == "precise":
-        return get_prompt_template_precise()
-    elif strategy == "comprehensive":
-        return get_prompt_template_comprehensive()
-    else:  # balanced (default)
-        return get_prompt_template_balanced()
+    Only customize if you need different reformulation behavior.
+    """
+    # Use LlamaIndex's default - it's well-tested and effective
+    return None

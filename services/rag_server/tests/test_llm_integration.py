@@ -1,103 +1,126 @@
 import pytest
 from pathlib import Path
 import sys
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-@patch('ollama.Client')
-def test_generate_response_with_context(mock_client_class):
-    """Generate LLM response using context from retrieved documents"""
-    from core_logic.llm_handler import generate_response
+def test_get_system_prompt():
+    """System prompt should define LLM behavior and style"""
+    from core_logic.llm_handler import get_system_prompt
 
-    mock_client = MagicMock()
-    mock_client_class.return_value = mock_client
+    prompt = get_system_prompt()
 
-    # Mock Ollama response
-    mock_client.generate.return_value = {
-        'response': 'This is the generated answer based on the context.'
-    }
+    assert isinstance(prompt, str)
+    assert len(prompt) > 0
+    # Should mention being professional and accurate
+    assert 'professional' in prompt.lower() or 'accurate' in prompt.lower()
+    # Should instruct to be direct and avoid fillers
+    assert 'direct' in prompt.lower() or 'concise' in prompt.lower()
 
-    query = "What is the capital of France?"
-    context = "France is a country in Europe. Its capital is Paris."
+def test_get_context_prompt():
+    """Context prompt should have template placeholders and grounding instructions"""
+    from core_logic.llm_handler import get_context_prompt
 
-    response = generate_response(query, context)
+    prompt = get_context_prompt()
 
-    assert response is not None
-    assert 'generated answer' in response.lower()
-    mock_client.generate.assert_called_once()
+    assert isinstance(prompt, str)
+    assert len(prompt) > 0
+    # Should have LlamaIndex placeholder for context
+    assert '{context_str}' in prompt
+    # Should have grounding instructions
+    assert 'context' in prompt.lower()
+    assert 'only' in prompt.lower() or 'provided' in prompt.lower()
+    # Should handle insufficient information
+    assert "don't have" in prompt.lower() or "not contain" in prompt.lower()
 
-    # Verify the prompt includes both query and context
-    call_args = mock_client.generate.call_args
-    prompt = call_args.kwargs.get('prompt', '')
-    assert query.lower() in prompt.lower()
-    assert context.lower() in prompt.lower()
+def test_get_condense_prompt():
+    """Condense prompt should return None to use LlamaIndex default"""
+    from core_logic.llm_handler import get_condense_prompt
 
-@patch('ollama.Client')
-def test_construct_prompt_with_context(mock_client_class):
-    """Construct proper RAG prompt with query and context"""
-    from core_logic.llm_handler import construct_prompt
+    prompt = get_condense_prompt()
 
-    query = "What is RAG?"
-    context_docs = [
-        "RAG stands for Retrieval Augmented Generation.",
-        "It combines retrieval with LLM generation."
+    # Should be None to use LlamaIndex's DEFAULT_CONDENSE_PROMPT
+    assert prompt is None
+
+@patch.dict('os.environ', {'OLLAMA_URL': 'http://test:11434', 'LLM_MODEL': 'test-model'})
+def test_get_llm_client():
+    """LLM client should be configured with Ollama URL and model"""
+    from core_logic.llm_handler import get_llm_client
+
+    llm = get_llm_client()
+
+    assert llm is not None
+    # Should be Ollama instance
+    assert hasattr(llm, 'model')
+    assert llm.model == 'test-model'
+    assert hasattr(llm, 'base_url')
+    assert 'test:11434' in llm.base_url
+
+def test_system_prompt_no_conversational_fillers():
+    """System prompt should explicitly discourage conversational fillers"""
+    from core_logic.llm_handler import get_system_prompt
+
+    prompt = get_system_prompt()
+
+    # Should mention avoiding fillers like "Let me explain", "Okay", etc.
+    filler_mentions = [
+        'let me' in prompt.lower(),
+        'okay' in prompt.lower(),
+        'well' in prompt.lower(),
+        'sure' in prompt.lower(),
+        'filler' in prompt.lower()
     ]
+    # At least one filler should be mentioned as something to avoid
+    assert any(filler_mentions), "Prompt should mention avoiding conversational fillers"
 
-    prompt = construct_prompt(query, context_docs)
+def test_context_prompt_structure():
+    """Context prompt should follow LlamaIndex chat engine format"""
+    from core_logic.llm_handler import get_context_prompt
 
-    assert query in prompt
-    assert all(doc in prompt for doc in context_docs)
-    # Should have instruction to use context
-    assert 'context' in prompt.lower() or 'information' in prompt.lower()
+    prompt = get_context_prompt()
 
-@patch('ollama.Client')
-def test_generate_response_without_context(mock_client_class):
-    """Generate response when no relevant context is found"""
-    from core_logic.llm_handler import generate_response
+    # Should be formatted for chat engine (not query engine PromptTemplate)
+    # Context comes first, then instructions
+    context_index = prompt.index('{context_str}')
+    instructions_keywords = ['instructions', 'answer', 'provide']
 
-    mock_client = MagicMock()
-    mock_client_class.return_value = mock_client
+    # Instructions should appear after context placeholder
+    has_instructions_after = any(
+        keyword in prompt[context_index:].lower()
+        for keyword in instructions_keywords
+    )
+    assert has_instructions_after, "Instructions should appear after context"
 
-    mock_client.generate.return_value = {
-        'response': 'I don\'t have enough information to answer that question.'
-    }
+def test_prompts_are_consistent():
+    """All prompt functions should return consistent types"""
+    from core_logic.llm_handler import (
+        get_system_prompt,
+        get_context_prompt,
+        get_condense_prompt
+    )
 
-    query = "What is the meaning of life?"
-    context = ""  # No context
+    system = get_system_prompt()
+    context = get_context_prompt()
+    condense = get_condense_prompt()
 
-    response = generate_response(query, context)
+    # System and context should be strings
+    assert isinstance(system, str)
+    assert isinstance(context, str)
+    # Condense should be None (uses default) or string
+    assert condense is None or isinstance(condense, str)
 
-    assert response is not None
-    assert 'information' in response.lower() or 'answer' in response.lower()
+    # Prompts should be different
+    assert system != context
 
-@patch('ollama.Client')
-def test_llm_uses_correct_model(mock_client_class):
-    """Verify LLM uses the configured model"""
-    from core_logic.llm_handler import generate_response
+@patch.dict('os.environ', {'OLLAMA_URL': 'http://test:11434', 'LLM_MODEL': 'test-model'})
+def test_llm_client_timeout():
+    """LLM client should have appropriate timeout setting"""
+    from core_logic.llm_handler import get_llm_client
 
-    mock_client = MagicMock()
-    mock_client_class.return_value = mock_client
+    llm = get_llm_client()
 
-    mock_client.generate.return_value = {'response': 'Test response'}
-
-    generate_response("test query", "test context")
-
-    call_args = mock_client.generate.call_args
-    model = call_args.kwargs.get('model', '')
-    assert model is not None
-    assert len(model) > 0  # Should have a model specified
-
-@patch('ollama.Client')
-def test_handle_llm_error(mock_client_class):
-    """Handle errors from Ollama gracefully"""
-    from core_logic.llm_handler import generate_response
-
-    mock_client = MagicMock()
-    mock_client_class.return_value = mock_client
-
-    # Simulate connection error
-    mock_client.generate.side_effect = Exception("Connection failed")
-
-    with pytest.raises(Exception, match="Connection failed"):
-        generate_response("test query", "test context")
+    # Should have request_timeout configured
+    assert hasattr(llm, 'request_timeout')
+    # Timeout should be reasonable (e.g., 120s)
+    assert llm.request_timeout >= 60.0, "Timeout should be at least 60 seconds"

@@ -1,10 +1,10 @@
 from typing import Dict, List, Optional
-from llama_index.core import PromptTemplate
 from llama_index.core.postprocessor import SimilarityPostprocessor
 from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
 from core_logic.chroma_manager import get_or_create_collection
-from core_logic.llm_handler import get_prompt_template
+from core_logic.llm_handler import get_system_prompt, get_context_prompt, get_condense_prompt
 from core_logic.env_config import get_optional_env
+from core_logic.chat_memory import get_or_create_chat_memory
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,24 +41,35 @@ def create_reranker_postprocessors() -> Optional[List]:
     logger.info("[RERANKER] Postprocessor initialized successfully")
     return postprocessors
 
-def query_rag(query_text: str, n_results: int = 3) -> Dict:
+def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
     index = get_or_create_collection()
     config = get_reranker_config()
 
-    prompt_template_str = get_prompt_template()
-    qa_prompt = PromptTemplate(prompt_template_str)
+    # Get LlamaIndex native prompts
+    system_prompt = get_system_prompt()
+    context_prompt = get_context_prompt()
+    condense_prompt = get_condense_prompt()  # None = use LlamaIndex default
+
+    # Get or create chat memory for this session
+    memory = get_or_create_chat_memory(session_id)
 
     # Always use configured retrieval_top_k for better coverage with granular Docling chunks
     retrieval_top_k = config['retrieval_top_k']
-    logger.info(f"[RAG] Using retrieval_top_k={retrieval_top_k}, reranker_enabled={config['enabled']}")
+    logger.info(f"[RAG] Using retrieval_top_k={retrieval_top_k}, reranker_enabled={config['enabled']}, session_id={session_id}")
 
-    query_engine = index.as_query_engine(
+    # Use chat engine for conversational RAG with memory (LlamaIndex native approach)
+    chat_engine = index.as_chat_engine(
+        chat_mode="condense_plus_context",
+        memory=memory,
         similarity_top_k=retrieval_top_k,
         node_postprocessors=create_reranker_postprocessors(),
-        text_qa_template=qa_prompt
+        system_prompt=system_prompt,
+        context_prompt=context_prompt,
+        condense_prompt=condense_prompt,
+        verbose=False
     )
 
-    response = query_engine.query(query_text)
+    response = chat_engine.chat(query_text)
 
     logger.info(f"[RAG] Retrieved {len(response.source_nodes)} nodes for context")
 
@@ -92,5 +103,6 @@ def query_rag(query_text: str, n_results: int = 3) -> Dict:
     return {
         'answer': str(response),
         'sources': sources,
-        'query': query_text
+        'query': query_text,
+        'session_id': session_id
     }

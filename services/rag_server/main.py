@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from core_logic.rag_pipeline import query_rag
 from core_logic.chroma_manager import get_or_create_collection, list_documents, delete_document, add_documents
+from core_logic.chat_memory import get_chat_history, clear_session_memory
 from core_logic.document_processor import chunk_document_from_file, extract_metadata, SUPPORTED_EXTENSIONS
 from core_logic.settings import initialize_settings
 from core_logic.progress_tracker import create_batch, get_batch_progress
@@ -36,10 +37,12 @@ async def startup_event():
 
 class QueryRequest(BaseModel):
     query: str
+    session_id: str | None = None
 
 class QueryResponse(BaseModel):
     answer: str
     sources: list[dict]
+    session_id: str
 
 class DocumentListResponse(BaseModel):
     documents: list[dict]
@@ -67,6 +70,17 @@ class BatchProgressResponse(BaseModel):
     total: int
     completed: int
     tasks: dict
+
+class ChatHistoryResponse(BaseModel):
+    session_id: str
+    messages: list[dict]
+
+class ClearSessionRequest(BaseModel):
+    session_id: str
+
+class ClearSessionResponse(BaseModel):
+    status: str
+    message: str
 
 def process_and_index_document(file_path: str, filename: str) -> dict:
     logger.info(f"[CHUNKING] Calling chunk_document_from_file for {filename}")
@@ -110,10 +124,15 @@ async def health():
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     try:
-        result = query_rag(request.query)
+        # Generate session_id if not provided
+        session_id = request.session_id or str(uuid.uuid4())
+        logger.info(f"[QUERY] Processing query with session_id: {session_id}")
+
+        result = query_rag(request.query, session_id=session_id)
         return QueryResponse(
             answer=result['answer'],
-            sources=result['sources']
+            sources=result['sources'],
+            session_id=result['session_id']
         )
     except Exception as e:
         import traceback
@@ -215,4 +234,39 @@ async def delete_document_by_id(document_id: str):
             message=f"Document {document_id} deleted successfully"
         )
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/chat/history/{session_id}", response_model=ChatHistoryResponse)
+async def get_session_history(session_id: str):
+    """Get the full chat history for a session"""
+    try:
+        messages = get_chat_history(session_id)
+
+        # Convert ChatMessage objects to dicts
+        formatted_messages = []
+        for msg in messages:
+            formatted_messages.append({
+                "role": msg.role.value if hasattr(msg.role, 'value') else str(msg.role),
+                "content": msg.content
+            })
+
+        return ChatHistoryResponse(
+            session_id=session_id,
+            messages=formatted_messages
+        )
+    except Exception as e:
+        logger.error(f"[CHAT_HISTORY] Error retrieving history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/chat/clear", response_model=ClearSessionResponse)
+async def clear_chat_session(request: ClearSessionRequest):
+    """Clear the chat history for a session"""
+    try:
+        clear_session_memory(request.session_id)
+        return ClearSessionResponse(
+            status="success",
+            message=f"Chat history cleared for session {request.session_id}"
+        )
+    except Exception as e:
+        logger.error(f"[CHAT_CLEAR] Error clearing session: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

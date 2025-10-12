@@ -32,7 +32,6 @@ services:
       - OLLAMA_URL=http://host.docker.internal:11434
       - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
-      - PROMPT_STRATEGY=balanced  # Options: fast, balanced, precise, comprehensive
       - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RERANKER_SIMILARITY_THRESHOLD=0.3
@@ -94,7 +93,6 @@ services:
       - OLLAMA_URL=http://host.docker.internal:11434
       - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
-      - PROMPT_STRATEGY=balanced
       - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RERANKER_SIMILARITY_THRESHOLD=0.3

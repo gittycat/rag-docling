@@ -30,7 +30,109 @@ Local RAG system with two FastAPI services using Docling + LlamaIndex for docume
 - Deletion removes all nodes with matching `document_id`
 - Two-stage retrieval: High-recall embedding search (top-10) → precision reranking (threshold-based)
 - Dynamic context: Returns 0-10 nodes based on relevance scores, not fixed top-k
-- Uses query_engine with custom PromptTemplate (4 strategies: fast, balanced, precise, comprehensive)
+- Uses chat_engine with LlamaIndex native prompts (system_prompt, context_prompt, condense_prompt)
+- Conversational RAG: Session-based memory with token-limited chat history
+
+## Conversational RAG Architecture
+
+**Overview:**
+The system uses LlamaIndex's `ChatEngine` with `condense_plus_context` mode for multi-turn conversations. Each user session maintains conversation history in memory, enabling context-aware follow-up questions.
+
+**Chat Engine Mode: `condense_plus_context`**
+- **How it works:**
+  1. Takes the latest user question + conversation history
+  2. Reformulates the question into a standalone query (e.g., "What about his views on startups?" → "What are Paul Graham's views on startups?")
+  3. Retrieves relevant context from the vector store using the reformulated query
+  4. Passes both the reformulated query AND chat history to the LLM
+  5. Generates response with full conversational context
+
+- **Why this mode:**
+  - Most versatile: Handles both knowledge base queries AND conversational questions
+  - Can answer meta-questions like "What was my first question?"
+  - Automatically contextualizes ambiguous follow-ups ("What about X?" requires prior context)
+  - Better than `context` mode (doesn't contextualize) or `condense_question` mode (struggles with meta-questions)
+
+**Session Management:**
+- **Session ID:** UUID generated client-side, stored in `localStorage`
+- **In-memory storage:** `SimpleChatStore` stores chat history per session (survives container restarts within same process)
+- **Session isolation:** Each session has independent conversation history
+- **Persistence:** In-memory (cleared on container restart) - suitable for single-user/development scenarios
+
+**Chat Memory Configuration:**
+- **Token limit:** Auto-detected from LLM's context window (50% allocation)
+  - gemma3:4b: 131K context window → 65K tokens for chat history
+  - Remaining tokens: ~40% for retrieved context, ~10% for response
+- **Memory management:** `ChatMemoryBuffer` automatically truncates old messages when token limit reached
+- **Strategy:** Sliding window - keeps most recent messages within token budget
+
+**Chat History UI:**
+- **Style:** Claude Chat/ChatGPT-like interface
+- **Layout:** Full conversation history displayed above, fixed input at bottom
+- **User messages:** Blue bubble, right-aligned
+- **Assistant messages:** Left-aligned, markdown-rendered
+- **Auto-scroll:** Scrolls to bottom on new messages
+- **New Chat button:** Clears session and reloads page
+
+**API Endpoints:**
+- `POST /query`: Accepts `session_id` (optional, auto-generates if missing), returns `session_id` in response
+- `GET /chat/history/{session_id}`: Returns full conversation history for session
+- `POST /chat/clear`: Clears chat history for session
+
+**Model Flexibility:**
+- **LLM Model:** Configured via `LLM_MODEL` env var (default: gemma3:4b)
+- **Embeddings:** Configured via `EMBEDDING_MODEL` env var (default: nomic-embed-text)
+- **Context window detection:** Automatically introspects model's context window from `Settings.llm.metadata.context_window`
+- **Token limit adjustment:** Chat memory token limit adjusts automatically when changing models
+- **No code changes needed:** Switch models via env vars + rebuild containers
+
+**Implementation Files:**
+- `services/rag_server/core_logic/chat_memory.py`: Session-based `ChatMemoryBuffer` management
+- `services/rag_server/core_logic/rag_pipeline.py`: `index.as_chat_engine(chat_mode="condense_plus_context")`
+- `services/rag_server/main.py`: API endpoints with session_id support
+- `services/fastapi_web_app/main.py`: Session management + chat history retrieval
+- `services/fastapi_web_app/templates/home.html`: Conversational UI with history display
+
+**Key Functions:**
+- `get_or_create_chat_memory(session_id)`: Returns `ChatMemoryBuffer` for session
+- `get_token_limit_for_chat_history()`: Introspects LLM context window, allocates 50% for chat history
+- `get_chat_history(session_id)`: Returns list of `ChatMessage` objects
+- `clear_session_memory(session_id)`: Clears chat history for session
+
+**Chat Flow:**
+1. User loads page → JavaScript generates/retrieves session_id from `localStorage`
+2. User submits query → Form includes session_id (hidden field)
+3. Backend receives query + session_id → Retrieves/creates `ChatMemoryBuffer`
+4. Chat engine uses memory → Reformulates query → Retrieves context → Generates response
+5. Chat history updated automatically by LlamaIndex
+6. Frontend fetches full chat history → Displays all messages
+7. User submits follow-up → Process repeats with same session_id
+
+**Testing Conversational Context:**
+```bash
+# Example multi-turn conversation
+Q1: "What does Paul Graham say about startups?"
+A1: [Answer about startups]
+
+Q2: "What about work?"  # Ambiguous - needs context
+A2: [Answer about work, correctly interpreted]
+
+Q3: "What was my first question?"  # Meta-question
+A3: "Your first question was about what Paul Graham says about startups."
+```
+
+**Logs to Monitor:**
+```bash
+docker compose logs rag-server | grep -E "(CHAT|session|condense)"
+```
+
+**Expected log output:**
+```
+[CHAT_MEMORY] Detected model context window: 131072 tokens
+[CHAT_MEMORY] Allocating 65536 tokens for chat history (50% of context window)
+[CHAT_MEMORY] Created new memory for session: abc123...
+[RAG] Using retrieval_top_k=10, reranker_enabled=True, session_id=abc123...
+[condense_plus_context] Condensed question: What are Paul Graham's views on startups?
+```
 
 ## Common Commands
 
@@ -122,19 +224,45 @@ uv sync --upgrade
 - `index.as_retriever()` for retrieval operations
 - Direct ChromaDB access via `._vector_store._collection` for deletion/listing
 
-**LLM** (`services/rag_server/core_logic/llm_handler.py`):
+**LLM & Prompts** (`services/rag_server/core_logic/llm_handler.py`):
 - `Ollama` from `llama-index-llms-ollama`
-- Returns prompt templates (not direct LLM calls)
-- 4 strategies: fast, balanced (default), precise, comprehensive
+- Returns LlamaIndex native prompts:
+  - `system_prompt`: Overall LLM behavior (concise, direct, professional)
+  - `context_prompt`: Strict grounding rules for using retrieved context
+  - `condense_prompt`: Question reformulation (uses LlamaIndex default)
 
 **RAG Pipeline** (`services/rag_server/core_logic/rag_pipeline.py`):
-- `PromptTemplate` wraps strategy-specific template string
-- `index.as_query_engine()` with `text_qa_template=qa_prompt`
+- Uses LlamaIndex native prompt parameters: `system_prompt`, `context_prompt`, `condense_prompt`
+- `index.as_chat_engine(chat_mode="condense_plus_context")` with native prompts
 - Two-stage node postprocessing:
   1. `SentenceTransformerRerank`: Cross-encoder reranks top-10 results
   2. `SimilarityPostprocessor`: Filters nodes below threshold (default: 0.65)
-- `query_engine.query()` handles retrieval + reranking + generation
+- `chat_engine.chat()` handles conversation context + retrieval + reranking + generation
 - Returns sources from `response.source_nodes` (dynamic 0-10 nodes)
+- Session-based memory via `ChatMemoryBuffer`
+
+**Prompt Architecture (LlamaIndex Native):**
+
+1. **System Prompt:**
+   - Defines assistant's behavior and response style
+   - Applied to all LLM interactions (condensation + answer generation)
+   - Current: Direct, concise, professional responses without fillers
+
+2. **Context Prompt:**
+   - Specifies how to use retrieved document context
+   - Includes strict grounding rules to prevent hallucination
+   - Instructs LLM to only answer from provided context
+
+3. **Condense Prompt:**
+   - Controls follow-up question reformulation
+   - Uses LlamaIndex default (well-tested, effective)
+   - Only customize if different reformulation behavior needed
+
+**Design Rationale:**
+- **Separation of concerns**: Behavior (system) vs. content rules (context)
+- **LlamaIndex standard**: Aligns with framework's intended usage
+- **Maintainability**: Single prompt for each concern, not duplicated across strategies
+- **Flexibility**: Easy to customize each aspect independently
 
 **Reranking Strategy**:
 - Model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (~80MB, HuggingFace)
@@ -173,8 +301,9 @@ RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strat
 
 **Environment Variables:**
 - Web App: `RAG_SERVER_URL=http://rag-server:8001`
-- RAG Server (required): `CHROMADB_URL`, `OLLAMA_URL`, `EMBEDDING_MODEL`, `LLM_MODEL`, `PROMPT_STRATEGY`
+- RAG Server (required): `CHROMADB_URL`, `OLLAMA_URL`, `EMBEDDING_MODEL`, `LLM_MODEL`
 - RAG Server (reranker): `ENABLE_RERANKER=true`, `RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2`, `RERANKER_SIMILARITY_THRESHOLD=0.65`, `RETRIEVAL_TOP_K=10`
+- RAG Server (prompts): Defined in code (`llm_handler.py`), not via env vars
 
 ### Testing
 
@@ -191,7 +320,14 @@ RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strat
 ## API Endpoints
 
 **RAG Server** (port 8001):
-- `POST /query`: query_engine.query() with custom PromptTemplate
+- `POST /query`: chat_engine.chat() with session_id and custom PromptTemplate
+  - Body: `{"query": str, "session_id": str | None}`
+  - Returns: `{"answer": str, "sources": list[dict], "session_id": str}`
+- `GET /chat/history/{session_id}`: Get full conversation history for session
+  - Returns: `{"session_id": str, "messages": list[{"role": str, "content": str}]}`
+- `POST /chat/clear`: Clear chat history for session
+  - Body: `{"session_id": str}`
+  - Returns: `{"status": str, "message": str}`
 - `GET /documents`: List all indexed documents (grouped by document_id)
 - `POST /upload`: Upload documents (supports multiple files)
 - `DELETE /documents/{document_id}`: Delete document and all nodes
@@ -202,14 +338,15 @@ RUN uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strat
 ## Key Files
 
 **Core Pipeline:**
-- `services/rag_server/core_logic/rag_pipeline.py`: query_engine with reranking + PromptTemplate
+- `services/rag_server/core_logic/rag_pipeline.py`: chat_engine with reranking + PromptTemplate + memory
+- `services/rag_server/core_logic/chat_memory.py`: Session-based ChatMemoryBuffer management
 - `services/rag_server/core_logic/document_processor.py`: DoclingReader + DoclingNodeParser
 - `services/rag_server/core_logic/chroma_manager.py`: VectorStoreIndex
 - `services/rag_server/core_logic/embeddings.py`: OllamaEmbedding
 - `services/rag_server/core_logic/llm_handler.py`: Ollama LLM + PromptTemplate strategies
 - `services/rag_server/core_logic/settings.py`: Global Settings initialization
 - `services/rag_server/core_logic/env_config.py`: Required and optional env var helpers
-- `services/rag_server/main.py`: FastAPI endpoints
+- `services/rag_server/main.py`: FastAPI endpoints with chat session support
 
 **Evaluation System:**
 - `services/rag_server/evaluation/ragas_config.py`: Ollama configuration for RAGAS
@@ -249,10 +386,9 @@ The web app uses Jinja2's template inheritance pattern with a base template that
 
 **Template Files:**
 - `base.html`: Base layout with dark mode support
-- `home.html`: Search interface (centered form when empty, results view when populated)
+- `home.html`: Conversational chat interface (Claude Chat/ChatGPT style with full history display)
 - `admin.html`: Document management (upload, list, delete)
 - `about.html`: Project information page
-- `results.html`: Search results display
 - `upload_progress.html`: Real-time upload progress with SSE
 
 **Usage Pattern:**
