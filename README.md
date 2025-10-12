@@ -262,6 +262,40 @@ Delete a document from the index.
 - **public**: Web app (accessible from host)
 - **private**: RAG server, ChromaDB (internal only)
 
+## Known Issues & Fixes
+
+### DoclingReader/DoclingNodeParser Integration (FIXED)
+
+**Issue**: Document upload fails with Pydantic validation error if DoclingReader export format is not specified.
+
+**Root Cause**: DoclingReader defaults to MARKDOWN export, but DoclingNodeParser requires JSON format.
+
+**Fix**: Always use JSON export in `document_processor.py`:
+```python
+reader = DoclingReader(export_type=DoclingReader.ExportType.JSON)
+```
+
+**Reference**: See `docs/troubleshooting/2025-10-09-retrieval-fix.md` for complete diagnostic report.
+
+### ChromaDB Metadata Compatibility (FIXED)
+
+**Issue**: ChromaDB rejects complex metadata types (lists, dicts) from Docling.
+
+**Fix**: Filter metadata to flat types (str, int, float, bool, None) using `clean_metadata_for_chroma()` function before insertion.
+
+### Answer Fragmentation with Docling Chunking
+
+**Symptom**: Incomplete answers even when relevant information exists in documents.
+
+**Cause**: Docling creates granular structural chunks (9-27K char range) that can split semantic units across non-contiguous nodes.
+
+**Mitigation**:
+1. Enable reranker: `ENABLE_RERANKER=true` (already enabled)
+2. Use higher top-k: `RETRIEVAL_TOP_K=10` (already configured)
+3. Tune similarity threshold: `RERANKER_SIMILARITY_THRESHOLD=0.65` (balance between precision and recall)
+
+**Long-term Solution**: Consider hierarchical node parsing (see diagnostic report for implementation details).
+
 ## Troubleshooting
 
 ### Ollama Connection Issues
