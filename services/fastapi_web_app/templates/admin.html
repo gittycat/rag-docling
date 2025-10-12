@@ -16,8 +16,8 @@
     </div>
 
     <!-- Upload Section -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8 transition-colors duration-200">
-        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Upload Documents</h2>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-8 transition-colors duration-200">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Upload Documents</h2>
         <form id="uploadForm" action="/admin/upload" method="POST" enctype="multipart/form-data" class="hidden">
             <input
                 type="file"
@@ -28,14 +28,14 @@
             />
         </form>
 
-        <div class="flex flex-col items-center justify-center py-8">
-            <div class="flex flex-col sm:flex-row gap-3 mb-4">
+        <div class="flex items-center justify-between">
+            <div class="flex gap-2">
                 <button
                     type="button"
                     id="selectFilesButton"
-                    class="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white font-medium py-3 px-6 rounded-lg transition duration-200 shadow-md flex items-center space-x-2"
+                    class="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg transition duration-200 flex items-center space-x-2"
                 >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
                     </svg>
                     <span>Select Files</span>
@@ -43,31 +43,17 @@
                 <button
                     type="button"
                     id="selectFolderButton"
-                    class="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white font-medium py-3 px-6 rounded-lg transition duration-200 shadow-md flex items-center space-x-2"
+                    class="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white text-sm font-medium py-2 px-4 rounded-lg transition duration-200 flex items-center space-x-2"
                 >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                     </svg>
                     <span>Select Folder</span>
                 </button>
             </div>
-            <p class="text-sm text-gray-500 dark:text-gray-400 text-center">
-                Choose individual files or an entire folder to upload
-            </p>
-            <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            <p class="text-xs text-gray-500 dark:text-gray-400">
                 Supported: txt, md, pdf, docx, pptx, xlsx, html, asciidoc
             </p>
-        </div>
-
-        <!-- Upload Progress -->
-        <div id="uploadProgress" class="hidden mt-4">
-            <div class="flex items-center justify-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-lg">
-                <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="text-sm text-gray-700 dark:text-gray-300">Uploading documents...</span>
-            </div>
         </div>
     </div>
 
@@ -80,13 +66,13 @@
                         Document Name
                     </th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Size
+                    </th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                         Type
                     </th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                         Chunks
-                    </th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                        Path
                     </th>
                     <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                         Actions
@@ -96,9 +82,22 @@
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% if documents %}
                     {% for doc in documents %}
-                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {{ doc.file_name }}
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors" id="doc-{{ doc.id }}">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 relative">
+                            <span class="doc-name">{{ doc.file_name }}</span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            <span class="doc-size" data-size="{{ doc.file_size_bytes }}">
+                                {% if doc.file_size_bytes >= 1073741824 %}
+                                    {{ "%.2f"|format(doc.file_size_bytes / 1073741824) }} GB
+                                {% elif doc.file_size_bytes >= 1048576 %}
+                                    {{ "%.2f"|format(doc.file_size_bytes / 1048576) }} MB
+                                {% elif doc.file_size_bytes >= 1024 %}
+                                    {{ "%.2f"|format(doc.file_size_bytes / 1024) }} KB
+                                {% else %}
+                                    {{ doc.file_size_bytes }} B
+                                {% endif %}
+                            </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                             {{ doc.file_type }}
@@ -107,9 +106,6 @@
                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
                                 {{ doc.chunks }} embeddings
                             </span>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                            {{ doc.path }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <form method="POST" action="/admin/delete/{{ doc.id }}" class="inline"
@@ -139,58 +135,198 @@
     const fileInput = document.getElementById('fileInput');
     const selectFilesButton = document.getElementById('selectFilesButton');
     const selectFolderButton = document.getElementById('selectFolderButton');
-    const uploadForm = document.getElementById('uploadForm');
-    const uploadProgress = document.getElementById('uploadProgress');
+    const tbody = document.querySelector('tbody');
 
+    // Track task-to-filename mapping
+    const taskMap = new Map();
+
+    // Helper: Format file size
+    function formatFileSize(bytes) {
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
+        if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
+        return bytes + ' B';
+    }
+
+    // Helper: Create uploading row with progress bar
+    function addUploadingRow(taskId, filename, filesize) {
+        const row = document.createElement('tr');
+        row.id = `uploading-${taskId}`;
+        row.className = 'hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors';
+
+        row.innerHTML = `
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 relative">
+                <div class="flex flex-col">
+                    <span class="doc-name">${filename}</span>
+                    <div class="mt-1 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1 overflow-hidden">
+                        <div id="progress-${taskId}" class="bg-blue-600 dark:bg-blue-500 h-1 transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                ${formatFileSize(filesize)}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                <span class="text-xs text-gray-400 dark:text-gray-500">Processing...</span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                <span class="text-xs text-gray-400 dark:text-gray-500">-</span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                <span class="text-xs text-gray-400 dark:text-gray-500">Uploading</span>
+            </td>
+        `;
+
+        // Insert at top of tbody (before first row)
+        const emptyRow = tbody.querySelector('td[colspan="5"]');
+        if (emptyRow) {
+            emptyRow.parentElement.remove();
+        }
+        tbody.insertBefore(row, tbody.firstChild);
+    }
+
+    // Helper: Update progress bar
+    function updateProgress(taskId, percent) {
+        const progressBar = document.getElementById(`progress-${taskId}`);
+        if (progressBar) {
+            progressBar.style.width = `${percent}%`;
+        }
+    }
+
+    // Helper: Refresh documents list
+    async function refreshDocuments() {
+        try {
+            const response = await fetch('/admin');
+            const html = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newTbody = doc.querySelector('tbody');
+
+            if (newTbody) {
+                // Keep uploading rows, replace completed ones
+                const uploadingRows = tbody.querySelectorAll('[id^="uploading-"]');
+                tbody.innerHTML = newTbody.innerHTML;
+
+                // Re-insert still-uploading rows at top
+                uploadingRows.forEach(row => {
+                    const taskId = row.id.replace('uploading-', '');
+                    if (taskMap.has(taskId)) {
+                        tbody.insertBefore(row, tbody.firstChild);
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Error refreshing documents:', error);
+        }
+    }
+
+    // Main upload function
     async function uploadFiles(files) {
         if (!files || files.length === 0) return;
 
-        // Show upload progress
-        uploadProgress.classList.remove('hidden');
+        // Disable buttons during upload
         selectFilesButton.disabled = true;
         selectFolderButton.disabled = true;
         selectFilesButton.classList.add('opacity-50', 'cursor-not-allowed');
         selectFolderButton.classList.add('opacity-50', 'cursor-not-allowed');
 
-        // Use FormData for modern upload
+        // Prepare FormData
         const formData = new FormData();
         for (const file of files) {
-            // Preserve relative path if available
             const filename = file.webkitRelativePath || file.name;
             formData.append('files', file, filename);
         }
 
         try {
+            // Upload files
             const response = await fetch('/admin/upload', {
                 method: 'POST',
                 body: formData
             });
 
-            if (response.ok) {
-                // Reload the page to show updated documents
-                window.location.reload();
-            } else {
-                alert('Upload failed. Please try again.');
-                uploadProgress.classList.add('hidden');
-                selectFilesButton.disabled = false;
-                selectFolderButton.disabled = false;
-                selectFilesButton.classList.remove('opacity-50', 'cursor-not-allowed');
-                selectFolderButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            if (!response.ok) {
+                throw new Error('Upload failed');
             }
+
+            const result = await response.json();
+
+            if (result.status === 'error') {
+                alert(`Upload failed: ${result.message}`);
+                enableButtons();
+                return;
+            }
+
+            const batchId = result.batch_id;
+            const tasks = result.tasks || [];
+
+            // Add uploading rows for each task
+            tasks.forEach((task, index) => {
+                taskMap.set(task.task_id, task.filename);
+                addUploadingRow(task.task_id, task.filename, files[index]?.size || 0);
+            });
+
+            // Connect to SSE for progress updates
+            const eventSource = new EventSource(`/admin/upload/progress/${batchId}/stream`);
+
+            eventSource.addEventListener('progress', (event) => {
+                const data = JSON.parse(event.data);
+
+                // Update progress for each task
+                Object.entries(data.tasks || {}).forEach(([taskId, task]) => {
+                    const totalChunks = task.total_chunks || 0;
+                    const completedChunks = task.completed_chunks || 0;
+                    const percent = totalChunks > 0 ? Math.round((completedChunks / totalChunks) * 100) : 0;
+
+                    updateProgress(taskId, percent);
+                });
+            });
+
+            eventSource.addEventListener('complete', async (event) => {
+                console.log('All uploads complete');
+                eventSource.close();
+
+                // Remove all uploading rows
+                taskMap.clear();
+
+                // Refresh document list
+                await refreshDocuments();
+
+                // Re-enable buttons
+                enableButtons();
+            });
+
+            eventSource.addEventListener('error', (event) => {
+                console.error('SSE error:', event);
+                eventSource.close();
+
+                // Refresh and re-enable
+                refreshDocuments();
+                enableButtons();
+            });
+
+            eventSource.onerror = () => {
+                console.error('SSE connection error');
+                eventSource.close();
+                refreshDocuments();
+                enableButtons();
+            };
+
         } catch (error) {
             alert('Upload failed. Please try again.');
-            uploadProgress.classList.add('hidden');
-            selectFilesButton.disabled = false;
-            selectFolderButton.disabled = false;
-            selectFilesButton.classList.remove('opacity-50', 'cursor-not-allowed');
-            selectFolderButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            enableButtons();
         }
+    }
+
+    function enableButtons() {
+        selectFilesButton.disabled = false;
+        selectFolderButton.disabled = false;
+        selectFilesButton.classList.remove('opacity-50', 'cursor-not-allowed');
+        selectFolderButton.classList.remove('opacity-50', 'cursor-not-allowed');
     }
 
     // Select Files button
     selectFilesButton.addEventListener('click', async () => {
         if ('showOpenFilePicker' in window) {
-            // Modern File System Access API (Chromium browsers)
             try {
                 const handles = await window.showOpenFilePicker({
                     multiple: true,
@@ -208,13 +344,11 @@
                 const files = await Promise.all(handles.map(h => h.getFile()));
                 await uploadFiles(files);
             } catch (err) {
-                // User cancelled or error occurred
                 if (err.name !== 'AbortError') {
                     console.error('File selection error:', err);
                 }
             }
         } else {
-            // Fallback to traditional input
             fileInput.multiple = true;
             fileInput.removeAttribute('webkitdirectory');
             fileInput.onchange = () => uploadFiles([...fileInput.files]);
@@ -225,7 +359,6 @@
     // Select Folder button
     selectFolderButton.addEventListener('click', async () => {
         if ('showDirectoryPicker' in window) {
-            // Modern File System Access API (Chromium browsers)
             try {
                 const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
                 const files = [];
@@ -235,7 +368,6 @@
                         const entryPath = `${path}/${entry.name}`;
                         if (entry.kind === 'file') {
                             const file = await entry.getFile();
-                            // Add webkitRelativePath for compatibility
                             Object.defineProperty(file, 'webkitRelativePath', {
                                 get: () => entryPath
                             });
@@ -249,13 +381,11 @@
                 await traverseDirectory(dirHandle);
                 await uploadFiles(files);
             } catch (err) {
-                // User cancelled or error occurred
                 if (err.name !== 'AbortError') {
                     console.error('Directory selection error:', err);
                 }
             }
         } else {
-            // Fallback to traditional input with webkitdirectory
             fileInput.multiple = true;
             fileInput.setAttribute('webkitdirectory', '');
             fileInput.onchange = () => uploadFiles([...fileInput.files]);

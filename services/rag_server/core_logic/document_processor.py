@@ -96,9 +96,11 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
 
 def extract_metadata(file_path: str) -> dict[str, str]:
     file_path_obj = Path(file_path)
+    file_size = file_path_obj.stat().st_size
 
     return {
         "file_name": file_path_obj.name,
         "file_type": file_path_obj.suffix,
-        "path": str(file_path_obj.parent)
+        "path": str(file_path_obj.parent),
+        "file_size_bytes": file_size
     }

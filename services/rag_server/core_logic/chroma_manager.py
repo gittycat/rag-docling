@@ -110,6 +110,7 @@ def list_documents(index) -> List[Dict]:
                 'file_name': metadata.get('file_name', 'Unknown'),
                 'file_type': metadata.get('file_type', ''),
                 'path': metadata.get('path', ''),
+                'file_size_bytes': metadata.get('file_size_bytes', 0),
                 'chunks': 0
             }
 

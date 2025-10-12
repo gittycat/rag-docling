@@ -180,19 +180,22 @@ async def upload_documents(files: List[UploadFile] = File(...)):
             )
             response.raise_for_status()
             result = response.json()
-            batch_id = result.get("batch_id")
 
-            if batch_id:
-                return RedirectResponse(url=f"/admin/upload/progress/{batch_id}", status_code=303)
-            else:
-                return RedirectResponse(url="/admin", status_code=303)
+            return {
+                "status": "queued",
+                "batch_id": result.get("batch_id"),
+                "tasks": result.get("tasks", [])
+            }
 
     except Exception as e:
         print(f"Upload error: {type(e).__name__}: {e}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"Response status: {e.response.status_code}")
             print(f"Response body: {e.response.text}")
-        return RedirectResponse(url="/admin", status_code=303)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 @app.post("/admin/delete/{document_id}")
 async def delete_document(request: Request, document_id: str):
