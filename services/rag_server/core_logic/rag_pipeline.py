@@ -1,5 +1,4 @@
 from typing import Dict, List, Optional
-from llama_index.core.postprocessor import SimilarityPostprocessor
 from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
 from core_logic.chroma_manager import get_or_create_collection
 from core_logic.llm_handler import get_system_prompt, get_context_prompt, get_condense_prompt
@@ -14,7 +13,6 @@ def get_reranker_config() -> Dict:
     return {
         'enabled': get_optional_env('ENABLE_RERANKER', 'true').lower() == 'true',
         'model': get_optional_env('RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2'),
-        'similarity_threshold': float(get_optional_env('RERANKER_SIMILARITY_THRESHOLD', '0.65')),
         'retrieval_top_k': int(get_optional_env('RETRIEVAL_TOP_K', '10'))
     }
 

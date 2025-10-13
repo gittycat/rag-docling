@@ -35,6 +35,19 @@ async def startup_event():
     create_reranker_postprocessors()
     logger.info("[STARTUP] Reranker model ready")
 
+    # Verify ChromaDB persistence (defensive measure against reported 2025 reliability issues)
+    try:
+        index = get_or_create_collection()
+        collection = index._vector_store._collection
+        count = collection.count()
+        logger.info(f"[STARTUP] ChromaDB persistence check: {count} documents in collection")
+        if count == 0:
+            logger.warning("[STARTUP] ChromaDB collection is empty - may need document upload or restore from backup")
+    except Exception as e:
+        logger.error(f"[STARTUP] ChromaDB persistence check failed: {str(e)}")
+        # Don't fail startup, but log the error prominently
+        logger.error("[STARTUP] ChromaDB may not be accessible - check service connectivity")
+
 class QueryRequest(BaseModel):
     query: str
     session_id: str | None = None

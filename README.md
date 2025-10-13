@@ -9,6 +9,8 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 - **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html, and more
 - **Intelligent Chunking**: Structural chunking that preserves document hierarchy (headings, sections, tables)
 - **Two-Stage Retrieval**: Vector search (top-10) + cross-encoder reranking for better precision
+- **Conversational Memory**: Redis-backed chat history that persists across restarts
+- **Data Protection**: Automated ChromaDB backups with restore capability
 - **Local Deployment**: All data stays on your machine
 - **Modern Web Interface**: Clean, responsive UI with Tailwind CSS and dark mode support
 - **Document Management**: Admin interface for viewing and managing indexed documents
@@ -27,7 +29,7 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 - **Reranking**: SentenceTransformer cross-encoder (ms-marco-MiniLM-L-6-v2)
 - **Orchestration**: Docker Compose
 - **Package Management**: uv
-- **Task Queue**: Celery + Redis (for async document processing)
+- **Task Queue**: Celery + Redis (async document processing, chat history persistence, progress tracking)
 
 ## Architecture
 
@@ -296,9 +298,9 @@ reader = DoclingReader(export_type=DoclingReader.ExportType.JSON)
 **Mitigation**:
 1. Enable reranker: `ENABLE_RERANKER=true` (already enabled)
 2. Use higher top-k: `RETRIEVAL_TOP_K=10` (already configured)
-3. Tune similarity threshold: `RERANKER_SIMILARITY_THRESHOLD=0.65` (balance between precision and recall)
+3. Reranker uses top-n selection to return most relevant 5-10 nodes
 
-**Long-term Solution**: Consider hierarchical node parsing (see diagnostic report for implementation details).
+**Long-term Solution**: Consider hybrid search (BM25 + Vector) and contextual retrieval (see Phase 2 of RAG Accuracy Improvement Plan).
 
 ## Troubleshooting
 
@@ -346,6 +348,41 @@ docker volume rm rag-bin2_chroma_data
 docker-compose up -d
 ```
 
+## Backup & Restore
+
+### ChromaDB Backup
+
+Automated backup scripts are provided to protect against data loss:
+
+```bash
+# Manual backup to default location (./backups/chromadb/)
+./scripts/backup_chromadb.sh
+
+# Schedule daily backups at 2 AM (add to crontab)
+crontab -e
+# Add: 0 2 * * * cd /path/to/rag-docling && ./scripts/backup_chromadb.sh >> /var/log/chromadb_backup.log 2>&1
+```
+
+**Features**:
+- Timestamped backups (`chromadb_backup_YYYYMMDD_HHMMSS.tar.gz`)
+- 30-day retention (automatically removes old backups)
+- Document count verification
+- Health check after restore
+
+### ChromaDB Restore
+
+```bash
+# List available backups
+ls -lh ./backups/chromadb/
+
+# Restore from specific backup
+./scripts/restore_chromadb.sh ./backups/chromadb/chromadb_backup_20251013_020000.tar.gz
+```
+
+**Note**: Restore process stops services, replaces data, and verifies health after restart.
+
+See `scripts/README.md` for complete documentation.
+
 ## Testing
 
 The project follows Test-Driven Development (TDD) methodology:
@@ -389,8 +426,8 @@ The RAG server uses **Docling + LlamaIndex** for superior document processing:
 3. **Two-Stage Retrieval**:
    - **Stage 1**: Vector similarity search (top-10 results, high recall)
    - **Stage 2**: Cross-encoder reranking (ms-marco-MiniLM-L-6-v2, high precision)
-   - **Threshold filtering**: Only nodes above 0.65 similarity included in context
-   - **Adaptive context**: Returns 0-10 nodes based on relevance
+   - **Top-n selection**: Returns top 5 nodes by default (or half of retrieval_top_k)
+   - **Adaptive context**: Returns most relevant nodes based on reranking scores
 
 4. **LlamaIndex Integration**:
    - ChromaVectorStore with VectorStoreIndex
@@ -401,19 +438,33 @@ The RAG server uses **Docling + LlamaIndex** for superior document processing:
 
 - **Document Structure Preservation**: Maintains headings, sections, tables as separate nodes
 - **Two-Stage Retrieval**: Combines recall of vector search with precision of reranking
-- **Dynamic Context Window**: Only includes relevant nodes above similarity threshold
-- **Multiple Prompt Strategies**: fast, balanced, precise, comprehensive
+- **Conversational Memory**: Redis-backed chat history with automatic expiration (1-hour TTL)
+- **Data Protection**: Automated backups, startup persistence verification
+- **Dynamic Context Window**: Returns top-ranked nodes based on reranking scores
 
 ## Roadmap
 
+### Completed (Phase 1 - 2025-10-13)
+- [x] Redis-backed chat memory (conversations persist across restarts)
+- [x] ChromaDB backup/restore automation
+- [x] Reranker optimization (top-n selection)
+- [x] Startup persistence verification
+- [x] Dependency updates (ChromaDB 1.1.1, FastAPI 0.118.3, Redis 6.4.0)
+
+See `docs/PHASE1_IMPLEMENTATION_SUMMARY.md` for details.
+
+### Planned (Phase 2+)
+- [ ] Hybrid search (BM25 + Vector + RRF) - 48% retrieval improvement
+- [ ] Contextual retrieval (Anthropic method) - 49% fewer failures
+- [ ] Parent document retrieval (sentence window)
 - [ ] File upload via web interface
-- [ ] Support for additional file formats (CSV, JSON, HTML)
-- [ ] Real-time document indexing
+- [ ] Support for additional file formats (CSV, JSON)
 - [ ] Multi-user support with authentication
-- [ ] Document chunking strategies
 - [ ] Query history and bookmarking
 - [ ] Export search results
 - [ ] Performance metrics dashboard
+
+See `docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md` for Phase 2 details.
 
 ## License
 

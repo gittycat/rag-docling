@@ -1,16 +1,29 @@
 from llama_index.core.memory import ChatMemoryBuffer
-from llama_index.core.storage.chat_store import SimpleChatStore
+from llama_index.storage.chat_store.redis import RedisChatStore
 from llama_index.core import Settings
-from typing import Dict
+from core_logic.env_config import get_required_env
+from typing import Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Global in-memory chat store (persists across requests within same process)
-_chat_store = SimpleChatStore()
+# Global Redis-backed chat store (persists across container restarts)
+# Initialized lazily on first access
+_chat_store: Optional[RedisChatStore] = None
 
 # Cache of memory buffers per session
 _memory_cache: Dict[str, ChatMemoryBuffer] = {}
+
+def _get_chat_store() -> RedisChatStore:
+    """Get or initialize the Redis chat store (lazy initialization)"""
+    global _chat_store
+    if _chat_store is None:
+        _chat_store = RedisChatStore(
+            redis_url=get_required_env("REDIS_URL"),
+            ttl=3600  # 1 hour TTL for chat sessions
+        )
+        logger.info("[CHAT_MEMORY] Initialized RedisChatStore with 1-hour TTL")
+    return _chat_store
 
 def get_token_limit_for_chat_history() -> int:
     """
@@ -55,8 +68,9 @@ def get_or_create_chat_memory(session_id: str) -> ChatMemoryBuffer:
     """
     Get or create a ChatMemoryBuffer for the given session_id.
 
-    Uses in-memory storage with SimpleChatStore. Each session has its own
-    isolated conversation history.
+    Uses Redis-backed storage with RedisChatStore. Each session has its own
+    isolated conversation history that persists across container restarts.
+    Sessions expire after 1 hour of inactivity (TTL).
 
     Args:
         session_id: Unique identifier for the conversation session
@@ -74,7 +88,7 @@ def get_or_create_chat_memory(session_id: str) -> ChatMemoryBuffer:
 
     memory = ChatMemoryBuffer.from_defaults(
         token_limit=token_limit,
-        chat_store=_chat_store,
+        chat_store=_get_chat_store(),
         chat_store_key=session_id
     )
 
@@ -87,7 +101,7 @@ def get_or_create_chat_memory(session_id: str) -> ChatMemoryBuffer:
 
 def clear_session_memory(session_id: str) -> None:
     """
-    Clear the chat history for a specific session.
+    Clear the chat history for a specific session from Redis.
 
     Args:
         session_id: Session to clear
@@ -96,12 +110,12 @@ def clear_session_memory(session_id: str) -> None:
     if session_id in _memory_cache:
         del _memory_cache[session_id]
 
-    # Clear from store
-    messages = _chat_store.get_messages(session_id)
+    # Clear from Redis store
+    chat_store = _get_chat_store()
+    messages = chat_store.get_messages(session_id)
     if messages:
-        # SimpleChatStore doesn't have direct clear, so we delete by setting empty
-        _chat_store.delete_messages(session_id)
-        logger.info(f"[CHAT_MEMORY] Cleared memory for session: {session_id}")
+        chat_store.delete_messages(session_id)
+        logger.info(f"[CHAT_MEMORY] Cleared Redis-backed memory for session: {session_id}")
 
 
 def get_chat_history(session_id: str) -> list:
@@ -114,5 +128,6 @@ def get_chat_history(session_id: str) -> list:
     Returns:
         List of ChatMessage objects
     """
-    messages = _chat_store.get_messages(session_id)
+    chat_store = _get_chat_store()
+    messages = chat_store.get_messages(session_id)
     return messages if messages else []
