@@ -82,6 +82,13 @@ class ClearSessionResponse(BaseModel):
     status: str
     message: str
 
+class ModelsInfoResponse(BaseModel):
+    llm_model: str
+    llm_hosting: str
+    embedding_model: str
+    reranker_model: str | None
+    reranker_enabled: bool
+
 def process_and_index_document(file_path: str, filename: str) -> dict:
     logger.info(f"[CHUNKING] Calling chunk_document_from_file for {filename}")
     nodes = chunk_document_from_file(file_path)
@@ -120,6 +127,26 @@ def process_and_index_document(file_path: str, filename: str) -> dict:
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+@app.get("/models/info", response_model=ModelsInfoResponse)
+async def get_models_info():
+    """Get information about the models used in the RAG system"""
+    from core_logic.rag_pipeline import get_reranker_config
+
+    llm_model = os.getenv("LLM_MODEL", "unknown")
+    embedding_model = os.getenv("EMBEDDING_MODEL", "unknown")
+
+    reranker_config = get_reranker_config()
+    reranker_enabled = reranker_config['enabled']
+    reranker_model = reranker_config['model'] if reranker_enabled else None
+
+    return ModelsInfoResponse(
+        llm_model=llm_model,
+        llm_hosting="Ollama (local)",
+        embedding_model=embedding_model,
+        reranker_model=reranker_model,
+        reranker_enabled=reranker_enabled
+    )
 
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):

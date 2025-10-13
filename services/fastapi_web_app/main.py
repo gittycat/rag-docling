@@ -271,6 +271,27 @@ async def about(request: Request):
         name="about.html"
     )
 
+@app.get("/api/models/info")
+async def get_models_info():
+    """Proxy endpoint to fetch models info from RAG server"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{RAG_SERVER_URL}/models/info",
+                timeout=10.0
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as e:
+        return {
+            "error": f"Failed to fetch models info: {str(e)}",
+            "llm_model": "unknown",
+            "llm_hosting": "unknown",
+            "embedding_model": "unknown",
+            "reranker_model": None,
+            "reranker_enabled": False
+        }
+
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
