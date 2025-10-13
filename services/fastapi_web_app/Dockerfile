@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Use Python 3.12 slim image
-FROM python:3.12-slim
+# Use Python 3.13 slim image
+FROM python:3.13-slim
 
 # Install uv for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:0.9.0 /uv /uvx /bin/

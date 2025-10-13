@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Use Python 3.12 slim image
-FROM python:3.12-slim
+# Use Python 3.13 slim image
+FROM python:3.13-slim
 
 # Install system dependencies for docling (OCR support)
 RUN apt-get update && apt-get install -y \
