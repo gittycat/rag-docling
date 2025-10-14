@@ -4,25 +4,110 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}RAG System{% endblock %}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class'
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style type="text/tailwindcss">
+        @theme {
+            /* Custom color tokens using Tailwind v4 @theme syntax */
+            --color-background: rgb(255 255 255);
+            --color-surface: rgb(249 250 251);
+            --color-surface-elevated: rgb(255 255 255);
+            --color-foreground: rgb(17 24 39);
+            --color-foreground-muted: rgb(107 114 128);
+
+            --color-primary: rgb(96 165 250);
+            --color-primary-hover: rgb(59 130 246);
+            --color-primary-foreground: rgb(255 255 255);
+
+            --color-secondary: rgb(243 244 246);
+            --color-secondary-hover: rgb(229 231 235);
+            --color-secondary-foreground: rgb(55 65 81);
+
+            --color-accent: rgb(236 72 153);
+            --color-accent-hover: rgb(219 39 119);
+
+            --color-border: rgb(229 231 235);
+            --color-border-input: rgb(209 213 219);
+
+            --color-destructive: rgb(239 68 68);
+            --color-destructive-hover: rgb(220 38 38);
         }
-    </script>
+
+        :root {
+            /* Light mode (default) */
+            --background: var(--color-background);
+            --surface: var(--color-surface);
+            --surface-elevated: var(--color-surface-elevated);
+            --foreground: var(--color-foreground);
+            --foreground-muted: var(--color-foreground-muted);
+            --primary: var(--color-primary);
+            --primary-hover: var(--color-primary-hover);
+            --primary-foreground: var(--color-primary-foreground);
+            --secondary: var(--color-secondary);
+            --secondary-hover: var(--color-secondary-hover);
+            --secondary-foreground: var(--color-secondary-foreground);
+            --accent: var(--color-accent);
+            --accent-hover: var(--color-accent-hover);
+            --border: var(--color-border);
+            --border-input: var(--color-border-input);
+            --destructive: var(--color-destructive);
+            --destructive-hover: var(--color-destructive-hover);
+            --radius: 0.75rem;
+            --radius-full: 9999px;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+
+        .dark {
+            /* Dark mode overrides */
+            --background: rgb(17 24 39);
+            --surface: rgb(31 41 55);
+            --surface-elevated: rgb(55 65 81);
+            --foreground: rgb(243 244 246);
+            --foreground-muted: rgb(156 163 175);
+            --primary: rgb(96 165 250);
+            --primary-hover: rgb(59 130 246);
+            --primary-foreground: rgb(17 24 39);
+            --secondary: rgb(55 65 81);
+            --secondary-hover: rgb(75 85 99);
+            --secondary-foreground: rgb(229 231 235);
+            --accent: rgb(244 114 182);
+            --accent-hover: rgb(236 72 153);
+            --border: rgb(55 65 81);
+            --border-input: rgb(75 85 99);
+            --destructive: rgb(248 113 113);
+            --destructive-hover: rgb(239 68 68);
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.3), 0 4px 6px -4px rgb(0 0 0 / 0.2);
+        }
+
+        /* Smooth transitions */
+        * {
+            transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
     <script>
         // Initialize theme before page renders to prevent flash
+        // Default to dark mode to match the modern design
         (function() {
-            const theme = localStorage.getItem('theme') ||
-                         (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            const theme = localStorage.getItem('theme') || 'dark';
             if (theme === 'dark') {
                 document.documentElement.classList.add('dark');
             }
         })();
     </script>
+    <style>
+        body {
+            background: rgb(var(--background));
+            color: rgb(var(--foreground));
+            min-height: 100vh;
+            transition: background-color 0.2s, color 0.2s;
+        }
+    </style>
     {% block extra_head %}{% endblock %}
 </head>
-<body class="{% block body_class %}bg-white dark:bg-gray-900 min-h-screen transition-colors duration-200{% endblock %}">
+<body class="{% block body_class %}min-h-screen{% endblock %}">
     {% block navigation %}
     <!-- Default Navigation -->
     <nav class="absolute top-0 right-0 p-6">

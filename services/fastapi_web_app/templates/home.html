@@ -4,20 +4,52 @@
 
 {% block extra_head %}
 <style>
-    /* Chat message styling */
+    /* Chat message animations */
     .message-bubble {
-        animation: fadeIn 0.3s ease-in;
+        animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(16px) scale(0.98);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    /* User message bubble */
+    .user-message {
+        background: linear-gradient(135deg, rgb(var(--primary)) 0%, rgb(var(--primary-hover)) 100%);
+        color: rgb(var(--primary-foreground));
+        border-radius: 1.5rem 1.5rem 0.375rem 1.5rem;
+        box-shadow: var(--shadow-sm);
+    }
+
+    /* Assistant message bubble */
+    .assistant-message {
+        background: rgb(var(--surface) / 0.8);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgb(var(--border) / 0.5);
+        border-radius: 1.5rem 1.5rem 1.5rem 0.375rem;
+        box-shadow: var(--shadow-sm);
+    }
+
+    .dark .assistant-message {
+        background: rgb(var(--surface) / 0.6);
+        border-color: rgb(var(--border) / 0.3);
     }
 
     /* Answer content styling */
-    .answer-content p,
-    .answer-content li,
     .answer-content {
+        line-height: 1.7;
+        color: rgb(var(--foreground));
+    }
+
+    .answer-content p,
+    .answer-content li {
         color: inherit;
     }
 
@@ -27,41 +59,43 @@
     }
 
     .answer-content code {
-        color: inherit;
-        background-color: rgba(107, 114, 128, 0.1);
-        padding: 0.125rem 0.25rem;
-        border-radius: 0.25rem;
+        color: rgb(var(--primary));
+        background: rgb(var(--secondary) / 0.6);
+        padding: 0.125rem 0.375rem;
+        border-radius: 0.375rem;
         font-size: 0.875em;
-    }
-
-    .dark .answer-content code {
-        background-color: rgba(156, 163, 175, 0.2);
+        font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+        border: 1px solid rgb(var(--border) / 0.5);
     }
 
     .answer-content pre {
-        background-color: rgba(107, 114, 128, 0.05);
+        background: rgb(var(--surface));
+        border: 1px solid rgb(var(--border));
         padding: 1rem;
-        border-radius: 0.5rem;
+        border-radius: var(--radius);
         overflow-x: auto;
+        margin: 1rem 0;
     }
 
-    .dark .answer-content pre {
-        background-color: rgba(31, 41, 55, 0.5);
+    .answer-content pre code {
+        background: transparent;
+        border: none;
+        padding: 0;
+        color: inherit;
     }
 
-    .answer-content ul, .answer-content ol {
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
+    .answer-content ul,
+    .answer-content ol {
+        margin: 0.75rem 0;
+        padding-left: 1.5rem;
     }
 
     .answer-content li {
-        margin-top: 0.25rem;
-        margin-bottom: 0.25rem;
+        margin: 0.375rem 0;
     }
 
     .answer-content p {
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
+        margin: 0.75rem 0;
     }
 
     .answer-content p:first-child {
@@ -71,10 +105,125 @@
     .answer-content p:last-child {
         margin-bottom: 0;
     }
+
+    /* Large input field styling (like chat-box.jpg) */
+    .hero-input {
+        background: transparent;
+        border: 1px solid rgb(var(--border-input) / 0.3);
+        color: rgb(var(--foreground));
+        border-radius: 2rem;
+        padding: 1.75rem 2rem;
+        font-size: 1.125rem;
+        transition: all 0.3s ease;
+        width: 100%;
+    }
+
+    .hero-input::placeholder {
+        color: rgb(var(--foreground-muted) / 0.6);
+    }
+
+    .hero-input:focus {
+        border-color: rgb(var(--border-input) / 0.5);
+        outline: none;
+        background: rgb(var(--surface) / 0.05);
+    }
+
+    /* Regular chat input styling */
+    .search-input {
+        background: rgb(var(--surface-elevated));
+        border: 2px solid rgb(var(--border-input));
+        color: rgb(var(--foreground));
+        transition: all 0.2s ease;
+    }
+
+    .search-input::placeholder {
+        color: rgb(var(--foreground-muted));
+    }
+
+    .search-input:focus {
+        border-color: rgb(var(--primary));
+        box-shadow: 0 0 0 4px rgb(var(--primary) / 0.1);
+    }
+
+    /* Hero submit button */
+    .hero-button {
+        background: rgb(var(--surface-elevated));
+        color: rgb(var(--foreground));
+        border: 1px solid rgb(var(--border) / 0.3);
+        padding: 0.875rem 2.5rem;
+        border-radius: 1.5rem;
+        font-size: 1rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+
+    .hero-button:hover:not(:disabled) {
+        background: rgb(var(--surface));
+        border-color: rgb(var(--border) / 0.5);
+    }
+
+    .hero-button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    /* Submit button */
+    .submit-button {
+        background: linear-gradient(135deg, rgb(var(--primary)) 0%, rgb(var(--primary-hover)) 100%);
+        color: rgb(var(--primary-foreground));
+        box-shadow: var(--shadow-md);
+        transition: all 0.2s ease;
+    }
+
+    .submit-button:hover:not(:disabled) {
+        transform: scale(1.05);
+        box-shadow: var(--shadow-lg);
+    }
+
+    .submit-button:disabled {
+        background: rgb(var(--foreground-muted));
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    /* Loading indicator */
+    .loading-indicator {
+        background: rgb(var(--surface));
+        border: 1px solid rgb(var(--border));
+        box-shadow: var(--shadow-lg);
+        backdrop-filter: blur(12px);
+    }
+
+    /* Sources section */
+    .source-card {
+        background: rgb(var(--surface));
+        border-left: 3px solid rgb(var(--primary));
+        border-radius: 0 var(--radius) var(--radius) 0;
+        transition: all 0.2s ease;
+    }
+
+    .source-card:hover {
+        background: rgb(var(--surface-elevated));
+        transform: translateX(4px);
+    }
+
+    /* Context dropdown */
+    .context-dropdown {
+        background: rgb(var(--surface));
+        border: 1px solid rgb(var(--border));
+        border-radius: var(--radius);
+    }
+
+    .context-chunk {
+        background: rgb(var(--surface-elevated));
+        border: 1px solid rgb(var(--border));
+        border-radius: calc(var(--radius) * 0.75);
+    }
 </style>
 {% endblock %}
 
-{% block body_class %}bg-white dark:bg-gray-900 min-h-screen flex flex-col transition-colors duration-200{% endblock %}
+{% block body_class %}min-h-screen flex flex-col{% endblock %}
 
 {% block nav_links %}
 {% if chat_history %}
@@ -89,32 +238,31 @@
 <main class="px-4 max-w-5xl mx-auto w-full {% if chat_history %}flex-1 flex flex-col pb-32 pt-20{% else %}flex-1 flex flex-col items-center justify-center{% endif %}">
     {% if not chat_history %}
     <!-- Initial Centered Search Form (No Chat History) -->
-    <div class="w-full max-w-3xl">
-        <h1 class="text-4xl font-bold text-center mb-8 text-gray-900 dark:text-gray-100">
-            Ask me about your docs
+    <div class="w-full max-w-4xl px-4">
+        <h1 class="text-5xl font-normal text-left mb-12" style="color: rgb(var(--primary))">
+            Ask me about your docs,
         </h1>
-        <form action="/" method="POST" class="w-full" id="searchForm">
+        <form action="/" method="POST" class="w-full space-y-6" id="searchForm">
             <input type="hidden" name="session_id" id="sessionIdInput" value="">
-            <div class="relative">
+            <div>
                 <input
                     type="text"
                     name="query"
                     id="queryInput"
                     placeholder="What would you like to know?"
-                    class="w-full px-6 py-5 text-base border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent shadow-lg transition pr-14 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-500 dark:placeholder:text-gray-400"
+                    class="hero-input"
                     required
                     autofocus
                 />
+            </div>
+            <div class="flex justify-start">
                 <button
                     type="submit"
                     id="submitBtn"
                     disabled
-                    class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-2.5 transition duration-200 shadow-md disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white"
-                    aria-label="Submit query"
+                    class="hero-button"
                 >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
-                    </svg>
+                    Ask Question
                 </button>
             </div>
         </form>
@@ -127,15 +275,17 @@
                 {% if message.role == 'user' %}
                 <!-- User Message -->
                 <div class="flex justify-end message-bubble">
-                    <div class="bg-blue-50 dark:bg-blue-900/30 rounded-3xl px-6 py-4 max-w-2xl shadow-sm">
-                        <p class="text-base text-gray-900 dark:text-gray-100">{{ message.content }}</p>
+                    <div class="user-message px-6 py-4 max-w-2xl">
+                        <p class="text-base">{{ message.content }}</p>
                     </div>
                 </div>
                 {% elif message.role == 'assistant' %}
                 <!-- Assistant Message -->
                 <div class="message-bubble">
-                    <div class="answer-content text-base leading-relaxed text-gray-900 dark:text-gray-100">
-                        {{ message.content|safe }}
+                    <div class="assistant-message px-6 py-4">
+                        <div class="answer-content text-base">
+                            {{ message.content|safe }}
+                        </div>
                     </div>
                 </div>
                 {% endif %}
@@ -143,44 +293,44 @@
 
             <!-- Sources for latest message (if available) -->
             {% if sources %}
-            <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+            <div class="mt-8 pt-6" style="border-top: 1px solid rgb(var(--border))">
                 <!-- LLM Context Dropdown -->
                 <details class="group mb-6">
                     <summary class="cursor-pointer list-none">
-                        <div class="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition">
+                        <div class="flex items-center space-x-2 text-xs transition" style="color: rgb(var(--foreground-muted))">
                             <span>View LLM Context ({{ sources|length }} chunks)</span>
                             <svg class="w-4 h-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                             </svg>
                         </div>
                     </summary>
-                    <div class="mt-3 space-y-3 bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-                        <p class="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                    <div class="mt-3 space-y-3 context-dropdown p-4">
+                        <p class="text-xs mb-3" style="color: rgb(var(--foreground-muted))">
                             These are the text chunks retrieved and reranked, sent to the LLM as context:
                         </p>
                         {% for source in sources %}
-                        <div class="bg-white dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-600">
+                        <div class="context-chunk p-3">
                             <div class="flex items-start justify-between mb-2">
-                                <span class="text-xs font-medium text-gray-700 dark:text-gray-300">{{ source.document_name }}</span>
-                                <span class="text-xs text-gray-500 dark:text-gray-500">Chunk {{ loop.index }}</span>
+                                <span class="text-xs font-medium" style="color: rgb(var(--foreground))">{{ source.document_name }}</span>
+                                <span class="text-xs" style="color: rgb(var(--foreground-muted))">Chunk {{ loop.index }}</span>
                             </div>
-                            <div class="text-xs text-gray-600 dark:text-gray-400 font-mono whitespace-pre-wrap break-words">{{ source.full_text }}</div>
+                            <div class="text-xs font-mono whitespace-pre-wrap break-words" style="color: rgb(var(--foreground-muted))">{{ source.full_text }}</div>
                         </div>
                         {% endfor %}
                     </div>
                 </details>
 
                 <!-- Sources -->
-                <h2 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-4 uppercase tracking-wide">Sources</h2>
-                <div class="space-y-4">
+                <h2 class="text-sm font-semibold mb-4 uppercase tracking-wide" style="color: rgb(var(--foreground-muted))">Sources</h2>
+                <div class="space-y-3">
                     {% for source in sources %}
-                    <div class="border-l-4 border-blue-500 dark:border-blue-400 pl-4 py-2 bg-gray-50 dark:bg-gray-800 rounded-r">
-                        <h3 class="font-medium text-gray-900 dark:text-gray-100 text-sm">{{ source.document_name }}</h3>
+                    <div class="source-card pl-4 py-3">
+                        <h3 class="font-medium text-sm" style="color: rgb(var(--foreground))">{{ source.document_name }}</h3>
                         {% if source.excerpt %}
-                        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ source.excerpt }}</p>
+                        <p class="text-sm mt-1" style="color: rgb(var(--foreground-muted))">{{ source.excerpt }}</p>
                         {% endif %}
                         {% if source.path %}
-                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ source.path }}</p>
+                        <p class="text-xs mt-1" style="color: rgb(var(--foreground-muted)); opacity: 0.7;">{{ source.path }}</p>
                         {% endif %}
                     </div>
                     {% endfor %}
@@ -193,7 +343,7 @@
 
     <!-- Fixed Bottom Search Form (Always visible when chat history exists) -->
     {% if chat_history %}
-    <div class="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 shadow-lg">
+    <div class="fixed bottom-0 left-0 right-0 shadow-lg" style="background: rgb(var(--background)); border-top: 1px solid rgb(var(--border))">
         <div class="max-w-3xl mx-auto px-4 py-4">
             <form action="/" method="POST" class="w-full" id="searchForm">
                 <input type="hidden" name="session_id" id="sessionIdInput" value="{{ session_id }}">
@@ -203,7 +353,7 @@
                         name="query"
                         id="queryInput"
                         placeholder="Ask a follow-up question..."
-                        class="w-full px-6 py-4 text-base border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent shadow-md transition pr-14 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-500 dark:placeholder:text-gray-400"
+                        class="search-input w-full px-6 py-4 text-base rounded-full focus:outline-none pr-14"
                         required
                         autofocus
                     />
@@ -211,7 +361,7 @@
                         type="submit"
                         id="submitBtn"
                         disabled
-                        class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-2.5 transition duration-200 shadow-md disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white"
+                        class="submit-button absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-2.5"
                         aria-label="Submit query"
                     >
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -226,12 +376,12 @@
 
     <!-- Loading Indicator Container -->
     <div id="loadingContainer" class="hidden fixed bottom-24 left-1/2 -translate-x-1/2 z-50">
-        <div class="flex items-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-full shadow-lg">
-            <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <div class="loading-indicator flex items-center space-x-3 px-6 py-3 rounded-full">
+            <svg class="animate-spin h-5 w-5" style="color: rgb(var(--primary))" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <span class="text-sm text-gray-700 dark:text-gray-300">Thinking...</span>
+            <span class="text-sm" style="color: rgb(var(--foreground))">Thinking...</span>
         </div>
     </div>
 </main>
@@ -345,13 +495,13 @@
         {% else %}
         // Home page - show inline loading indicator
         const loadingHTML = `
-            <div id="loadingIndicator" class="flex items-center justify-center mt-8">
-                <div class="flex items-center space-x-3 bg-blue-50 dark:bg-blue-900/30 px-6 py-3 rounded-full shadow-sm">
-                    <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <div id="loadingIndicator" class="flex items-start mt-6">
+                <div class="loading-indicator flex items-center space-x-3 px-6 py-3 rounded-full">
+                    <svg class="animate-spin h-5 w-5" style="color: rgb(var(--primary))" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    <span class="text-sm text-gray-700 dark:text-gray-300">Thinking...</span>
+                    <span class="text-sm" style="color: rgb(var(--foreground))">Thinking...</span>
                 </div>
             </div>
         `;
