@@ -6,8 +6,8 @@
 <style>
     /* Primary button styling */
     .btn-primary {
-        background: linear-gradient(135deg, rgb(var(--primary)) 0%, rgb(var(--primary-hover)) 100%);
-        color: rgb(var(--primary-foreground));
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
+        color: var(--primary-foreground);
         box-shadow: var(--shadow-md);
         transition: all 0.2s ease;
     }
@@ -37,8 +37,8 @@
 
     /* Card styling */
     .card {
-        background: rgb(var(--surface-elevated));
-        border: 1px solid rgb(var(--border));
+        background: var(--surface-elevated);
+        border: 1px solid var(--border);
         border-radius: var(--radius);
         box-shadow: var(--shadow-sm);
         transition: all 0.2s ease;
@@ -46,51 +46,51 @@
 
     /* Table styling */
     .table-header {
-        background: rgb(var(--surface));
-        color: rgb(var(--foreground-muted));
+        background: var(--surface);
+        color: var(--foreground-muted);
     }
 
     .table-row {
-        background: rgb(var(--surface-elevated));
-        border-bottom: 1px solid rgb(var(--border));
+        background: var(--surface-elevated);
+        border-bottom: 1px solid var(--border);
         transition: all 0.15s ease;
     }
 
     .table-row:hover {
-        background: rgb(var(--surface));
+        background: var(--surface);
     }
 
     /* Progress bar */
     .progress-bar-bg {
-        background: rgb(var(--secondary));
+        background: var(--secondary);
         border-radius: var(--radius-full);
     }
 
     .progress-bar-fill {
-        background: linear-gradient(90deg, rgb(var(--primary)) 0%, rgb(var(--accent)) 100%);
+        background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
         border-radius: var(--radius-full);
         transition: width 0.3s ease;
     }
 
     /* Badge styling */
     .badge {
-        background: rgb(var(--primary) / 0.1);
-        color: rgb(var(--primary));
+        background: color-mix(in srgb, var(--primary) 10%, transparent);
+        color: var(--primary);
         border-radius: var(--radius-full);
     }
 
     .dark .badge {
-        background: rgb(var(--primary) / 0.2);
+        background: color-mix(in srgb, var(--primary) 20%, transparent);
     }
 
     /* Delete button */
     .btn-delete {
-        color: rgb(var(--destructive));
+        color: var(--destructive);
         transition: all 0.2s ease;
     }
 
     .btn-delete:hover {
-        color: rgb(var(--destructive-hover));
+        color: var(--destructive-hover);
         transform: scale(1.05);
     }
 </style>
@@ -105,13 +105,13 @@
 <!-- Main Content -->
 <main class="max-w-7xl mx-auto mt-24 px-4 sm:px-6 lg:px-8 pb-12">
     <div class="mb-8">
-        <h1 class="text-3xl font-bold" style="color: rgb(var(--foreground))">Document Management</h1>
-        <p class="mt-2" style="color: rgb(var(--foreground-muted))">Upload and manage indexed documents</p>
+        <h1 class="text-3xl font-bold" style="color: var(--foreground)">Document Management</h1>
+        <p class="mt-2" style="color: var(--foreground-muted)">Upload and manage indexed documents</p>
     </div>
 
     <!-- Upload Section -->
     <div class="card p-6 mb-8">
-        <h2 class="text-lg font-semibold mb-4" style="color: rgb(var(--foreground))">Upload Documents</h2>
+        <h2 class="text-lg font-semibold mb-4" style="color: var(--foreground)">Upload Documents</h2>
         <form id="uploadForm" action="/admin/upload" method="POST" enctype="multipart/form-data" class="hidden">
             <input
                 type="file"
@@ -145,7 +145,7 @@
                     <span>Select Folder</span>
                 </button>
             </div>
-            <p class="text-xs" style="color: rgb(var(--foreground-muted))">
+            <p class="text-xs" style="color: var(--foreground-muted)">
                 Supported: txt, md, pdf, docx, pptx, xlsx, html, asciidoc
             </p>
         </div>
@@ -177,10 +177,10 @@
                 {% if documents %}
                     {% for doc in documents %}
                     <tr class="table-row" id="doc-{{ doc.id }}">
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium relative" style="color: rgb(var(--foreground))">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium relative" style="color: var(--foreground)">
                             <span class="doc-name">{{ doc.file_name }}</span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: rgb(var(--foreground-muted))">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: var(--foreground-muted)">
                             <span class="doc-size" data-size="{{ doc.file_size_bytes }}">
                                 {% if doc.file_size_bytes >= 1073741824 %}
                                     {{ "%.2f"|format(doc.file_size_bytes / 1073741824) }} GB
@@ -193,7 +193,7 @@
                                 {% endif %}
                             </span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: rgb(var(--foreground-muted))">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: var(--foreground-muted)">
                             {{ doc.file_type }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm">
@@ -213,7 +213,7 @@
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="5" class="px-6 py-12 text-center" style="color: rgb(var(--foreground-muted))">
+                        <td colspan="5" class="px-6 py-12 text-center" style="color: var(--foreground-muted)">
                             No documents indexed yet
                         </td>
                     </tr>
@@ -249,7 +249,7 @@
         row.className = 'table-row';
 
         row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium relative" style="color: rgb(var(--foreground))">
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium relative" style="color: var(--foreground)">
                 <div class="flex flex-col">
                     <span class="doc-name">${filename}</span>
                     <div class="mt-2 w-full progress-bar-bg h-1.5 overflow-hidden">
@@ -257,17 +257,17 @@
                     </div>
                 </div>
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: rgb(var(--foreground-muted))">
+            <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: var(--foreground-muted)">
                 ${formatFileSize(filesize)}
             </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: rgb(var(--foreground-muted))">
+            <td class="px-6 py-4 whitespace-nowrap text-sm" style="color: var(--foreground-muted)">
                 <span class="text-xs">Processing...</span>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm">
-                <span class="text-xs" style="color: rgb(var(--foreground-muted))">-</span>
+                <span class="text-xs" style="color: var(--foreground-muted)">-</span>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                <span class="text-xs" style="color: rgb(var(--foreground-muted))">Uploading</span>
+                <span class="text-xs" style="color: var(--foreground-muted)">Uploading</span>
             </td>
         `;
 
