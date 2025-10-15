@@ -1,32 +1,13 @@
 services:
-  # FastAPI Web Application - Public facing service
-  fastapi_web_app:
-    build:
-      context: .
-      dockerfile: ./services/fastapi_web_app/Dockerfile
-    user: "1000:1000"
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      - RAG_SERVER_URL=http://rag-server:8001
-    depends_on:
-      - rag-server
-    networks:
-      - public
-      - private
-    volumes:
-      - ./data/indexed_documents:/app/documents:ro
-    secrets:
-      - ollama_config
-
-  # RAG Server - Core processing service
+  # RAG Server - API service for document processing and querying
   rag-server:
     build:
       context: .
       dockerfile: ./services/rag_server/Dockerfile
     user: "1000:1000"
     restart: unless-stopped
+    ports:
+      - "8001:8001"
     environment:
       - CHROMADB_URL=http://chromadb:8000
       - OLLAMA_URL=http://host.docker.internal:11434

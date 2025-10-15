@@ -1,31 +1,40 @@
 # RAG System - Local Document Search with AI
 
-A privacy-first, local RAG (Retrieval Augmented Generation) system that enables natural language search across your documents using AI.
+A privacy-first, local RAG (Retrieval Augmented Generation) system that enables natural language search across your documents using AI through a REST API.
 
 ## Features
 
+### Phase 2: High-Impact Retrieval (Current)
+- **Hybrid Search (BM25 + Vector + RRF)**: 48% improvement in retrieval quality
+  - Combines sparse (BM25) keyword search with dense (vector) semantic search
+  - Reciprocal Rank Fusion (k=60) for optimal result merging
+  - Excels at exact term matching and semantic understanding
+- **Contextual Retrieval (Anthropic Method)**: 49% reduction in retrieval failures
+  - LLM-generated document context prepended to chunks
+  - Zero query-time overhead (context embedded once at indexing)
+  - 67% reduction in failures when combined with reranking
+
+### Core Capabilities
 - **Natural Language Search**: Ask questions in plain English and get AI-powered answers
 - **Advanced Document Processing**: Powered by Docling with superior PDF/DOCX parsing, table extraction, and layout understanding
 - **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html, and more
 - **Intelligent Chunking**: Structural chunking that preserves document hierarchy (headings, sections, tables)
-- **Two-Stage Retrieval**: Vector search (top-10) + cross-encoder reranking for better precision
-- **Conversational Memory**: Redis-backed chat history that persists across restarts
+- **Two-Stage Retrieval**: Hybrid search (BM25 + Vector) → cross-encoder reranking
+- **Conversational Memory**: Redis-backed chat history that persists across restarts with session management
 - **Data Protection**: Automated ChromaDB backups with restore capability
 - **Local Deployment**: All data stays on your machine
-- **Modern Web Interface**: Clean, responsive UI with Tailwind CSS and dark mode support
-- **Document Management**: Admin interface for viewing and managing indexed documents
-- **RAG Evaluation**: RAGAS framework integration for measuring retrieval and generation quality
-- **Test-Driven Development**: Comprehensive test coverage (60 tests: 33 core + 27 evaluation)
+- **Async Document Processing**: Celery + Redis for background uploads with real-time progress tracking
+- **REST API**: Clean API for integration with any frontend or application
 
 ## Technology Stack
 
-- **Frontend**: FastAPI + Jinja2 + Tailwind CSS
-- **RAG Server**: Python + FastAPI
+- **RAG Server**: Python + FastAPI (REST API)
 - **Vector Database**: ChromaDB with LlamaIndex integration
-- **LLM**: Ollama (gemma3:4b for generation, gemma3:4b for evaluation)
-- **Embeddings**: LlamaIndex OllamaEmbedding with qwen3-embedding:8b (768 dimensions)
+- **LLM**: Ollama (gemma3:4b for generation and evaluation)
+- **Embeddings**: nomic-embed-text:latest via LlamaIndex OllamaEmbedding
 - **Document Processing**: Docling + LlamaIndex DoclingReader/DoclingNodeParser
 - **Chunking**: Docling structural chunking (preserves document hierarchy)
+- **Hybrid Search**: BM25 (sparse) + Vector (dense) with Reciprocal Rank Fusion
 - **Reranking**: SentenceTransformer cross-encoder (ms-marco-MiniLM-L-6-v2)
 - **Orchestration**: Docker Compose
 - **Package Management**: uv
@@ -35,29 +44,30 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 
 ```
 ┌─────────────────┐
-│   Web Browser   │
+│  Client Apps    │  (Your web app, CLI, etc.)
+│  (Future)       │
 └────────┬────────┘
+         │ HTTP/REST
          │
 ┌────────▼────────┐
-│  FastAPI Web    │  (Port 8000, Public Network)
-│     App         │
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│   RAG Server    │  (Port 8001, Private Network)
+│   RAG Server    │  (Port 8001, Public API)
+│   (FastAPI)     │
 │                 │
 │  ┌──────────┐  │
-│  │ Docling  │  │  Advanced document parsing
-│  │+LangChain│  │  & HybridChunker
+│  │ Docling  │  │  Document parsing
+│  │  +       │  │  + Contextual Retrieval
+│  │LlamaIndex│  │  + Hybrid Search (BM25+Vector)
 │  └──────────┘  │
 └────────┬────────┘
          │
-    ┌────┴────┬────────┐
-    │         │        │
-┌───▼───┐ ┌──▼──┐  ┌──▼──────┐
-│ChromaDB│ │Ollama│ │LangChain│
-│ (8000) │ │(11434)│ │ Chroma  │
-└────────┘ └──────┘ └─────────┘
+    ┌────┴────┬────────────┬──────────┐
+    │         │            │          │
+┌───▼───┐ ┌──▼──────┐  ┌──▼────┐  ┌─▼─────┐
+│ChromaDB│ │ Ollama  │  │ Redis │  │Celery │
+│ (8000) │ │ (11434) │  │(6379) │  │Worker │
+└────────┘ └─────────┘  └───────┘  └───────┘
+   Vector     LLM +        Chat      Async
+   Storage   Embeddings   Memory     Tasks
 ```
 
 ## Prerequisites
@@ -72,11 +82,11 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
    curl https://ollama.ai/install.sh | sh
 
    # Pull required models
-   ollama pull gemma3:4b           # LLM for generation
-   ollama pull qwen3-embedding:8b  # Embeddings (768-dim)
+   ollama pull gemma3:4b              # LLM for generation
+   ollama pull nomic-embed-text       # Embeddings
    ```
 
-3. **Python 3.12+** (for local development/testing)
+3. **Python 3.13+** (for local development/testing)
    ```bash
    # Install uv package manager
    curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -87,7 +97,7 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 ### 1. Clone and Setup
 
 ```bash
-cd /path/to/rag-bin2
+cd /path/to/rag-docling
 ```
 
 ### 2. Configure Secrets (Optional)
@@ -96,108 +106,204 @@ cd /path/to/rag-bin2
 # Create secrets directory
 mkdir -p secrets
 
-# Add configuration if needed
-echo "your-config-value" > secrets/config_value
+# Add Ollama configuration if needed
+echo "OLLAMA_HOST=http://host.docker.internal:11434" > secrets/ollama_config.env
 ```
 
 ### 3. Start Services
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 This will start:
-- Web App on http://localhost:8000
-- RAG Server on http://localhost:8001 (internal)
-- ChromaDB on http://localhost:8002 (internal)
+- RAG Server API on http://localhost:8001
+- ChromaDB (internal)
+- Redis (internal)
+- Celery Worker (internal)
 
-### 4. Access the Application
+### 4. Verify Services
 
-Open http://localhost:8000 in your browser.
+```bash
+# Check health
+curl http://localhost:8001/health
 
-## Usage
-
-### Adding Documents
-
-Currently, documents must be added programmatically via the RAG server API:
-
-```python
-import requests
-
-# Add a document
-response = requests.post(
-    "http://localhost:8001/documents",
-    json={
-        "file_path": "/path/to/document.pdf",
-        "file_name": "document.pdf",
-        "file_type": "pdf"
-    }
-)
+# Check models
+curl http://localhost:8001/models/info
 ```
 
-Future versions will include file upload via the web interface.
+## API Usage
 
-### Searching Documents
+### Upload Documents
 
-1. Navigate to http://localhost:8000
-2. Enter your question in natural language
-3. View AI-generated answer with source citations
+```bash
+# Upload single file
+curl -X POST http://localhost:8001/upload \
+  -F "files=@/path/to/document.pdf"
 
-### Managing Documents
+# Upload multiple files
+curl -X POST http://localhost:8001/upload \
+  -F "files=@document1.pdf" \
+  -F "files=@document2.docx"
 
-1. Go to http://localhost:8000/admin
-2. View all indexed documents
-3. Delete documents as needed
+# Response includes batch_id for tracking
+{
+  "status": "queued",
+  "batch_id": "abc-123",
+  "tasks": [
+    {"task_id": "task-1", "filename": "document1.pdf"}
+  ]
+}
+```
+
+### Check Upload Progress
+
+```bash
+# Get batch status
+curl http://localhost:8001/tasks/{batch_id}/status
+```
+
+### Query Documents
+
+```bash
+# Simple query (auto-generates session_id)
+curl -X POST http://localhost:8001/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is the main topic?",
+    "n_results": 5
+  }'
+
+# Conversational query with session
+curl -X POST http://localhost:8001/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Tell me more about that",
+    "session_id": "user-123",
+    "n_results": 5
+  }'
+```
+
+### List Documents
+
+```bash
+curl http://localhost:8001/documents
+```
+
+### Delete Document
+
+```bash
+curl -X DELETE http://localhost:8001/documents/{document_id}
+```
+
+### Chat History
+
+```bash
+# Get conversation history
+curl http://localhost:8001/chat/history/{session_id}
+
+# Clear chat history
+curl -X POST http://localhost:8001/chat/clear \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "user-123"}'
+```
 
 ## Development
 
 ### Local Testing
-
-#### Web App Tests
-
-```bash
-cd services/fastapi_web_app
-uv sync
-uv run pytest -v
-```
 
 #### RAG Server Tests
 
 ```bash
 cd services/rag_server
 uv sync
-uv run pytest -v
+.venv/bin/pytest -v
 ```
 
 ### Project Structure
 
 ```
-rag-bin2/
+rag-docling/
 ├── docker-compose.yml          # Service orchestration
 ├── secrets/                    # Configuration secrets
 ├── services/
-│   ├── fastapi_web_app/       # Web interface
-│   │   ├── main.py            # FastAPI app
-│   │   ├── templates/         # Jinja2 templates
-│   │   ├── static/            # CSS/JS assets
-│   │   ├── tests/             # Test suite (21 tests)
-│   │   └── pyproject.toml     # Dependencies
-│   └── rag_server/            # RAG backend
+│   └── rag_server/            # RAG API backend
 │       ├── main.py            # FastAPI app
+│       ├── celery_app.py      # Celery configuration
+│       ├── tasks.py           # Async document processing
 │       ├── core_logic/        # RAG components
-│       │   ├── embeddings.py       # LangChain OllamaEmbeddings
-│       │   ├── document_processor.py  # Docling + HybridChunker
-│       │   ├── chroma_manager.py   # LangChain Chroma vectorstore
-│       │   ├── llm_handler.py      # LLM integration
-│       │   └── rag_pipeline.py     # End-to-end RAG pipeline
-│       ├── tests/             # Test suite (33 tests)
+│       │   ├── embeddings.py           # OllamaEmbedding
+│       │   ├── document_processor.py   # Docling + Contextual Retrieval
+│       │   ├── chroma_manager.py       # VectorStoreIndex
+│       │   ├── llm_handler.py          # LLM + prompts
+│       │   ├── rag_pipeline.py         # Query pipeline
+│       │   ├── hybrid_retriever.py     # BM25 + Vector + RRF
+│       │   ├── chat_memory.py          # Redis-backed memory
+│       │   └── progress_tracker.py     # Upload progress
+│       ├── tests/             # Test suite (33 core + 27 evaluation)
 │       └── pyproject.toml     # Dependencies
+├── docs/                      # Documentation
+│   ├── PHASE1_IMPLEMENTATION_SUMMARY.md
+│   ├── PHASE2_IMPLEMENTATION_SUMMARY.md
+│   ├── RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md
+│   ├── CONVERSATIONAL_RAG.md
+│   └── evaluation/
 └── README.md
 ```
 
 ## API Documentation
 
-### RAG Server Endpoints
+### Core Endpoints
+
+#### POST /upload
+Upload documents for indexing (async via Celery).
+
+**Request:**
+```bash
+curl -X POST http://localhost:8001/upload \
+  -F "files=@document.pdf"
+```
+
+**Response:**
+```json
+{
+  "status": "queued",
+  "batch_id": "abc-123",
+  "tasks": [
+    {
+      "task_id": "task-1",
+      "filename": "document.pdf"
+    }
+  ]
+}
+```
+
+**Supported Formats:** `.txt`, `.md`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.html`, `.htm`, `.asciidoc`, `.adoc`
+
+#### GET /tasks/{batch_id}/status
+Get upload batch progress.
+
+**Response:**
+```json
+{
+  "batch_id": "abc-123",
+  "total": 2,
+  "completed": 1,
+  "total_chunks": 25,
+  "completed_chunks": 10,
+  "tasks": {
+    "task-1": {
+      "status": "completed",
+      "filename": "document.pdf",
+      "chunks": 5
+    },
+    "task-2": {
+      "status": "processing",
+      "filename": "document2.pdf"
+    }
+  }
+}
+```
 
 #### POST /query
 Search documents and get AI-generated answer.
@@ -205,7 +311,9 @@ Search documents and get AI-generated answer.
 **Request:**
 ```json
 {
-  "query": "What is the main topic of the documents?"
+  "query": "What is the main topic?",
+  "session_id": "user-123",
+  "n_results": 5
 }
 ```
 
@@ -216,15 +324,19 @@ Search documents and get AI-generated answer.
   "sources": [
     {
       "document_name": "file.pdf",
-      "file_type": "pdf",
-      "relevance_score": 0.85
+      "excerpt": "The main topic is...",
+      "full_text": "...",
+      "path": "/docs/file.pdf",
+      "distance": 0.15
     }
-  ]
+  ],
+  "query": "What is the main topic?",
+  "session_id": "user-123"
 }
 ```
 
 #### GET /documents
-List all indexed documents.
+List all indexed documents (grouped by document_id).
 
 **Response:**
 ```json
@@ -233,21 +345,73 @@ List all indexed documents.
     {
       "id": "doc-123",
       "file_name": "document.pdf",
-      "file_type": "pdf",
-      "path": "/docs/document.pdf"
+      "file_type": ".pdf",
+      "path": "/docs",
+      "chunks": 5,
+      "file_size_bytes": 102400
     }
   ]
 }
 ```
 
 #### DELETE /documents/{document_id}
-Delete a document from the index.
+Delete a document and all its chunks.
 
 **Response:**
 ```json
 {
   "status": "success",
-  "message": "Document deleted successfully"
+  "message": "Document deleted successfully",
+  "deleted_chunks": 5
+}
+```
+
+#### GET /chat/history/{session_id}
+Get conversation history for a session.
+
+**Response:**
+```json
+{
+  "session_id": "user-123",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the main topic?"
+    },
+    {
+      "role": "assistant",
+      "content": "Based on the documents..."
+    }
+  ]
+}
+```
+
+#### POST /chat/clear
+Clear chat history for a session.
+
+**Request:**
+```json
+{
+  "session_id": "user-123"
+}
+```
+
+#### GET /health
+Health check endpoint.
+
+#### GET /models/info
+Get current model configuration.
+
+**Response:**
+```json
+{
+  "llm_model": "gemma3:4b",
+  "embedding_model": "nomic-embed-text:latest",
+  "reranker_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+  "ollama_url": "http://host.docker.internal:11434",
+  "enable_reranker": true,
+  "enable_hybrid_search": true,
+  "enable_contextual_retrieval": true
 }
 ```
 
@@ -255,18 +419,84 @@ Delete a document from the index.
 
 ### Environment Variables
 
-**Web App:**
-- `RAG_SERVER_URL`: RAG server endpoint (default: `http://rag-server:8001`)
+**RAG Server (docker-compose.yml):**
 
-**RAG Server:**
+**Core Settings:**
 - `CHROMADB_URL`: ChromaDB endpoint (default: `http://chromadb:8000`)
 - `OLLAMA_URL`: Ollama endpoint (default: `http://host.docker.internal:11434`)
-- `LLM_MODEL`: LLM model to use (default: `llama3.2`)
+- `EMBEDDING_MODEL`: Embedding model (default: `nomic-embed-text:latest`)
+- `LLM_MODEL`: LLM model (default: `gemma3:4b`)
+- `REDIS_URL`: Redis endpoint (default: `redis://redis:6379/0`)
+
+**Retrieval Configuration:**
+- `RETRIEVAL_TOP_K`: Number of nodes to retrieve before reranking (default: `10`)
+- `ENABLE_RERANKER`: Enable cross-encoder reranking (default: `true`)
+- `RERANKER_MODEL`: Reranker model (default: `cross-encoder/ms-marco-MiniLM-L-6-v2`)
+
+**Phase 2 Features:**
+- `ENABLE_HYBRID_SEARCH`: Enable BM25 + Vector search (default: `true`)
+- `RRF_K`: Reciprocal Rank Fusion k parameter (default: `60`)
+- `ENABLE_CONTEXTUAL_RETRIEVAL`: Enable Anthropic contextual retrieval (default: `true`)
+
+**Logging:**
+- `LOG_LEVEL`: Logging level (default: `DEBUG` for rag-server, `INFO` for celery-worker)
 
 ### Docker Compose Networks
 
-- **public**: Web app (accessible from host)
-- **private**: RAG server, ChromaDB (internal only)
+- **public**: RAG server (exposed to host on port 8001)
+- **private**: ChromaDB, Redis, Celery Worker (internal only)
+
+## Phase 2 Implementation
+
+### Hybrid Search (BM25 + Vector + RRF)
+
+Combines sparse (keyword) and dense (semantic) retrieval for 48% improvement in retrieval quality:
+
+- **BM25 Retriever**: Excels at exact keywords, IDs, names, abbreviations
+- **Vector Retriever**: Excels at semantic understanding, contextual meaning
+- **RRF Fusion**: Reciprocal Rank Fusion with k=60 (optimal per research)
+  - Formula: `score = 1/(rank + k)`
+  - No hyperparameter tuning required
+
+**How it works:**
+1. Query runs through both BM25 and Vector retrievers
+2. Results merged using RRF (k=60)
+3. Top-k combined results passed to reranker
+4. Final top-n results returned as context
+
+**Auto-initialization:**
+- BM25 index pre-loads at startup if documents exist
+- Auto-refreshes after document uploads/deletions
+
+### Contextual Retrieval (Anthropic Method)
+
+Adds document-level context to chunks before embedding for 49% reduction in retrieval failures:
+
+**The Problem:**
+```
+Original Chunk: "The three qualities are: natural aptitude, deep interest, and scope."
+Query: "What makes great work?"
+Result: ❌ MISSED (no direct term match)
+```
+
+**The Solution:**
+```
+Enhanced Chunk: "This section from Paul Graham's essay 'How to Do Great Work'
+discusses the essential qualities for great work. The three qualities are:
+natural aptitude, deep interest, and scope."
+```
+
+**Implementation:**
+1. For each chunk, LLM generates 1-2 sentence context
+2. Context prepended to original chunk text
+3. Enhanced chunk embedded (context embedded once at indexing time)
+4. Query-time: Zero overhead (context already embedded)
+
+**Performance:**
+- 49% reduction in retrieval failures
+- 67% reduction when combined with reranking
+
+See `docs/PHASE2_IMPLEMENTATION_SUMMARY.md` for complete details.
 
 ## Known Issues & Fixes
 
@@ -281,26 +511,25 @@ Delete a document from the index.
 reader = DoclingReader(export_type=DoclingReader.ExportType.JSON)
 ```
 
-**Reference**: See `docs/troubleshooting/2025-10-09-retrieval-fix.md` for complete diagnostic report.
-
 ### ChromaDB Metadata Compatibility (FIXED)
 
 **Issue**: ChromaDB rejects complex metadata types (lists, dicts) from Docling.
 
 **Fix**: Filter metadata to flat types (str, int, float, bool, None) using `clean_metadata_for_chroma()` function before insertion.
 
-### Answer Fragmentation with Docling Chunking
+### CondensePlusContextChatEngine Integration (FIXED)
 
-**Symptom**: Incomplete answers even when relevant information exists in documents.
+**Issue**: Custom hybrid retriever integration with CondensePlusContextChatEngine failing.
 
-**Cause**: Docling creates granular structural chunks (9-27K char range) that can split semantic units across non-contiguous nodes.
-
-**Mitigation**:
-1. Enable reranker: `ENABLE_RERANKER=true` (already enabled)
-2. Use higher top-k: `RETRIEVAL_TOP_K=10` (already configured)
-3. Reranker uses top-n selection to return most relevant 5-10 nodes
-
-**Long-term Solution**: Consider hybrid search (BM25 + Vector) and contextual retrieval (see Phase 2 of RAG Accuracy Improvement Plan).
+**Fix**: Pass retriever directly to `CondensePlusContextChatEngine.from_defaults()`:
+```python
+chat_engine = CondensePlusContextChatEngine.from_defaults(
+    retriever=retriever,  # Not query_engine
+    memory=memory,
+    node_postprocessors=create_reranker_postprocessors(),
+    ...
+)
+```
 
 ## Troubleshooting
 
@@ -312,40 +541,45 @@ curl http://localhost:11434/api/tags
 
 # Check models are available
 ollama list
+
+# Pull missing models
+ollama pull gemma3:4b
+ollama pull nomic-embed-text
 ```
 
 ### ChromaDB Connection Issues
 
 ```bash
 # Check ChromaDB logs
-docker-compose logs chromadb
+docker compose logs chromadb
 
 # Restart ChromaDB
-docker-compose restart chromadb
+docker compose restart chromadb
 ```
 
 ### View Service Logs
 
 ```bash
 # All services
-docker-compose logs -f
+docker compose logs -f
 
 # Specific service
-docker-compose logs -f rag-server
-docker-compose logs -f fastapi_web_app
+docker compose logs -f rag-server
+docker compose logs -f celery-worker
+docker compose logs -f redis
 ```
 
 ### Reset Database
 
 ```bash
 # Stop services
-docker-compose down
+docker compose down
 
 # Remove ChromaDB volume
-docker volume rm rag-bin2_chroma_data
+docker volume rm rag-docling_chroma_db_data
 
 # Restart
-docker-compose up -d
+docker compose up -d
 ```
 
 ## Backup & Restore
@@ -388,7 +622,6 @@ See `scripts/README.md` for complete documentation.
 The project follows Test-Driven Development (TDD) methodology:
 
 - **60 total tests** (all passing)
-  - 21 web app tests (UI, routing, templates)
   - 33 RAG server core tests (Docling processing, embeddings, LlamaIndex integration, LLM, pipeline, API)
   - 27 evaluation tests (RAGAS metrics, dataset loading, report generation)
 
@@ -399,48 +632,46 @@ cd services/rag_server && .venv/bin/pytest -v
 
 # RAG Server evaluation tests
 cd services/rag_server && .venv/bin/pytest tests/evaluation/ -v
-
-# Web App tests
-cd services/fastapi_web_app && uv run pytest -v
 ```
 
 ## Implementation Details
 
 ### Document Processing Pipeline
 
-The RAG server uses **Docling + LlamaIndex** for superior document processing:
+1. **Upload**: Documents uploaded via `/upload` endpoint
+2. **Async Processing**: Celery worker processes each file
+3. **Docling Parsing**: DoclingReader extracts text, tables, structure
+4. **Contextual Enhancement**: LLM adds document context to each chunk
+5. **Structural Chunking**: DoclingNodeParser creates nodes preserving hierarchy
+6. **Embedding**: Each chunk embedded with context (nomic-embed-text)
+7. **Storage**: Nodes stored in ChromaDB with metadata
+8. **BM25 Refresh**: BM25 index updated with new nodes
 
-1. **DoclingReader** (llama-index-readers-docling): Advanced document parsing with:
-   - Superior PDF layout understanding
-   - Table structure extraction
-   - Reading order detection
-   - Support for PPTX, XLSX, HTML, and more
-   - **Critical**: Must use `export_type=DoclingReader.ExportType.JSON` for compatibility
+### Query Processing Pipeline
 
-2. **DoclingNodeParser** (llama-index-node-parser-docling): Structural chunking that:
-   - Preserves document hierarchy (headings, sections, tables)
-   - Creates one node per structural element
-   - Variable node sizes (9 chars to 27KB) based on document structure
-   - Metadata extraction for each node
-
-3. **Two-Stage Retrieval**:
-   - **Stage 1**: Vector similarity search (top-10 results, high recall)
-   - **Stage 2**: Cross-encoder reranking (ms-marco-MiniLM-L-6-v2, high precision)
-   - **Top-n selection**: Returns top 5 nodes by default (or half of retrieval_top_k)
-   - **Adaptive context**: Returns most relevant nodes based on reranking scores
-
-4. **LlamaIndex Integration**:
-   - ChromaVectorStore with VectorStoreIndex
-   - Query engine with custom PromptTemplate (4 strategies)
-   - Node postprocessors for reranking and filtering
+1. **Query Received**: User query + optional session_id
+2. **Memory Loading**: Previous conversation loaded from Redis
+3. **Query Condensation**: Standalone question created if conversational
+4. **Hybrid Retrieval**:
+   - BM25 retriever finds keyword matches
+   - Vector retriever finds semantic matches
+   - RRF merges results (k=60)
+5. **Reranking**: Cross-encoder reranks top-k nodes
+6. **Top-n Selection**: Best 5-10 nodes selected as context
+7. **LLM Generation**: Answer generated using context + memory
+8. **Memory Update**: Conversation saved to Redis (1-hour TTL)
+9. **Response**: Answer + sources returned
 
 ### Key Features
 
 - **Document Structure Preservation**: Maintains headings, sections, tables as separate nodes
-- **Two-Stage Retrieval**: Combines recall of vector search with precision of reranking
-- **Conversational Memory**: Redis-backed chat history with automatic expiration (1-hour TTL)
+- **Hybrid Retrieval**: BM25 (exact matching) + Vector (semantic understanding)
+- **Contextual Enhancement**: Document context embedded with chunks
+- **Two-Stage Precision**: Reranking refines hybrid search results
+- **Conversational Memory**: Redis-backed chat history with session management
 - **Data Protection**: Automated backups, startup persistence verification
-- **Dynamic Context Window**: Returns top-ranked nodes based on reranking scores
+- **Async Processing**: Celery handles document uploads in background
+- **Progress Tracking**: Real-time upload progress via Redis
 
 ## Roadmap
 
@@ -453,18 +684,25 @@ The RAG server uses **Docling + LlamaIndex** for superior document processing:
 
 See `docs/PHASE1_IMPLEMENTATION_SUMMARY.md` for details.
 
-### Planned (Phase 2+)
-- [ ] Hybrid search (BM25 + Vector + RRF) - 48% retrieval improvement
-- [ ] Contextual retrieval (Anthropic method) - 49% fewer failures
+### Completed (Phase 2 - 2025-10-14)
+- [x] Hybrid search (BM25 + Vector + RRF) - 48% retrieval improvement
+- [x] Contextual retrieval (Anthropic method) - 49% fewer failures
+- [x] Auto-refresh BM25 after uploads/deletes
+- [x] End-to-end testing and validation
+
+See `docs/PHASE2_IMPLEMENTATION_SUMMARY.md` for details.
+
+### Planned (Phase 3+)
 - [ ] Parent document retrieval (sentence window)
-- [ ] File upload via web interface
+- [ ] Query fusion (multi-query generation)
+- [ ] DeepEval evaluation framework
+- [ ] Expanded golden QA dataset (50+ test cases)
+- [ ] Production monitoring dashboard
 - [ ] Support for additional file formats (CSV, JSON)
 - [ ] Multi-user support with authentication
-- [ ] Query history and bookmarking
 - [ ] Export search results
-- [ ] Performance metrics dashboard
 
-See `docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md` for Phase 2 details.
+See `docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md` for future plans.
 
 ## License
 
@@ -472,4 +710,4 @@ MIT License
 
 ## Version
 
-0.1.0
+0.2.0 - Phase 2 Implementation

@@ -65,31 +65,15 @@ context_window = Settings.llm.metadata.context_window
 chat_memory_tokens = int(context_window * 0.5)  # 50% allocation
 ```
 
-## Chat History UI
+## Chat History (Client Implementation)
 
-### Style
+The API provides endpoints for managing conversational history. Client applications can implement their own UI for:
 
-Claude Chat/ChatGPT-like interface:
-- Full conversation history displayed above
-- Fixed input at bottom
-- Clean, modern design
-
-### Layout Components
-
-- **User messages**: Blue bubble, right-aligned
-- **Assistant messages**: Left-aligned, markdown-rendered
-- **Auto-scroll**: Scrolls to bottom on new messages
-- **New Chat button**: Clears session and reloads page
-
-### UI Implementation
-
-Location: `services/fastapi_web_app/templates/home.html`
-
-Key features:
-- Session ID stored in localStorage
-- JavaScript fetches chat history after each query
-- Markdown rendering for assistant responses
-- Smooth scrolling to new messages
+- **Session Management**: Generate unique session IDs per conversation
+- **History Display**: Fetch and display conversation history via `/chat/history/{session_id}`
+- **Message Formatting**: Render user/assistant messages appropriately
+- **History Retrieval**: Call `/chat/history/{session_id}` after each query to get updated history
+- **Session Clearing**: Allow users to clear history via `/chat/clear` endpoint
 
 ## API Endpoints
 
@@ -183,16 +167,9 @@ chat_memory_tokens = int(context_window * 0.5)
 
 ## Implementation Files
 
-### Backend
-
-- `services/rag_server/core_logic/chat_memory.py`: Session-based `ChatMemoryBuffer` management
-- `services/rag_server/core_logic/rag_pipeline.py`: `index.as_chat_engine(chat_mode="condense_plus_context")`
+- `services/rag_server/core_logic/chat_memory.py`: Session-based `ChatMemoryBuffer` management with Redis persistence
+- `services/rag_server/core_logic/rag_pipeline.py`: Chat engine with `condense_plus_context` mode
 - `services/rag_server/main.py`: API endpoints with session_id support
-
-### Frontend
-
-- `services/fastapi_web_app/main.py`: Session management + chat history retrieval
-- `services/fastapi_web_app/templates/home.html`: Conversational UI with history display
 
 ## Key Functions
 
@@ -238,13 +215,14 @@ def clear_session_memory(session_id: str) -> None:
 
 ## Chat Flow
 
-1. **User loads page** → JavaScript generates/retrieves session_id from `localStorage`
-2. **User submits query** → Form includes session_id (hidden field)
-3. **Backend receives query + session_id** → Retrieves/creates `ChatMemoryBuffer`
+1. **Client generates session_id** → Unique identifier per conversation (UUID recommended)
+2. **Client submits query** → POST /query with query text and session_id
+3. **Backend receives query + session_id** → Retrieves/creates `ChatMemoryBuffer` from Redis
 4. **Chat engine uses memory** → Reformulates query → Retrieves context → Generates response
-5. **Chat history updated automatically** by LlamaIndex
-6. **Frontend fetches full chat history** → Displays all messages
-7. **User submits follow-up** → Process repeats with same session_id
+5. **Chat history updated automatically** by LlamaIndex and persisted to Redis
+6. **Client fetches updated history** → GET /chat/history/{session_id}
+7. **Client displays messages** → Renders conversation history in UI
+8. **User submits follow-up** → Process repeats with same session_id
 
 ## Testing Conversational Context
 
