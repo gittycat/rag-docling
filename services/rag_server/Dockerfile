@@ -2,10 +2,13 @@
 # Use Python 3.13 slim image
 FROM python:3.13-slim
 
-# Install system dependencies for docling (OCR support)
+# Install system dependencies for docling (OCR support) and build tools (for pystemmer/BM25)
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-eng \
+    gcc \
+    g++ \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency management

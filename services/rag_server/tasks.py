@@ -60,6 +60,15 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
         add_documents(index, nodes, progress_callback=embedding_progress)
         logger.info(f"[TASK {task_id}] Successfully indexed document {filename} with ID {doc_id}")
 
+        # Refresh BM25 retriever after adding documents (for hybrid search)
+        try:
+            from core_logic.hybrid_retriever import refresh_bm25_retriever
+            refresh_bm25_retriever(index)
+            logger.info(f"[TASK {task_id}] BM25 retriever refreshed")
+        except Exception as e:
+            logger.warning(f"[TASK {task_id}] Failed to refresh BM25 retriever: {e}")
+            # Non-critical, continue
+
         result = {
             "id": doc_id,
             "file_name": filename,

@@ -43,6 +43,18 @@ async def startup_event():
         logger.info(f"[STARTUP] ChromaDB persistence check: {count} documents in collection")
         if count == 0:
             logger.warning("[STARTUP] ChromaDB collection is empty - may need document upload or restore from backup")
+
+        # Pre-initialize BM25 retriever for hybrid search (if enabled)
+        from core_logic.hybrid_retriever import initialize_bm25_retriever, get_hybrid_retriever_config
+        hybrid_config = get_hybrid_retriever_config()
+        if hybrid_config['enabled'] and count > 0:
+            logger.info("[STARTUP] Pre-initializing BM25 retriever for hybrid search...")
+            initialize_bm25_retriever(index, hybrid_config['similarity_top_k'])
+            logger.info("[STARTUP] BM25 retriever ready")
+        elif hybrid_config['enabled']:
+            logger.warning("[STARTUP] Hybrid search enabled but no documents in ChromaDB - BM25 will initialize after first upload")
+        else:
+            logger.info("[STARTUP] Hybrid search disabled")
     except Exception as e:
         logger.error(f"[STARTUP] ChromaDB persistence check failed: {str(e)}")
         # Don't fail startup, but log the error prominently
@@ -269,6 +281,16 @@ async def delete_document_by_id(document_id: str):
     try:
         index = get_or_create_collection()
         delete_document(index, document_id)
+
+        # Refresh BM25 retriever after deleting documents (for hybrid search)
+        try:
+            from core_logic.hybrid_retriever import refresh_bm25_retriever
+            refresh_bm25_retriever(index)
+            logger.info(f"[DELETE] BM25 retriever refreshed after deleting document {document_id}")
+        except Exception as e:
+            logger.warning(f"[DELETE] Failed to refresh BM25 retriever: {e}")
+            # Non-critical, continue
+
         return DeleteResponse(
             status="success",
             message=f"Document {document_id} deleted successfully"

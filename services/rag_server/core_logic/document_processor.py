@@ -4,7 +4,8 @@ from llama_index.readers.docling import DoclingReader
 from llama_index.node_parser.docling import DoclingNodeParser
 from llama_index.core import SimpleDirectoryReader
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.schema import Document
+from llama_index.core.schema import Document, TextNode
+from core_logic.env_config import get_optional_env
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,61 @@ SUPPORTED_EXTENSIONS = {
 }
 
 SIMPLE_TEXT_EXTENSIONS = {'.txt', '.md'}
+
+
+def get_contextual_retrieval_config():
+    """Get contextual retrieval configuration from environment variables"""
+    return {
+        'enabled': get_optional_env('ENABLE_CONTEXTUAL_RETRIEVAL', 'true').lower() == 'true',
+    }
+
+
+def add_contextual_prefix(node: TextNode, document_name: str, document_type: str) -> TextNode:
+    """
+    Add contextual prefix to chunk using LLM.
+
+    Research (Anthropic 2024): 49% reduction in retrieval failures
+    Combined with hybrid search + reranking: 67% reduction
+
+    Args:
+        node: TextNode to enhance with context
+        document_name: Name of source document
+        document_type: File type/extension
+
+    Returns:
+        Enhanced TextNode with contextual prefix
+    """
+    from core_logic.llm_handler import get_llm_client
+
+    chunk_preview = node.get_content()[:400]  # Use first 400 chars for context
+
+    prompt = f"""Document: {document_name} ({document_type})
+
+Chunk content:
+{chunk_preview}
+
+Provide a concise 1-2 sentence context for this chunk, explaining what document it's from and what topic it discusses.
+Format: "This section from [document/topic] discusses [specific topic/concept]."
+
+Context (1-2 sentences only):"""
+
+    try:
+        llm = get_llm_client()
+        response = llm.complete(prompt)
+        context = response.text.strip()
+
+        # Prepend context to original text
+        enhanced_text = f"{context}\n\n{node.text}"
+        node.text = enhanced_text
+
+        logger.debug(f"[CONTEXTUAL] Added prefix: {context[:80]}...")
+        return node
+
+    except Exception as e:
+        logger.warning(f"[CONTEXTUAL] Failed to generate context: {e}")
+        # Return original node if context generation fails
+        return node
+
 
 def chunk_document_from_file(file_path: str, chunk_size: int = 500):
     logger.info(f"[DOCLING] chunk_document_from_file called for: {file_path}")
@@ -84,6 +140,18 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
         logger.info(f"[DOCLING] Cleaning metadata for ChromaDB compatibility")
         for node in nodes:
             node.metadata = clean_metadata_for_chroma(node.metadata)
+
+    # Add contextual retrieval prefixes if enabled (Anthropic method)
+    contextual_config = get_contextual_retrieval_config()
+    if contextual_config['enabled'] and nodes:
+        logger.info(f"[DOCLING] Adding contextual prefixes to {len(nodes)} nodes")
+        for i, node in enumerate(nodes):
+            if i % 10 == 0:  # Log progress every 10 chunks
+                logger.info(f"[DOCLING] Contextual prefix progress: {i+1}/{len(nodes)}")
+            nodes[i] = add_contextual_prefix(node, file_path_obj.name, extension)
+        logger.info(f"[DOCLING] Contextual prefixes added to all nodes")
+    elif not contextual_config['enabled']:
+        logger.info("[DOCLING] Contextual retrieval disabled")
 
     if nodes:
         first_text = nodes[0].get_content()

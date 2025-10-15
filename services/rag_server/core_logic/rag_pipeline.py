@@ -1,9 +1,12 @@
 from typing import Dict, List, Optional
 from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
+from llama_index.core.chat_engine import CondensePlusContextChatEngine
+from llama_index.core.query_engine import RetrieverQueryEngine
 from core_logic.chroma_manager import get_or_create_collection
 from core_logic.llm_handler import get_system_prompt, get_context_prompt, get_condense_prompt
 from core_logic.env_config import get_optional_env
 from core_logic.chat_memory import get_or_create_chat_memory
+from core_logic.hybrid_retriever import create_hybrid_retriever, get_hybrid_retriever_config
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,7 @@ def create_reranker_postprocessors() -> Optional[List]:
 def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
     index = get_or_create_collection()
     config = get_reranker_config()
+    hybrid_config = get_hybrid_retriever_config()
 
     # Get LlamaIndex native prompts
     system_prompt = get_system_prompt()
@@ -53,19 +57,37 @@ def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
 
     # Always use configured retrieval_top_k for better coverage with granular Docling chunks
     retrieval_top_k = config['retrieval_top_k']
-    logger.info(f"[RAG] Using retrieval_top_k={retrieval_top_k}, reranker_enabled={config['enabled']}, session_id={session_id}")
+    logger.info(f"[RAG] Using retrieval_top_k={retrieval_top_k}, reranker_enabled={config['enabled']}, hybrid_search_enabled={hybrid_config['enabled']}, session_id={session_id}")
 
-    # Use chat engine for conversational RAG with memory (LlamaIndex native approach)
-    chat_engine = index.as_chat_engine(
-        chat_mode="condense_plus_context",
-        memory=memory,
-        similarity_top_k=retrieval_top_k,
-        node_postprocessors=create_reranker_postprocessors(),
-        system_prompt=system_prompt,
-        context_prompt=context_prompt,
-        condense_prompt=condense_prompt,
-        verbose=False
-    )
+    # Create hybrid retriever if enabled (combines BM25 + Vector with RRF)
+    retriever = create_hybrid_retriever(index, similarity_top_k=retrieval_top_k)
+
+    # Create chat engine based on whether hybrid search is enabled
+    if retriever is not None:
+        logger.info("[RAG] Using hybrid retriever (BM25 + Vector + RRF)")
+        # CondensePlusContextChatEngine requires 'retriever' directly (not query_engine)
+        chat_engine = CondensePlusContextChatEngine.from_defaults(
+            retriever=retriever,
+            memory=memory,
+            node_postprocessors=create_reranker_postprocessors(),
+            system_prompt=system_prompt,
+            context_prompt=context_prompt,
+            condense_prompt=condense_prompt,
+            verbose=False
+        )
+    else:
+        logger.info("[RAG] Using vector retriever only")
+        # Use standard as_chat_engine when not using custom retriever
+        chat_engine = index.as_chat_engine(
+            chat_mode="condense_plus_context",
+            memory=memory,
+            similarity_top_k=retrieval_top_k,
+            node_postprocessors=create_reranker_postprocessors(),
+            system_prompt=system_prompt,
+            context_prompt=context_prompt,
+            condense_prompt=condense_prompt,
+            verbose=False
+        )
 
     response = chat_engine.chat(query_text)
 

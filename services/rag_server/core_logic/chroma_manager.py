@@ -1,6 +1,7 @@
 from typing import List, Dict
 import chromadb
 from llama_index.core import VectorStoreIndex
+from llama_index.core.schema import TextNode
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from core_logic.embeddings import get_embedding_function
 from core_logic.env_config import get_required_env
@@ -117,3 +118,30 @@ def list_documents(index) -> List[Dict]:
         doc_map[doc_id]['chunks'] += 1
 
     return list(doc_map.values())
+
+
+def get_all_nodes(index) -> List[TextNode]:
+    """
+    Retrieve all nodes from ChromaDB collection for BM25 indexing.
+    Returns list of TextNode objects with text content and metadata.
+    """
+    logger.info("[CHROMA] Retrieving all nodes for BM25 indexing")
+    chroma_collection = index._vector_store._collection
+
+    results = chroma_collection.get()
+
+    nodes = []
+    if results and results['ids']:
+        for i, node_id in enumerate(results['ids']):
+            text = results['documents'][i] if i < len(results['documents']) else ""
+            metadata = results['metadatas'][i] if i < len(results['metadatas']) else {}
+
+            node = TextNode(
+                id_=node_id,
+                text=text,
+                metadata=metadata
+            )
+            nodes.append(node)
+
+    logger.info(f"[CHROMA] Retrieved {len(nodes)} nodes for BM25 indexing")
+    return nodes

@@ -37,6 +37,10 @@ services:
       - RETRIEVAL_TOP_K=10
       - REDIS_URL=redis://redis:6379/0
       - LOG_LEVEL=DEBUG
+      # Phase 2: High-Impact Retrieval Improvements
+      - ENABLE_HYBRID_SEARCH=true         # BM25 + Vector with RRF fusion
+      - RRF_K=60                          # Reciprocal Rank Fusion k parameter (optimal: 60)
+      - ENABLE_CONTEXTUAL_RETRIEVAL=true  # Anthropic method: 49% reduction in retrieval failures
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -97,6 +101,10 @@ services:
       - RETRIEVAL_TOP_K=10
       - REDIS_URL=redis://redis:6379/0
       - LOG_LEVEL=INFO
+      # Phase 2: High-Impact Retrieval Improvements
+      - ENABLE_HYBRID_SEARCH=true         # BM25 + Vector with RRF fusion
+      - RRF_K=60                          # Reciprocal Rank Fusion k parameter (optimal: 60)
+      - ENABLE_CONTEXTUAL_RETRIEVAL=true  # Anthropic method: 49% reduction in retrieval failures
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
