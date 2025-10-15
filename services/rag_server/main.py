@@ -114,6 +114,9 @@ class ModelsInfoResponse(BaseModel):
     reranker_model: str | None
     reranker_enabled: bool
 
+class ConfigResponse(BaseModel):
+    max_upload_size_mb: int
+
 def process_and_index_document(file_path: str, filename: str) -> dict:
     logger.info(f"[CHUNKING] Calling chunk_document_from_file for {filename}")
     nodes = chunk_document_from_file(file_path)
@@ -171,6 +174,15 @@ async def get_models_info():
         embedding_model=embedding_model,
         reranker_model=reranker_model,
         reranker_enabled=reranker_enabled
+    )
+
+@app.get("/config", response_model=ConfigResponse)
+async def get_config():
+    """Get configuration settings for the RAG system"""
+    max_upload_size = int(os.getenv("MAX_UPLOAD_SIZE", "80"))
+
+    return ConfigResponse(
+        max_upload_size_mb=max_upload_size
     )
 
 @app.post("/query", response_model=QueryResponse)
