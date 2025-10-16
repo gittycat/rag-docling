@@ -181,7 +181,10 @@ uv sync --group eval
 **RAG Server (retrieval):**
 - `ENABLE_RERANKER=true`, `RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2`, `RETRIEVAL_TOP_K=10`
 - `ENABLE_HYBRID_SEARCH=true`, `RRF_K=60`
-- `ENABLE_CONTEXTUAL_RETRIEVAL=true`
+- `ENABLE_CONTEXTUAL_RETRIEVAL=false` (default: off for speed, set to true for 49% better accuracy)
+
+**RAG Server (Ollama optimization):**
+- `OLLAMA_KEEP_ALIVE=10m` (keep model loaded: 10m, -1 for indefinite, 0 to unload immediately)
 
 **RAG Server (logging):**
 - `LOG_LEVEL=DEBUG` (INFO for production)
@@ -277,11 +280,16 @@ docker compose exec rag-server curl http://host.docker.internal:11434/api/tags
 
 **Celery worker issues:** Check `docker compose logs celery-worker`. Worker auto-restarts on crashes. Tasks timeout after 1 hour.
 
+**Slow document processing:** Contextual retrieval (Phase 1) typically takes 85% of total processing time due to LLM calls per chunk. This is expected behavior. See [Performance Analysis](docs/PERFORMANCE_ANALYSIS.md) for optimization options.
+
 ## Detailed Documentation
 
 For comprehensive guides on specific topics, see:
 
 - **[Conversational RAG Architecture](docs/CONVERSATIONAL_RAG.md)** - Session management, chat memory, model flexibility
+- **[Performance Optimizations Summary](docs/PERFORMANCE_OPTIMIZATIONS_SUMMARY.md)** - Recent optimizations: contextual retrieval toggle, keep-alive (15x speedup)
+- **[Performance Analysis](docs/PERFORMANCE_ANALYSIS.md)** - Document processing bottlenecks, timing breakdown, optimization opportunities
+- **[Ollama Optimization Guide](docs/OLLAMA_OPTIMIZATION.md)** - Keep-alive settings, KV cache quantization, prompt caching investigation
 - **[Evaluation System](docs/evaluation/EVALUATION_SYSTEM.md)** - RAGAS metrics, evaluation workflow, best practices
 - **[Troubleshooting History](docs/troubleshooting/)** - Historical issues and fixes
 - **[Accuracy Improvement Plan](docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md)** - Future optimizations and plans

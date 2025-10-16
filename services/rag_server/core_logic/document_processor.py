@@ -7,6 +7,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import Document, TextNode
 from core_logic.env_config import get_optional_env
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,9 @@ def add_contextual_prefix(node: TextNode, document_name: str, document_type: str
     Returns:
         Enhanced TextNode with contextual prefix
     """
+    start_time = time.time()
+    logger.info(f"[CONTEXTUAL] Starting LLM call for contextual prefix generation")
+
     from core_logic.llm_handler import get_llm_client
 
     chunk_preview = node.get_content()[:400]  # Use first 400 chars for context
@@ -79,18 +83,24 @@ Context (1-2 sentences only):"""
 
     try:
         llm = get_llm_client()
+        llm_start = time.time()
         response = llm.complete(prompt)
+        llm_duration = time.time() - llm_start
+
         context = response.text.strip()
 
         # Prepend context to original text
         enhanced_text = f"{context}\n\n{node.text}"
         node.text = enhanced_text
 
+        total_duration = time.time() - start_time
+        logger.info(f"[CONTEXTUAL] LLM call completed in {llm_duration:.2f}s (total: {total_duration:.2f}s)")
         logger.debug(f"[CONTEXTUAL] Added prefix: {context[:80]}...")
         return node
 
     except Exception as e:
-        logger.warning(f"[CONTEXTUAL] Failed to generate context: {e}")
+        duration = time.time() - start_time
+        logger.warning(f"[CONTEXTUAL] Failed to generate context after {duration:.2f}s: {e}")
         # Return original node if context generation fails
         return node
 
@@ -123,19 +133,23 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
         logger.info(f"[DOCLING] Using DoclingReader for complex document")
         reader = DoclingReader(export_type=DoclingReader.ExportType.JSON)
 
-        logger.info(f"[DOCLING] Loading document with DoclingReader (JSON export)")
+        logger.info(f"[DOCLING] Starting DoclingReader.load_data() - this may take time for large/complex documents")
+        read_start = time.time()
         documents = reader.load_data(file_path=str(file_path))
-        logger.info(f"[DOCLING] DoclingReader returned {len(documents)} documents")
+        read_duration = time.time() - read_start
+        logger.info(f"[DOCLING] DoclingReader.load_data() completed in {read_duration:.2f}s - returned {len(documents)} documents")
 
         if not documents:
             error_msg = f"Could not load document: {file_path}"
             logger.error(f"[DOCLING] {error_msg}")
             raise ValueError(error_msg)
 
-        logger.info(f"[DOCLING] Using DoclingNodeParser")
+        logger.info(f"[DOCLING] Starting DoclingNodeParser.get_nodes_from_documents()")
+        parse_start = time.time()
         node_parser = DoclingNodeParser()
         nodes = node_parser.get_nodes_from_documents(documents)
-        logger.info(f"[DOCLING] DoclingNodeParser returned {len(nodes)} nodes")
+        parse_duration = time.time() - parse_start
+        logger.info(f"[DOCLING] DoclingNodeParser completed in {parse_duration:.2f}s - returned {len(nodes)} nodes")
 
         logger.info(f"[DOCLING] Cleaning metadata for ChromaDB compatibility")
         for node in nodes:
@@ -144,12 +158,20 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
     # Add contextual retrieval prefixes if enabled (Anthropic method)
     contextual_config = get_contextual_retrieval_config()
     if contextual_config['enabled'] and nodes:
-        logger.info(f"[DOCLING] Adding contextual prefixes to {len(nodes)} nodes")
+        logger.info(f"[DOCLING] Starting contextual prefix generation for {len(nodes)} nodes - this involves {len(nodes)} LLM calls")
+        contextual_start = time.time()
+
         for i, node in enumerate(nodes):
             if i % 10 == 0:  # Log progress every 10 chunks
-                logger.info(f"[DOCLING] Contextual prefix progress: {i+1}/{len(nodes)}")
+                elapsed = time.time() - contextual_start
+                avg_per_node = elapsed / (i + 1) if i > 0 else 0
+                est_remaining = avg_per_node * (len(nodes) - i - 1)
+                logger.info(f"[DOCLING] Contextual prefix progress: {i+1}/{len(nodes)} - Elapsed: {elapsed:.1f}s, Est. remaining: {est_remaining:.1f}s")
             nodes[i] = add_contextual_prefix(node, file_path_obj.name, extension)
-        logger.info(f"[DOCLING] Contextual prefixes added to all nodes")
+
+        contextual_duration = time.time() - contextual_start
+        avg_per_node = contextual_duration / len(nodes)
+        logger.info(f"[DOCLING] Contextual prefixes completed in {contextual_duration:.2f}s (avg: {avg_per_node:.2f}s per node)")
     elif not contextual_config['enabled']:
         logger.info("[DOCLING] Contextual retrieval disabled")
 

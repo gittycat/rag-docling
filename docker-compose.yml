@@ -34,6 +34,7 @@ services:
       - OLLAMA_URL=http://host.docker.internal:11434
       - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
+      - OLLAMA_KEEP_ALIVE=10m  # Keep model loaded: 10m (default), -1 (indefinitely), 0 (unload immediately)
       - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RETRIEVAL_TOP_K=10
@@ -43,7 +44,7 @@ services:
       # Phase 2: High-Impact Retrieval Improvements
       - ENABLE_HYBRID_SEARCH=true         # BM25 + Vector with RRF fusion
       - RRF_K=60                          # Reciprocal Rank Fusion k parameter (optimal: 60)
-      - ENABLE_CONTEXTUAL_RETRIEVAL=true  # Anthropic method: 49% reduction in retrieval failures
+      - ENABLE_CONTEXTUAL_RETRIEVAL=false # Anthropic method: 49% reduction in retrieval failures (WARNING: 85% slower preprocessing when enabled)
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -99,6 +100,7 @@ services:
       - OLLAMA_URL=http://host.docker.internal:11434
       - EMBEDDING_MODEL=nomic-embed-text:latest
       - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
+      - OLLAMA_KEEP_ALIVE=10m  # Keep model loaded: 10m (default), -1 (indefinitely), 0 (unload immediately)
       - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RETRIEVAL_TOP_K=10
@@ -108,7 +110,7 @@ services:
       # Phase 2: High-Impact Retrieval Improvements
       - ENABLE_HYBRID_SEARCH=true         # BM25 + Vector with RRF fusion
       - RRF_K=60                          # Reciprocal Rank Fusion k parameter (optimal: 60)
-      - ENABLE_CONTEXTUAL_RETRIEVAL=true  # Anthropic method: 49% reduction in retrieval failures
+      - ENABLE_CONTEXTUAL_RETRIEVAL=false # Anthropic method: 49% reduction in retrieval failures (WARNING: 85% slower preprocessing when enabled)
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

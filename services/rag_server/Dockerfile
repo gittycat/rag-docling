@@ -3,12 +3,19 @@
 FROM python:3.13-slim
 
 # Install system dependencies for docling (OCR support) and build tools (for pystemmer/BM25)
+# Graphics libraries needed for OpenCV (used by Docling for image processing)
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-eng \
     gcc \
     g++ \
     make \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency management

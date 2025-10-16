@@ -1,11 +1,27 @@
 from llama_index.llms.ollama import Ollama
-from core_logic.env_config import get_required_env
+from core_logic.env_config import get_required_env, get_optional_env
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_llm_client():
     ollama_url = get_required_env("OLLAMA_URL")
     model = get_required_env("LLM_MODEL")
-    return Ollama(model=model, base_url=ollama_url, request_timeout=120.0)
+
+    # Keep-alive: Keep model loaded in memory between calls
+    # Reduces latency for subsequent calls (especially important for contextual retrieval)
+    # Default: "10m" (10 minutes), use "-1" to keep indefinitely, "0" to unload immediately
+    keep_alive = get_optional_env("OLLAMA_KEEP_ALIVE", "10m")
+
+    logger.info(f"[LLM] Initializing Ollama LLM: {model}, keep_alive={keep_alive}")
+
+    return Ollama(
+        model=model,
+        base_url=ollama_url,
+        request_timeout=120.0,
+        keep_alive=keep_alive
+    )
 
 def get_system_prompt() -> str:
     """

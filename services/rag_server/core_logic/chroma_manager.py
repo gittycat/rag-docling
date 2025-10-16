@@ -6,6 +6,7 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 from core_logic.embeddings import get_embedding_function
 from core_logic.env_config import get_required_env
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,8 @@ def get_or_create_collection():
 
 
 def add_documents(index, nodes: List, progress_callback=None):
-    logger.info(f"[CHROMA] Adding {len(nodes)} nodes to index")
+    logger.info(f"[CHROMA] Starting embedding generation and indexing for {len(nodes)} nodes")
+    embedding_start = time.time()
 
     if nodes:
         first_text = nodes[0].get_content()
@@ -52,13 +54,24 @@ def add_documents(index, nodes: List, progress_callback=None):
     total_nodes = len(nodes)
 
     for i, node in enumerate(nodes, 1):
-        logger.info(f"[CHROMA] Embedding chunk {i}/{total_nodes}")
+        node_start = time.time()
+        logger.info(f"[CHROMA] Starting embedding for chunk {i}/{total_nodes}")
+
         index.insert_nodes([node])
+
+        node_duration = time.time() - node_start
+        elapsed = time.time() - embedding_start
+        avg_per_node = elapsed / i
+        est_remaining = avg_per_node * (total_nodes - i)
+
+        logger.info(f"[CHROMA] Chunk {i}/{total_nodes} embedded in {node_duration:.2f}s - Elapsed: {elapsed:.1f}s, Est. remaining: {est_remaining:.1f}s")
 
         if progress_callback:
             progress_callback(i, total_nodes)
 
-    logger.info(f"[CHROMA] Successfully added {len(nodes)} nodes to ChromaDB")
+    total_duration = time.time() - embedding_start
+    avg_per_node = total_duration / len(nodes)
+    logger.info(f"[CHROMA] Successfully embedded and indexed {len(nodes)} nodes in {total_duration:.2f}s (avg: {avg_per_node:.2f}s per node)")
 
 
 def query_documents(index, query_text: str, n_results: int = 5) -> Dict:
