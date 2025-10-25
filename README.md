@@ -1,25 +1,23 @@
-# RAG System - Local Document Search with AI
+# Locally hosted RAG System
 
-A privacy-first, local RAG (Retrieval Augmented Generation) system that enables natural language search across your documents using AI through a REST API.
+This is a locally hosted and partially modular RAG system used to evaluate different techniques as I come across them. 
+It is not aimed at production which means that it is missing observability, scalability and a full security review.
 
 ## Features
 
-### Phase 2: High-Impact Retrieval (Current)
-- **Hybrid Search (BM25 + Vector + RRF)**: 48% improvement in retrieval quality
-  - Combines sparse (BM25) keyword search with dense (vector) semantic search
-  - Reciprocal Rank Fusion (k=60) for optimal result merging
-  - Excels at exact term matching and semantic understanding
-- **Contextual Retrieval (Anthropic Method)**: 49% reduction in retrieval failures
-  - LLM-generated document context prepended to chunks
-  - Zero query-time overhead (context embedded once at indexing)
-  - 67% reduction in failures when combined with reranking
+The application is composed of two main docker containers:
+- A frontend **WebApp** built in SvelteKit and tailwind CSS.
+- A backend service, **rag_server**, in python. It provides a REST API to the frontend to upload documents, query the datastore and perform administration. The rag_server uses LlamaIndex for the RAG pipeline (interacting with models, queries, retrival). Ragas is used for evaluation.
+
+Additional containers provide support services (queue, datastore).
 
 ### Core Capabilities
+- **Hybrid Search**: Combines keyword matching (BM25) with semantic search (vector embeddings) for 48% better retrieval quality
+- **Contextual Retrieval**: AI-generated document context prepended to chunks for 49% fewer retrieval failures
 - **Natural Language Search**: Ask questions in plain English and get AI-powered answers
 - **Advanced Document Processing**: Powered by Docling with superior PDF/DOCX parsing, table extraction, and layout understanding
-- **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html, and more
+- **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html (more as needed)
 - **Intelligent Chunking**: Structural chunking that preserves document hierarchy (headings, sections, tables)
-- **Two-Stage Retrieval**: Hybrid search (BM25 + Vector) → cross-encoder reranking
 - **Conversational Memory**: Redis-backed chat history that persists across restarts with session management
 - **Data Protection**: Automated ChromaDB backups with restore capability
 - **Local Deployment**: All data stays on your machine
@@ -43,38 +41,41 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 ## Architecture
 
 ```
-┌─────────────────┐
-│  Client Apps    │  (Your web app, CLI, etc.)
-│  (Future)       │
-└────────┬────────┘
-         │ HTTP/REST
+┌──────────────────┐
+│  WebApp (Port    │  SvelteKit UI
+│  8000)           │
+└────────┬─────────┘
+         │ HTTP
          │
 ┌────────▼────────┐
-│   RAG Server    │  (Port 8001, Public API)
+│   RAG Server    │  (Port 8001, REST API)
 │   (FastAPI)     │
 │                 │
-│  ┌──────────┐  │
-│  │ Docling  │  │  Document parsing
-│  │  +       │  │  + Contextual Retrieval
-│  │LlamaIndex│  │  + Hybrid Search (BM25+Vector)
-│  └──────────┘  │
+│  ┌──────────┐   │
+│  │ Docling  │   │  Document parsing
+│  │  +       │   │  + Contextual Retrieval
+│  │LlamaIndex│   │  + Hybrid Search (BM25+Vector)
+│  └──────────┘   │
 └────────┬────────┘
          │
     ┌────┴────┬────────────┬──────────┐
     │         │            │          │
-┌───▼───┐ ┌──▼──────┐  ┌──▼────┐  ┌─▼─────┐
+┌───▼──-─┐ ┌──▼──────┐  ┌──▼────┐  ┌─-▼────┐
 │ChromaDB│ │ Ollama  │  │ Redis │  │Celery │
 │ (8000) │ │ (11434) │  │(6379) │  │Worker │
 └────────┘ └─────────┘  └───────┘  └───────┘
-   Vector     LLM +        Chat      Async
-   Storage   Embeddings   Memory     Tasks
+   Vector     LLM +       Message   Async
+   Storage   Embeddings   Broker    Processing
 ```
+
 
 ## Prerequisites
 
 1. **Docker & Docker Compose**
    - Docker Desktop or Docker Engine
    - Docker Compose v2+
+
+  I suggest the much faster [OrbStack](https://orbstack.dev/) to handle containers on MacOS.
 
 2. **Ollama** (running on host)
    ```bash
@@ -83,10 +84,10 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 
    # Pull required models
    ollama pull gemma3:4b              # LLM for generation
-   ollama pull nomic-embed-text       # Embeddings
+   ollama pull nomic-embed-text       # Embeddings. TODO: this one has changed again.
    ```
 
-3. **Python 3.13+** (for local development/testing)
+3. **Python 3.13** (for local development/testing)
    ```bash
    # Install uv package manager
    curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -227,6 +228,13 @@ rag-docling/
 ├── docker-compose.yml          # Service orchestration
 ├── secrets/                    # Configuration secrets
 ├── services/
+│   ├── webapp/                # SvelteKit frontend
+│   │   ├── src/
+│   │   │   ├── routes/       # SvelteKit routes (pages + API proxy)
+│   │   │   ├── lib/          # Components, stores, utils
+│   │   │   └── app.css       # Tailwind styles
+│   │   ├── Dockerfile
+│   │   └── package.json
 │   └── rag_server/            # RAG API backend
 │       ├── main.py            # FastAPI app
 │       ├── celery_app.py      # Celery configuration
