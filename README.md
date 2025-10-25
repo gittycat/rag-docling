@@ -1,25 +1,23 @@
-# RAG System - Local Document Search with AI
+# Locally hosted RAG System
 
-A privacy-first, local RAG (Retrieval Augmented Generation) system that enables natural language search across your documents using AI through a REST API.
+This is a locally hosted and partially modular RAG system used to evaluate different techniques as I come across them. 
+It is not aimed at production which means that it is missing observability, scalability and a full security review.
 
 ## Features
 
-### Phase 2: High-Impact Retrieval (Current)
-- **Hybrid Search (BM25 + Vector + RRF)**: 48% improvement in retrieval quality
-  - Combines sparse (BM25) keyword search with dense (vector) semantic search
-  - Reciprocal Rank Fusion (k=60) for optimal result merging
-  - Excels at exact term matching and semantic understanding
-- **Contextual Retrieval (Anthropic Method)**: 49% reduction in retrieval failures
-  - LLM-generated document context prepended to chunks
-  - Zero query-time overhead (context embedded once at indexing)
-  - 67% reduction in failures when combined with reranking
+The application is composed of two main docker containers:
+- A frontend **WebApp** built in SvelteKit and tailwind CSS. It provides a basic ChatGPT like UI with an admin section to upload documents and manage the pipeline (turn on or off features).
+- A **rag_server** backend service in python. It provides a REST API to the frontend to upload documents, query the datastore and perform administration. The rag_server uses LlamaIndex in the RAG pipeline (interacting with models, queries, retrival). Ragas is used for evaluation.
+
+Additional containers provide support services (queue, datastore).
 
 ### Core Capabilities
+- **Hybrid Search**: Combines keyword matching (BM25) with semantic search (vector embeddings) for 48% better retrieval quality
+- **Contextual Retrieval**: AI-generated document context prepended to chunks for 49% fewer retrieval failures
 - **Natural Language Search**: Ask questions in plain English and get AI-powered answers
 - **Advanced Document Processing**: Powered by Docling with superior PDF/DOCX parsing, table extraction, and layout understanding
-- **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html, and more
+- **Multi-Format Support**: Process txt, md, pdf, docx, pptx, xlsx, html (more as needed)
 - **Intelligent Chunking**: Structural chunking that preserves document hierarchy (headings, sections, tables)
-- **Two-Stage Retrieval**: Hybrid search (BM25 + Vector) → cross-encoder reranking
 - **Conversational Memory**: Redis-backed chat history that persists across restarts with session management
 - **Data Protection**: Automated ChromaDB backups with restore capability
 - **Local Deployment**: All data stays on your machine
@@ -27,7 +25,7 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 - **REST API**: Clean API for integration with any frontend or application
 
 ## Technology Stack
-
+- **WebApp**: SvelteKit + Tailwind CSS (ChatGPT-like UI with admin controls)
 - **RAG Server**: Python + FastAPI (REST API)
 - **Vector Database**: ChromaDB with LlamaIndex integration
 - **LLM**: Ollama (gemma3:4b for generation and evaluation)
@@ -43,61 +41,76 @@ A privacy-first, local RAG (Retrieval Augmented Generation) system that enables 
 ## Architecture
 
 ```
-┌─────────────────┐
-│  Client Apps    │  (Your web app, CLI, etc.)
-│  (Future)       │
-└────────┬────────┘
-         │ HTTP/REST
-         │
-┌────────▼────────┐
-│   RAG Server    │  (Port 8001, Public API)
-│   (FastAPI)     │
-│                 │
-│  ┌──────────┐  │
-│  │ Docling  │  │  Document parsing
-│  │  +       │  │  + Contextual Retrieval
-│  │LlamaIndex│  │  + Hybrid Search (BM25+Vector)
-│  └──────────┘  │
-└────────┬────────┘
-         │
-    ┌────┴────┬────────────┬──────────┐
-    │         │            │          │
-┌───▼───┐ ┌──▼──────┐  ┌──▼────┐  ┌─▼─────┐
-│ChromaDB│ │ Ollama  │  │ Redis │  │Celery │
-│ (8000) │ │ (11434) │  │(6379) │  │Worker │
-└────────┘ └─────────┘  └───────┘  └───────┘
-   Vector     LLM +        Chat      Async
-   Storage   Embeddings   Memory     Tasks
+                        ┌────────────────────────────────────┐
+                        │   External: Ollama (Host Machine)  │  
+          End User      │   host.docker.internal:11434       │
+          (browser)     │   - LLM: gemma3:4b                 │
+              │         │   - Embeddings: nomic-embed-text   │
+              │         └────────────────────────────────────┘
+              │                              │
+              │       Public Network         │
+--------------│------------------------------│-------------------
+              │       Private Network        │
+              ▼                              │
+    ┌─────────────────┐           ┌──────────────────────┐
+    │   WebApp        │    HTTP   │   RAG Server         │
+    │   (SvelteKit)   │◄─────────►│   (FastAPI)          │
+    │   Port: 8000    │           │   Port: 8001         │
+    └─────────────────┘           │                      │
+                                  │  ┌────────────────┐  │
+                                  │  │ Docling        │  │
+                                  │  │ + LlamaIndex   │  │
+                                  │  │ + Hybrid Search│  │
+                                  │  │ + Reranking    │  │
+                                  │  └────────────────┘  │
+                                  └──────────┬───────────┘
+                                             │           
+                                             │           
+           ┌─────────────┬───────────────────┼─────────┐  
+           │             │                   │         │  
+      ┌────▼─────┐  ┌────▼────┐       ┌──────▼──────┐  │  
+      │ ChromaDB │  │  Redis  │       │   Celery    │  │  
+      │ (Vector  │  │(Message │       │   Worker    │  │  
+      │  DB)     │  │ Broker) │       │  (Async     │  │  
+      └──────────┘  └─────────┘       │ Processing) │  │  
+                                      └──────┬──────┘  │  
+                                             │         │  
+                                      ┌───────────────────┐
+                                      │   Shared Volume   │
+                                      │   /tmp/shared     │
+                                      │   (File Transfer) │
+                                      └───────────────────┘
+
 ```
+
 
 ## Prerequisites
 
-1. **Docker & Docker Compose**
-   - Docker Desktop or Docker Engine
-   - Docker Compose v2+
+1. A **Docker container host** like Docker Desktop, OrbStack, Podman.
+2. Ollama
+3. Python 3.13 and the [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
 
-2. **Ollama** (running on host)
-   ```bash
-   # Install Ollama
-   curl https://ollama.ai/install.sh | sh
+Here are my own setup instructions
+```bash
+brew install orbstack # faster alternative to docker desktop
+brew install uv
 
-   # Pull required models
-   ollama pull gemma3:4b              # LLM for generation
-   ollama pull nomic-embed-text       # Embeddings
-   ```
-
-3. **Python 3.13+** (for local development/testing)
-   ```bash
-   # Install uv package manager
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
+# The Ollama homebrew recipe is not maintained by the Ollama team so
+# we instead rely on the recommended shell install.
+curl https://ollama.ai/install.sh | sh
+# Pull required models
+ollama pull gemma3:4b              # Inference model
+ollama pull nomic-embed-text       # Embedding model
+```
 
 ## Quick Start
 
 ### 1. Clone and Setup
 
 ```bash
-cd /path/to/rag-docling
+git clone git@github.com:gittycat/rag-docling.git
+cd rag-docling
+
 ```
 
 ### 2. Configure Secrets (Optional)
@@ -113,145 +126,16 @@ echo "OLLAMA_HOST=http://host.docker.internal:11434" > secrets/ollama_config.env
 ### 3. Start Services
 
 ```bash
-docker compose up -d
+docker compose up
 ```
 
-This will start:
-- RAG Server API on http://localhost:8001
-- ChromaDB (internal)
-- Redis (internal)
-- Celery Worker (internal)
+Open WebApp at http://localhost:8000
 
-### 4. Verify Services
-
-```bash
-# Check health
-curl http://localhost:8001/health
-
-# Check models
-curl http://localhost:8001/models/info
-```
-
-## API Usage
-
-### Upload Documents
-
-```bash
-# Upload single file
-curl -X POST http://localhost:8001/upload \
-  -F "files=@/path/to/document.pdf"
-
-# Upload multiple files
-curl -X POST http://localhost:8001/upload \
-  -F "files=@document1.pdf" \
-  -F "files=@document2.docx"
-
-# Response includes batch_id for tracking
-{
-  "status": "queued",
-  "batch_id": "abc-123",
-  "tasks": [
-    {"task_id": "task-1", "filename": "document1.pdf"}
-  ]
-}
-```
-
-### Check Upload Progress
-
-```bash
-# Get batch status
-curl http://localhost:8001/tasks/{batch_id}/status
-```
-
-### Query Documents
-
-```bash
-# Simple query (auto-generates session_id)
-curl -X POST http://localhost:8001/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "What is the main topic?",
-    "n_results": 5
-  }'
-
-# Conversational query with session
-curl -X POST http://localhost:8001/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Tell me more about that",
-    "session_id": "user-123",
-    "n_results": 5
-  }'
-```
-
-### List Documents
-
-```bash
-curl http://localhost:8001/documents
-```
-
-### Delete Document
-
-```bash
-curl -X DELETE http://localhost:8001/documents/{document_id}
-```
-
-### Chat History
-
-```bash
-# Get conversation history
-curl http://localhost:8001/chat/history/{session_id}
-
-# Clear chat history
-curl -X POST http://localhost:8001/chat/clear \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "user-123"}'
-```
-
-## Development
-
-### Local Testing
-
-#### RAG Server Tests
-
-```bash
-cd services/rag_server
-uv sync
-.venv/bin/pytest -v
-```
-
-### Project Structure
-
-```
-rag-docling/
-├── docker-compose.yml          # Service orchestration
-├── secrets/                    # Configuration secrets
-├── services/
-│   └── rag_server/            # RAG API backend
-│       ├── main.py            # FastAPI app
-│       ├── celery_app.py      # Celery configuration
-│       ├── tasks.py           # Async document processing
-│       ├── core_logic/        # RAG components
-│       │   ├── embeddings.py           # OllamaEmbedding
-│       │   ├── document_processor.py   # Docling + Contextual Retrieval
-│       │   ├── chroma_manager.py       # VectorStoreIndex
-│       │   ├── llm_handler.py          # LLM + prompts
-│       │   ├── rag_pipeline.py         # Query pipeline
-│       │   ├── hybrid_retriever.py     # BM25 + Vector + RRF
-│       │   ├── chat_memory.py          # Redis-backed memory
-│       │   └── progress_tracker.py     # Upload progress
-│       ├── tests/             # Test suite (33 core + 27 evaluation)
-│       └── pyproject.toml     # Dependencies
-├── docs/                      # Documentation
-│   ├── PHASE1_IMPLEMENTATION_SUMMARY.md
-│   ├── PHASE2_IMPLEMENTATION_SUMMARY.md
-│   ├── RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md
-│   ├── CONVERSATIONAL_RAG.md
-│   └── evaluation/
-└── README.md
-```
 
 ## API Documentation
+
+### Authentication
+- None at this point. This application is meant to run locally.
 
 ### Core Endpoints
 
@@ -417,6 +301,9 @@ Get current model configuration.
 
 ## Configuration
 
+All settings are defined in the [docker-compose.yml](docker-compose.yml).
+Again, this application is run locally. No authentication is used for ChromaDB.
+
 ### Environment Variables
 
 **RAG Server (docker-compose.yml):**
@@ -530,6 +417,8 @@ chat_engine = CondensePlusContextChatEngine.from_defaults(
     ...
 )
 ```
+
+# CLAUDE CODE HELPER SECTION
 
 ## Troubleshooting
 
