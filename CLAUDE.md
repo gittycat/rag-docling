@@ -286,6 +286,7 @@ docker compose exec rag-server curl http://host.docker.internal:11434/api/tags
 
 For comprehensive guides on specific topics, see:
 
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Complete API documentation, configuration details, troubleshooting, and roadmap
 - **[Conversational RAG Architecture](docs/CONVERSATIONAL_RAG.md)** - Session management, chat memory, model flexibility
 - **[Performance Optimizations Summary](docs/PERFORMANCE_OPTIMIZATIONS_SUMMARY.md)** - Recent optimizations: contextual retrieval toggle, keep-alive (15x speedup)
 - **[Performance Analysis](docs/PERFORMANCE_ANALYSIS.md)** - Document processing bottlenecks, timing breakdown, optimization opportunities
