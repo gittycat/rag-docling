@@ -1,6 +1,157 @@
 # Development Guide
 
-This guide contains detailed technical information for developers working on this RAG system.
+Complete technical reference for developers working on this RAG system. Covers architecture, API, configuration, testing, and deployment.
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Development Setup](#development-setup)
+- [API Documentation](#api-documentation)
+- [Configuration](#configuration)
+- [Evaluation & Testing](#evaluation--testing)
+- [Implementation Details](#implementation-details)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
+
+## Architecture
+
+### System Overview
+
+```text
+                        ┌────────────────────────────────────┐
+                        │   External: Ollama (Host Machine)  │
+          End User      │   host.docker.internal:11434       │
+          (browser)     │   - LLM: gemma3:4b                 │
+              │         │   - Embeddings: nomic-embed-text   │
+              │         └────────────────────────────────────┘
+              │                              │
+              │    Public Network (host)     │
+--------------│------------------------------│-------------------
+              │    Private Network (Docker)  │
+              ▼                              │
+    ┌─────────────────┐           ┌──────────────────────┐
+    │   WebApp        │    HTTP   │   RAG Server         │
+    │   (SvelteKit)   │◄─────────►│   (FastAPI)          │
+    │   Port: 8000    │           │   Port: 8001         │
+    └─────────────────┘           │                      │
+                                  │  ┌────────────────┐  │
+                                  │  │ Docling        │  │
+                                  │  │ + LlamaIndex   │  │
+                                  │  │ + Hybrid Search│  │
+                                  │  │ + Reranking    │  │
+                                  │  └────────────────┘  │
+                                  └──────────┬───────────┘
+                                             │
+                                             │
+           ┌─────────────┬───────────────────┼─────────┐
+           │             │                   │         │
+      ┌────▼─────┐  ┌────▼────┐       ┌──────▼──────┐  │
+      │ ChromaDB │  │  Redis  │       │   Celery    │  │
+      │ (Vector  │  │(Message │       │   Worker    │  │
+      │  DB)     │  │ Broker) │       │  (Async     │  │
+      └──────────┘  └─────────┘       │ Processing) │  │
+                                      └──────┬──────┘  │
+                                             │         │
+                                      ┌───────────────────┐
+                                      │   Shared Volume   │
+                                      │   /tmp/shared     │
+                                      │   (File Transfer) │
+                                      └───────────────────┘
+```
+
+### Technology Stack
+
+**Frontend:**
+- SvelteKit 2.0 - Modern web framework
+- Tailwind CSS - Utility-first styling
+- TypeScript - Type-safe JavaScript
+
+**Backend:**
+- Python 3.13 - Latest stable Python
+- FastAPI 0.118+ - Modern async API framework
+- LlamaIndex 0.14+ - RAG orchestration framework
+- Docling 2.53+ - Document parsing
+
+**Data Layer:**
+- ChromaDB 1.1+ - Vector database
+- Redis 6.4+ - Message broker & cache
+- Celery 5.5+ - Async task queue
+
+**AI Models (via Ollama):**
+- gemma3:4b - Question answering (3B params)
+- nomic-embed-text - Document embeddings (137M params)
+- cross-encoder/ms-marco-MiniLM-L-6-v2 - Reranking (22M params)
+
+**Development Tools:**
+- uv - Fast Python package manager
+- Docker Compose - Container orchestration
+- pytest - Testing framework
+- DeepEval - RAG evaluation framework
+
+## Development Setup
+
+### Prerequisites
+
+1. **Python 3.13+** with [uv package manager](https://docs.astral.sh/uv/)
+2. **Docker** (Docker Desktop, OrbStack, or Podman)
+3. **Ollama** running on host machine
+
+### Local Development
+
+```bash
+# Clone repository
+git clone https://github.com/gittycat/rag-docling.git
+cd rag-docling
+
+# Install RAG server dependencies
+cd services/rag_server
+uv sync                    # Core dependencies
+uv sync --group eval       # Add evaluation tools
+
+# Install frontend dependencies
+cd ../../services/webapp
+npm install
+
+# Start infrastructure
+docker compose up chromadb redis -d
+
+# Run RAG server locally (for debugging)
+cd ../rag_server
+.venv/bin/uvicorn main:app --reload --port 8001
+
+# Run frontend locally (for debugging)
+cd ../webapp
+npm run dev
+```
+
+### Running Tests
+
+```bash
+# Core tests (33 tests)
+cd services/rag_server
+.venv/bin/pytest -v
+
+# Evaluation tests (requires ANTHROPIC_API_KEY)
+export ANTHROPIC_API_KEY=sk-ant-...
+.venv/bin/pytest tests/test_rag_eval.py --run-eval --eval-samples=5
+
+# Frontend tests
+cd services/webapp
+npm test
+```
+
+### Code Quality
+
+```bash
+# Python formatting (if using)
+cd services/rag_server
+.venv/bin/ruff format .
+.venv/bin/ruff check .
+
+# Frontend linting
+cd services/webapp
+npm run lint
+```
 
 ## API Documentation
 
@@ -382,50 +533,137 @@ docker volume rm rag-docling_chroma_db_data
 docker compose up -d
 ```
 
+## Evaluation & Testing
+
+### Evaluation Framework: DeepEval
+
+**Migrated from RAGAS to DeepEval** (2025-12-07) for better CI/CD integration and self-explaining metrics.
+
+**Key Features:**
+- **5 RAG Metrics**: Contextual Precision, Contextual Recall, Faithfulness, Answer Relevancy, Hallucination
+- **LLM-as-Judge**: Uses Anthropic Claude Sonnet 4 for evaluation
+- **Self-Explaining**: Metrics include reasoning for scores
+- **Pytest Integration**: Native assert-based testing
+- **CLI Tools**: Unified CLI for evaluation, stats, and Q&A generation
+
+#### Quick Start
+
+```bash
+# Install evaluation dependencies
+cd services/rag_server
+uv sync --group eval
+
+# Set API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Run quick evaluation (5 test cases)
+.venv/bin/python -m evaluation.cli eval --samples 5
+
+# Show dataset statistics
+.venv/bin/python -m evaluation.cli stats
+
+# Run pytest evaluation tests
+pytest tests/test_rag_eval.py --run-eval --eval-samples=5
+```
+
+#### Available Commands
+
+```bash
+# Evaluation
+.venv/bin/python -m evaluation.cli eval              # Full evaluation
+.venv/bin/python -m evaluation.cli eval --samples 5   # Quick test
+.venv/bin/python -m evaluation.cli eval --no-reason   # Faster (skip explanations)
+
+# Dataset Management
+.venv/bin/python -m evaluation.cli stats              # Show statistics
+
+# Q&A Generation
+.venv/bin/python -m evaluation.cli generate doc.txt -n 10 -o generated.json
+.venv/bin/python -m evaluation.cli generate docs/ --merge  # Expand dataset
+```
+
+#### Metrics Explained
+
+- **Contextual Precision**: Are retrieved chunks ranked correctly?
+- **Contextual Recall**: Did we retrieve all necessary information?
+- **Faithfulness**: Is the answer grounded in the retrieved context?
+- **Answer Relevancy**: Does the answer directly address the question?
+- **Hallucination**: Does the answer contain information not in the context?
+
+**Documentation:**
+- [DeepEval Implementation Summary](docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md)
+- [Quick Start Guide](services/rag_server/evaluation/README_DEEPEVAL.md)
+- [Full Implementation Plan](docs/RAG_EVALUATION_IMPLEMENTATION_PLAN.md)
+
+### Unit & Integration Tests
+
+**Test Coverage:**
+- **33 Core Tests**: Document processing, embeddings, LLM integration, RAG pipeline, API endpoints
+- **Evaluation Tests**: DeepEval metrics, dataset loading, live RAG evaluation
+
+```bash
+# Run core tests
+cd services/rag_server
+.venv/bin/pytest -v
+
+# Run specific test file
+.venv/bin/pytest tests/test_document_processing.py -v
+
+# Run with coverage
+.venv/bin/pytest --cov=. --cov-report=html
+```
+
+### Golden Dataset
+
+Current dataset: **10 Q&A pairs** from Paul Graham essays (greatwork.html, talk.html, conformism.html)
+
+Breakdown:
+- 8 Factual questions (80%)
+- 2 Reasoning questions (20%)
+
+**Expanding Dataset:**
+
+```bash
+# Generate synthetic Q&A pairs
+.venv/bin/python -m evaluation.generate_qa document.txt -n 10 -o generated.json
+
+# Merge with golden dataset
+.venv/bin/python -m evaluation.cli generate documents/ --merge
+```
+
+Target: **100+ Q&A pairs** for comprehensive evaluation
+
 ## Roadmap
 
-### Completed (Phase 1 - 2025-10-13)
-- [x] Redis-backed chat memory (conversations persist across restarts)
+### Completed
+
+**Phase 1** (2025-10-13):
+- [x] Redis-backed chat memory
 - [x] ChromaDB backup/restore automation
 - [x] Reranker optimization (top-n selection)
 - [x] Startup persistence verification
-- [x] Dependency updates (ChromaDB 1.1.1, FastAPI 0.118.3, Redis 6.4.0)
 
-See `docs/PHASE1_IMPLEMENTATION_SUMMARY.md` for details.
-
-### Completed (Phase 2 - 2025-10-14)
-- [x] Hybrid search (BM25 + Vector + RRF) - 48% retrieval improvement
+**Phase 2** (2025-10-14):
+- [x] Hybrid search (BM25 + Vector + RRF) - 48% improvement
 - [x] Contextual retrieval (Anthropic method) - 49% fewer failures
 - [x] Auto-refresh BM25 after uploads/deletes
-- [x] End-to-end testing and validation
 
-See `docs/PHASE2_IMPLEMENTATION_SUMMARY.md` for details.
+**Evaluation Migration** (2025-12-07):
+- [x] DeepEval framework integration
+- [x] Anthropic Claude as LLM judge
+- [x] Pytest integration with custom markers
+- [x] Unified CLI for evaluation tasks
+- [x] Enhanced dataset loader
+- [x] Synthetic Q&A generation
 
 ### Planned (Phase 3+)
+
+- [ ] Expand golden dataset to 100+ Q&A pairs
+- [ ] CI/CD evaluation pipeline (GitHub Actions)
 - [ ] Parent document retrieval (sentence window)
 - [ ] Query fusion (multi-query generation)
-- [ ] DeepEval evaluation framework
-- [ ] Expanded golden QA dataset (50+ test cases)
 - [ ] Production monitoring dashboard
-- [ ] Support for additional file formats (CSV, JSON)
 - [ ] Multi-user support with authentication
-- [ ] Export search results
+- [ ] Additional file formats (CSV, JSON)
 
-See `docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md` for future plans.
-
-## Testing
-
-The project follows Test-Driven Development (TDD) methodology:
-
-- **60 total tests** (all passing)
-  - 33 RAG server core tests (Docling processing, embeddings, LlamaIndex integration, LLM, pipeline, API)
-  - 27 evaluation tests (RAGAS metrics, dataset loading, report generation)
-
-Run all tests:
-```bash
-# RAG Server core tests
-cd services/rag_server && .venv/bin/pytest -v
-
-# RAG Server evaluation tests
-cd services/rag_server && .venv/bin/pytest tests/evaluation/ -v
-```
+See [RAG Accuracy Improvement Plan](docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md) for details.

@@ -1,189 +1,99 @@
 # Locally Hosted RAG System
 
-A locally hosted RAG (Retrieval-Augmented Generation) system for intelligent document research. Upload your own private documents, ask questions in plain English, and get AI-powered answers with source citations—all running privately on your machine.
+A locally hosted RAG (Retrieval-Augmented Generation) system for intelligent document research. Upload your private documents, ask questions in natural language, and get AI-powered answers with source citations—all running privately on your machine.
 
 ## Project Goal
-Obviously no current laptops has the GPU power to use top of the line models and techniques across a full RAG pipeline. This project aims to allow the evaluation of multiple small models and features together to find an optimum pipeline for given set of documents that is still reasonably usable on a local computer.
+
+Create an optimized RAG pipeline for local machines that balances accuracy with performance. Since consumer laptops can't run top-tier models, this project helps you find the best combination of small models and techniques for your documents.
 
 
 
 ## Features
 
-### Core Functionality
+- **Private & Local**: Runs entirely on your machine—no data leaves your computer
+- **Multiple Document Formats**: PDF, DOCX, TXT, Markdown, HTML, PowerPoint, Excel
+- **Conversational Q&A**: Ask follow-up questions and get contextual answers
+- **Source Citations**: Every answer includes references to source documents
+- **ChatGPT-like Interface**: Clean, familiar web interface
+- **Smart Search**: Combines keyword and semantic search for better accuracy
+- **Real-time Progress**: See document processing status as it happens
 
-- **Question Answering**: Local LLM used for interacting with documents.
-- **Document Formats**: Currently supports txt, md, pdf, docx, pptx, xlsx, html.
-- **Chat History**: Session-based conversation memory persists across restarts
-- **Local Deployment**: Can runs entirely on your machine with no external API dependencies
-- **Web Interface**: ChagGPT like interface with document management.
+## What You Need
 
-### Retrieval Methods
+- **Docker** (Docker Desktop, OrbStack, or similar)
+- **Ollama** for running AI models locally
+- **~4GB RAM** for the AI models
+- **~2GB disk space** for models and data
 
-- **Contextual Retrieval**: Document context embedded with chunks for improved accuracy
-- **Structure Preservation**: Maintains document hierarchy including headings, sections, and tables
-- **Hybrid Search**: BM25 keyword matching combined with vector semantic search
-- **Reranking**: Cross-encoder model for result refinement. Uses a small memory loaded model.
+## Installation
 
-### System Capabilities
-
-- **Async Processing**: Background document indexing via Celery task queue
-- **Progress Tracking**: Real-time status updates for document uploads
-- **Source Attribution**: Results include document excerpts and metadata
-
-## Technology Stack
-
-- **Frontend**: SvelteKit + Tailwind CSS.
-- **Backend**: Python + FastAPI
-- **Vector Database**: ChromaDB
-- **AI Models**: Ollama (local LLM and embeddings)
-- **Document Processing**: Docling + LlamaIndex
-- **Task Queue**: Celery + Redis
-- **Package Management**: uv
-
-## Architecture
-
-```text
-                        ┌────────────────────────────────────┐
-                        │   External: Ollama (Host Machine)  │
-          End User      │   host.docker.internal:11434       │
-          (browser)     │   - LLM: gemma3:4b                 │
-              │         │   - Embeddings: nomic-embed-text   │
-              │         └────────────────────────────────────┘
-              │                              │
-              │    Public Network (host)     │
---------------│------------------------------│-------------------
-              │    Private Network (Docker)  │
-              ▼                              │
-    ┌─────────────────┐           ┌──────────────────────┐
-    │   WebApp        │    HTTP   │   RAG Server         │
-    │   (SvelteKit)   │◄─────────►│   (FastAPI)          │
-    │   Port: 8000    │           │   Port: 8001         │
-    └─────────────────┘           │                      │
-                                  │  ┌────────────────┐  │
-                                  │  │ Docling        │  │
-                                  │  │ + LlamaIndex   │  │
-                                  │  │ + Hybrid Search│  │
-                                  │  │ + Reranking    │  │
-                                  │  └────────────────┘  │
-                                  └──────────┬───────────┘
-                                             │
-                                             │
-           ┌─────────────┬───────────────────┼─────────┐
-           │             │                   │         │
-      ┌────▼─────┐  ┌────▼────┐       ┌──────▼──────┐  │
-      │ ChromaDB │  │  Redis  │       │   Celery    │  │
-      │ (Vector  │  │(Message │       │   Worker    │  │
-      │  DB)     │  │ Broker) │       │  (Async     │  │
-      └──────────┘  └─────────┘       │ Processing) │  │
-                                      └──────┬──────┘  │
-                                             │         │
-                                      ┌───────────────────┐
-                                      │   Shared Volume   │
-                                      │   /tmp/shared     │
-                                      │   (File Transfer) │
-                                      └───────────────────┘
-
-```
-
-## Prerequisites
-
-1. **Docker container host** (Docker Desktop, OrbStack, or Podman)
-2. **Ollama** for running AI models locally
-3. **Python 3.13** and [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
-
-### Installation
+### 1. Install Dependencies
 
 ```bash
-# Install Docker alternative (faster than Docker Desktop)
-brew install orbstack
-
-# Install uv package manager
-brew install uv
-
-# Install Ollama (recommended method)
+# Install Ollama
 curl https://ollama.ai/install.sh | sh
 
-# Pull required models
-ollama pull gemma3:4b              # Inference model
-ollama pull nomic-embed-text       # Embedding model
+# Download AI models
+ollama pull gemma3:4b              # Question answering model
+ollama pull nomic-embed-text       # Document indexing model
+
+# Install Docker (choose one)
+# - Docker Desktop: https://www.docker.com/products/docker-desktop/
+# - OrbStack (macOS, faster): brew install orbstack
 ```
 
-## Quick Start
-
-### 1. Clone and Setup
+### 2. Get the Code
 
 ```bash
-git clone git@github.com:gittycat/rag-docling.git
+git clone https://github.com/gittycat/rag-docling.git
 cd rag-docling
 ```
 
-### 2. Configure Secrets (Optional)
-
-```bash
-# Create secrets directory
-mkdir -p secrets
-
-# Add Ollama configuration if needed
-echo "OLLAMA_HOST=http://host.docker.internal:11434" > secrets/ollama_config.env
-```
-
-### 3. Start Services
+### 3. Start the Application
 
 ```bash
 docker compose up
 ```
 
-Open the WebApp at **<http://localhost:8000>**
+That's it! Open your browser to **http://localhost:8000**
 
-## Basic Usage
+## How to Use
 
-### Upload Documents
+### 1. Upload Your Documents
 
-1. Open <http://localhost:8000>
-2. Navigate to the Admin section
-3. Click "Upload Documents"
-4. Select files (PDF, DOCX, TXT, MD, etc.)
-5. Monitor progress in real-time
+1. Click the **Admin** button
+2. Click **Upload Documents**
+3. Select your files (PDF, DOCX, TXT, etc.)
+4. Wait for processing to complete
 
-### Ask Questions
+### 2. Ask Questions
 
-1. Use the main page to query your documents
+1. Type your question in the main chat interface
+2. Get AI-generated answers with source citations
+3. Ask follow-up questions to dig deeper
 
-### Manage Documents
+### 3. Manage Your Data
 
-- **View Documents**: See all indexed documents in the Admin section
-- **Delete Documents**: Remove documents you no longer need
-- **Clear Chat**: Start a fresh conversation anytime
+- **View all documents** in the Admin section
+- **Delete documents** you no longer need
+- **Clear chat history** to start fresh
 
 ## Configuration
 
-Basic configuration is handled through environment variables in `docker-compose.yml`. For most users, the defaults work well.
-
-### Key Settings
-
-- **Models**: Change LLM or embedding models (default: gemma3:4b, nomic-embed-text)
-- **Retrieval**: Adjust number of results returned (default: 10)
-- **Features**: Enable/disable hybrid search, contextual retrieval, reranking
-
-For detailed configuration options, see [DEVELOPMENT.md](DEVELOPMENT.md).
+The system works out-of-the-box with sensible defaults. Advanced users can modify settings in `docker-compose.yml` to change models, adjust retrieval parameters, or enable/disable features. See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
 
 
-## Documentation
+## Need Help?
 
-Most of the extra documentation is for use by the Claude Code environment development.
-It includes more in depth search on techniques to improve accuracy.
-I will probably migrate to using [Claude Skills](https://support.claude.com/en/articles/12512176-what-are-skills) 
-for some of this info in the future.
+- **Troubleshooting**: See [DEVELOPMENT.md](DEVELOPMENT.md) for common issues
+- **API Reference**: Full endpoint documentation in [DEVELOPMENT.md](DEVELOPMENT.md)
+- **Technical Details**: Architecture and implementation in [docs/](docs/)
 
-- **[DEVELOPMENT.md](DEVELOPMENT.md)**: API documentation, configuration details, troubleshooting
-- **[CLAUDE.md](CLAUDE.md)**: Project guide for Claude Code development
-- **[docs/](docs/)**: Additional guides and implementation details
+## What's Next
 
-## Roadmap
-
-TODO: Detail the roadmap.
-
-Overall, the immediate goal is to improve evaluation (make it easier to compare features/models), then migrating the application online which will require security and data privacy improvements.
+- **Better Evaluation**: Easier testing of different models and features (in progress with DeepEval)
+- **Cloud Deployment**: Option to run online with proper security and privacy
+- **More Formats**: Additional document types and export options
 
 ## License
 
