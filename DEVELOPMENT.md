@@ -19,45 +19,52 @@ Complete technical reference for developers working on this RAG system. Covers a
 ### System Overview
 
 ```text
-                        ┌────────────────────────────────────┐
-                        │   External: Ollama (Host Machine)  │
-          End User      │   host.docker.internal:11434       │
-          (browser)     │   - LLM: gemma3:4b                 │
-              │         │   - Embeddings: nomic-embed-text   │
-              │         └────────────────────────────────────┘
-              │                              │
-              │    Public Network (host)     │
---------------│------------------------------│-------------------
-              │    Private Network (Docker)  │
-              ▼                              │
-    ┌─────────────────┐           ┌──────────────────────┐
-    │   WebApp        │    HTTP   │   RAG Server         │
-    │   (SvelteKit)   │◄─────────►│   (FastAPI)          │
-    │   Port: 8000    │           │   Port: 8001         │
-    └─────────────────┘           │                      │
-                                  │  ┌────────────────┐  │
-                                  │  │ Docling        │  │
-                                  │  │ + LlamaIndex   │  │
-                                  │  │ + Hybrid Search│  │
-                                  │  │ + Reranking    │  │
-                                  │  └────────────────┘  │
-                                  └──────────┬───────────┘
-                                             │
-                                             │
-           ┌─────────────┬───────────────────┼─────────┐
-           │             │                   │         │
-      ┌────▼─────┐  ┌────▼────┐       ┌──────▼──────┐  │
-      │ ChromaDB │  │  Redis  │       │   Celery    │  │
-      │ (Vector  │  │(Message │       │   Worker    │  │
-      │  DB)     │  │ Broker) │       │  (Async     │  │
-      └──────────┘  └─────────┘       │ Processing) │  │
-                                      └──────┬──────┘  │
-                                             │         │
-                                      ┌───────────────────┐
-                                      │   Shared Volume   │
-                                      │   /tmp/shared     │
-                                      │   (File Transfer) │
-                                      └───────────────────┘
+
+     ┌──────────────┐              ┌────────────────────────────────────┐
+     │   End User   │              │   Ollama                           │
+     │   (browser)  │              │                                    │
+     └──────┬───────┘              │   • LLM: gemma3:4b                 │
+            │                      │   • Embeddings: nomic-embed-text   │
+            │                      └──────────────────┬─────────────────┘
+            │                                         │ :11434 (localhost)
+            │                                         │
+            │         EXTERNAL NETWORK                │
+            │         (host or cloud)                 │
+   =========│=========================================│===================
+            │         INTERNAL NETWORK                │
+            │    (docker-compose priv network)        │
+            │                                         │
+            │ :8000                                   │
+   ┌────────▼────────┐                                │
+   │     WebApp      │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─│ ─ ─ ─ ─ ─ ─ ─ ┐
+   │   (SvelteKit)   │                                │               │
+   │                 │                                │               │
+   └────────┬────────┘                                │               │
+            │                                         │               │
+            │ :8001                                   │               │
+   ┌────────▼───────────────────────────────┐         │               │
+   │            RAG Server (FastAPI)        │─────────┘               │
+   │                                        │                         │
+   │  ┌──────────────────────────────────┐  │                         │
+   │  │  Docling + LlamaIndex            │  │                         │
+   │  │  • Hybrid Search (BM25+Vector)   │  │                         │
+   │  │  • Reranking                     │  │                         │
+   │  │  • Contextual Retrieval          │  │                         │
+   │  └──────────────────────────────────┘  │                         │
+   └───────┬────────────────┬───────────────┘                         │
+           │                │                                         │
+           │                │ Celery task queue                       │
+           │                │                                         │
+   ┌───────▼──────┐  ┌──────▼──────┐  ┌─────────────────────┐         │
+   │   ChromaDB   │  │    Redis    │  │    Celery Worker    │◄────────┘
+   │  (Vectors)   │  │  (Broker +  │  │  (Async document    │
+   │              │  │   Memory)   │  │   processing)       │
+   └──────────────┘  └─────────────┘  └──────────┬──────────┘
+                                                 │                       
+   ┌─────────────────────────────────────────────▼────────────────┐
+   │         Shared Volume: /tmp/shared (File Transfer)           │
+   └──────────────────────────────────────────────────────────────┘
+
 ```
 
 ### Technology Stack
