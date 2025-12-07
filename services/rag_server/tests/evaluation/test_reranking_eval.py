@@ -12,22 +12,22 @@ def reranking_evaluator():
 def samples_before_rerank():
     return [
         EvaluationSample(
-            user_input="What is Python?",
-            retrieved_contexts=[
+            input="What is Python?",
+            retrieval_context=[
                 "Python is a snake",
                 "Python is a programming language",
                 "Python was created by Guido van Rossum",
             ],
-            reference="Python is a programming language",
+            expected_output="Python is a programming language",
         ),
         EvaluationSample(
-            user_input="What is Java?",
-            retrieved_contexts=[
+            input="What is Java?",
+            retrieval_context=[
                 "Java is an island",
                 "Java is a coffee",
                 "Java is a programming language",
             ],
-            reference="Java is a programming language",
+            expected_output="Java is a programming language",
         ),
     ]
 
@@ -36,22 +36,22 @@ def samples_before_rerank():
 def samples_after_rerank():
     return [
         EvaluationSample(
-            user_input="What is Python?",
-            retrieved_contexts=[
+            input="What is Python?",
+            retrieval_context=[
                 "Python is a programming language",
                 "Python was created by Guido van Rossum",
                 "Python is a snake",
             ],
-            reference="Python is a programming language",
+            expected_output="Python is a programming language",
         ),
         EvaluationSample(
-            user_input="What is Java?",
-            retrieved_contexts=[
+            input="What is Java?",
+            retrieval_context=[
                 "Java is a programming language",
                 "Java is a coffee",
                 "Java is an island",
             ],
-            reference="Java is a programming language",
+            expected_output="Java is a programming language",
         ),
     ]
 

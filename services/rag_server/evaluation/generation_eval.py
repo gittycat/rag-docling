@@ -20,10 +20,10 @@ class GenerationEvaluator:
         }
 
         for sample in samples:
-            data_dict["user_input"].append(sample.user_input)
-            data_dict["retrieved_contexts"].append(sample.retrieved_contexts)
-            data_dict["response"].append(sample.response)
-            data_dict["reference"].append(sample.reference or "")
+            data_dict["user_input"].append(sample.input)
+            data_dict["retrieved_contexts"].append(sample.retrieval_context)
+            data_dict["response"].append(sample.actual_output)
+            data_dict["reference"].append(sample.expected_output or "")
 
         return Dataset.from_dict(data_dict)
 
@@ -34,7 +34,7 @@ class GenerationEvaluator:
             raise ValueError("No samples provided for evaluation")
 
         metrics = self.metrics.copy()
-        if include_correctness and all(s.reference for s in samples):
+        if include_correctness and all(s.expected_output for s in samples):
             metrics.append(answer_correctness)
 
         dataset = self.prepare_dataset(samples)

@@ -2,17 +2,18 @@ from pydantic import BaseModel, Field
 
 
 class EvaluationSample(BaseModel):
-    user_input: str = Field(..., description="The question or query from the user")
-    retrieved_contexts: list[str] = Field(..., description="List of context chunks retrieved by the system")
-    response: str = Field(default="", description="The generated answer from the LLM")
-    reference: str | None = Field(default=None, description="Ground truth answer for comparison")
+    input: str = Field(..., description="The question or query from the user")
+    retrieval_context: list[str] = Field(..., description="List of context chunks retrieved by the system")
+    actual_output: str = Field(default="", description="The generated answer from the LLM")
+    expected_output: str | None = Field(default=None, description="Ground truth answer for comparison")
 
-    def to_ragas_dict(self) -> dict:
+    def to_eval_dict(self) -> dict:
+        """Convert to dictionary for evaluation frameworks (DeepEval-compatible)"""
         return {
-            "user_input": self.user_input,
-            "retrieved_contexts": self.retrieved_contexts,
-            "response": self.response,
-            "reference": self.reference,
+            "input": self.input,
+            "retrieval_context": self.retrieval_context,
+            "actual_output": self.actual_output,
+            "expected_output": self.expected_output,
         }
 
 

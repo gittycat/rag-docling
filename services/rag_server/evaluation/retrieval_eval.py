@@ -19,9 +19,9 @@ class RetrievalEvaluator:
         }
 
         for sample in samples:
-            data_dict["user_input"].append(sample.user_input)
-            data_dict["retrieved_contexts"].append(sample.retrieved_contexts)
-            data_dict["reference"].append(sample.reference or "")
+            data_dict["user_input"].append(sample.input)
+            data_dict["retrieved_contexts"].append(sample.retrieval_context)
+            data_dict["reference"].append(sample.expected_output or "")
 
         return Dataset.from_dict(data_dict)
 
@@ -58,9 +58,9 @@ def calculate_hit_rate(samples: list[EvaluationSample], k: int = 10) -> float:
 
     hits = 0
     for sample in samples:
-        if sample.reference:
-            top_k_contexts = sample.retrieved_contexts[:k]
-            if any(sample.reference.lower() in context.lower() for context in top_k_contexts):
+        if sample.expected_output:
+            top_k_contexts = sample.retrieval_context[:k]
+            if any(sample.expected_output.lower() in context.lower() for context in top_k_contexts):
                 hits += 1
 
     return hits / len(samples)
@@ -72,9 +72,9 @@ def calculate_mrr(samples: list[EvaluationSample]) -> float:
 
     reciprocal_ranks = []
     for sample in samples:
-        if sample.reference:
-            for idx, context in enumerate(sample.retrieved_contexts, start=1):
-                if sample.reference.lower() in context.lower():
+        if sample.expected_output:
+            for idx, context in enumerate(sample.retrieval_context, start=1):
+                if sample.expected_output.lower() in context.lower():
                     reciprocal_ranks.append(1 / idx)
                     break
             else:

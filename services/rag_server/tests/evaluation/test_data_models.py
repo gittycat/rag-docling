@@ -4,42 +4,42 @@ from evaluation.data_models import EvaluationSample, RetrievalEvaluationResult, 
 
 def test_evaluation_sample_creation():
     sample = EvaluationSample(
-        user_input="What is Python?",
-        retrieved_contexts=["Python is a programming language", "Created by Guido van Rossum"],
-        response="Python is a high-level programming language",
-        reference="Python is a programming language created by Guido van Rossum"
+        input="What is Python?",
+        retrieval_context=["Python is a programming language", "Created by Guido van Rossum"],
+        actual_output="Python is a high-level programming language",
+        expected_output="Python is a programming language created by Guido van Rossum"
     )
 
-    assert sample.user_input == "What is Python?"
-    assert len(sample.retrieved_contexts) == 2
-    assert sample.response != ""
-    assert sample.reference is not None
+    assert sample.input == "What is Python?"
+    assert len(sample.retrieval_context) == 2
+    assert sample.actual_output != ""
+    assert sample.expected_output is not None
 
 
-def test_evaluation_sample_to_ragas_dict():
+def test_evaluation_sample_to_eval_dict():
     sample = EvaluationSample(
-        user_input="Test question",
-        retrieved_contexts=["context1", "context2"],
-        response="test response",
-        reference="test reference"
+        input="Test question",
+        retrieval_context=["context1", "context2"],
+        actual_output="test response",
+        expected_output="test reference"
     )
 
-    ragas_dict = sample.to_ragas_dict()
+    eval_dict = sample.to_eval_dict()
 
-    assert ragas_dict["user_input"] == "Test question"
-    assert ragas_dict["retrieved_contexts"] == ["context1", "context2"]
-    assert ragas_dict["response"] == "test response"
-    assert ragas_dict["reference"] == "test reference"
+    assert eval_dict["input"] == "Test question"
+    assert eval_dict["retrieval_context"] == ["context1", "context2"]
+    assert eval_dict["actual_output"] == "test response"
+    assert eval_dict["expected_output"] == "test reference"
 
 
 def test_evaluation_sample_without_reference():
     sample = EvaluationSample(
-        user_input="Test question",
-        retrieved_contexts=["context1"],
+        input="Test question",
+        retrieval_context=["context1"],
     )
 
-    assert sample.reference is None
-    assert sample.response == ""
+    assert sample.expected_output is None
+    assert sample.actual_output == ""
 
 
 def test_retrieval_evaluation_result():

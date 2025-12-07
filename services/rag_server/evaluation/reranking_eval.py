@@ -27,12 +27,12 @@ class RerankingEvaluator:
         valid_samples = 0
 
         for sample in samples:
-            if sample.reference and sample.retrieved_contexts:
-                top_k = sample.retrieved_contexts[:k]
+            if sample.expected_output and sample.retrieval_context:
+                top_k = sample.retrieval_context[:k]
                 relevant_in_top_k = sum(
                     1
                     for ctx in top_k
-                    if sample.reference and sample.reference.lower() in ctx.lower()
+                    if sample.expected_output and sample.expected_output.lower() in ctx.lower()
                 )
                 total_precision += relevant_in_top_k / k
                 valid_samples += 1
@@ -46,12 +46,12 @@ class RerankingEvaluator:
         ndcg_scores = []
 
         for sample in samples:
-            if not sample.reference or not sample.retrieved_contexts:
+            if not sample.expected_output or not sample.retrieval_context:
                 continue
 
             relevances = [
-                1 if sample.reference.lower() in ctx.lower() else 0
-                for ctx in sample.retrieved_contexts[:k]
+                1 if sample.expected_output.lower() in ctx.lower() else 0
+                for ctx in sample.retrieval_context[:k]
             ]
 
             dcg = sum(

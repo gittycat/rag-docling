@@ -7,22 +7,22 @@ from evaluation.data_models import EvaluationSample
 def samples_with_hits():
     return [
         EvaluationSample(
-            user_input="What is Python?",
-            retrieved_contexts=[
+            input="What is Python?",
+            retrieval_context=[
                 "Python is a programming language",
                 "Python was created by Guido van Rossum",
                 "Python is used for web development",
             ],
-            reference="Python is a programming language",
+            expected_output="Python is a programming language",
         ),
         EvaluationSample(
-            user_input="What is Java?",
-            retrieved_contexts=[
+            input="What is Java?",
+            retrieval_context=[
                 "Java is an island",
                 "Java is a programming language",
                 "Java is object-oriented",
             ],
-            reference="Java is a programming language",
+            expected_output="Java is a programming language",
         ),
     ]
 
@@ -31,12 +31,12 @@ def samples_with_hits():
 def samples_with_misses():
     return [
         EvaluationSample(
-            user_input="What is Rust?",
-            retrieved_contexts=[
+            input="What is Rust?",
+            retrieval_context=[
                 "Rust is a metal oxide",
                 "Rust forms when iron oxidizes",
             ],
-            reference="Rust is a programming language",
+            expected_output="Rust is a programming language",
         ),
     ]
 
@@ -82,17 +82,17 @@ def test_calculate_mrr_with_misses(samples_with_misses):
 def test_calculate_mrr_position_matters():
     samples_pos1 = [
         EvaluationSample(
-            user_input="Test",
-            retrieved_contexts=["This is the correct answer", "This is wrong"],
-            reference="correct answer",
+            input="Test",
+            retrieval_context=["This is the correct answer", "This is wrong"],
+            expected_output="correct answer",
         )
     ]
 
     samples_pos2 = [
         EvaluationSample(
-            user_input="Test",
-            retrieved_contexts=["This is wrong", "This is the correct answer"],
-            reference="correct answer",
+            input="Test",
+            retrieval_context=["This is wrong", "This is the correct answer"],
+            expected_output="correct answer",
         )
     ]
 
@@ -112,9 +112,9 @@ def test_calculate_mrr_empty_samples():
 def test_calculate_hit_rate_no_reference():
     samples = [
         EvaluationSample(
-            user_input="Test",
-            retrieved_contexts=["context"],
-            reference=None,
+            input="Test",
+            retrieval_context=["context"],
+            expected_output=None,
         )
     ]
 

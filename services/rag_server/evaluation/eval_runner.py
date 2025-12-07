@@ -4,67 +4,95 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evaluation.dataset_loader import load_default_dataset
 from evaluation.data_models import EvaluationSample
-from evaluation.end_to_end_eval import EndToEndEvaluator
-from evaluation.ragas_config import create_default_ragas_config
-from evaluation.report_generator import EvaluationReportGenerator
-from pathlib import Path
+import requests
+import os
 import json
 
 
-def create_mock_samples_from_golden_qa() -> list[EvaluationSample]:
+def query_rag_server(question: str, session_id: str) -> dict:
+    """Call the RAG server /query endpoint"""
+    rag_server_url = os.getenv("RAG_SERVER_URL", "http://localhost:8001")
+
+    response = requests.post(
+        f"{rag_server_url}/query",
+        json={"query": question, "session_id": session_id},
+        timeout=60
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def create_evaluation_samples_from_rag(limit: int | None = None) -> list[EvaluationSample]:
+    """Query the RAG server and create evaluation samples from real responses"""
     golden_qa = load_default_dataset()
 
+    if limit:
+        golden_qa = golden_qa[:limit]
+
     samples = []
-    for qa in golden_qa[:3]:
-        sample = EvaluationSample(
-            user_input=qa.question,
-            retrieved_contexts=[
-                f"Mock context for {qa.question}. {qa.context_hint or ''}",
-                "Additional mock context that might be less relevant.",
-            ],
-            response=f"Mock response: {qa.answer[:50]}...",
-            reference=qa.answer,
-        )
-        samples.append(sample)
+    session_id = "eval_session"
+
+    for idx, qa in enumerate(golden_qa):
+        print(f"Querying RAG server ({idx+1}/{len(golden_qa)}): {qa.question[:60]}...")
+
+        try:
+            result = query_rag_server(qa.question, session_id)
+
+            # Extract full_text from sources for retrieval_context
+            retrieval_context = [
+                source['full_text']
+                for source in result.get('sources', [])
+            ]
+
+            sample = EvaluationSample(
+                input=qa.question,
+                retrieval_context=retrieval_context,
+                actual_output=result['answer'],
+                expected_output=qa.answer,
+            )
+            samples.append(sample)
+
+        except Exception as e:
+            print(f"  ⚠ Error querying RAG server: {e}")
+            continue
 
     return samples
 
 
 def run_evaluation():
+    """Run end-to-end RAG evaluation using real queries"""
+    print("=" * 80)
+    print("RAG Evaluation Runner (Phase 1 - Data Collection)")
+    print("=" * 80)
+    print()
+
     print("Loading golden Q&A dataset...")
     golden_qa = load_default_dataset()
     print(f"Loaded {len(golden_qa)} Q&A pairs\n")
 
-    print("Creating mock evaluation samples...")
-    samples = create_mock_samples_from_golden_qa()
-    print(f"Created {len(samples)} samples\n")
+    print("Querying RAG server to collect evaluation samples...")
+    print("(This will make real queries to the RAG system)\n")
 
-    print("Initializing evaluator with Ollama configuration...")
-    config = create_default_ragas_config()
-    evaluator = EndToEndEvaluator(config)
+    samples = create_evaluation_samples_from_rag(limit=3)  # Start with 3 for testing
 
-    print("Running evaluation (this may take several minutes)...")
-    try:
-        result = evaluator.evaluate(samples, include_correctness=True)
-
-        report_gen = EvaluationReportGenerator(
-            output_dir=Path(__file__).parent.parent / "eval_data"
-        )
-
-        print("\n" + report_gen.generate_text_report(result))
-
-        report_path = report_gen.save_report(result)
-        json_path = report_gen.save_json_results(result)
-
-        print(f"\nText report saved to: {report_path}")
-        print(f"JSON results saved to: {json_path}")
-
-    except Exception as e:
-        print(f"\n❌ Evaluation failed: {e}")
-        import traceback
-
-        traceback.print_exc()
+    if not samples:
+        print("\n❌ No samples collected. Ensure RAG server is running.")
         sys.exit(1)
+
+    print(f"\n✓ Collected {len(samples)} evaluation samples")
+
+    # Save samples for inspection
+    output_dir = Path(__file__).parent.parent / "eval_data"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    samples_path = output_dir / "evaluation_samples.json"
+    with open(samples_path, "w") as f:
+        json.dump([s.model_dump() for s in samples], f, indent=2)
+
+    print(f"✓ Samples saved to: {samples_path}")
+    print()
+    print("Phase 1 complete. Samples ready for DeepEval evaluation.")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
