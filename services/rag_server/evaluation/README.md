@@ -1,261 +1,251 @@
-# RAG Evaluation with RAGAS
+# DeepEval RAG Evaluation - Quick Start
 
-This module provides comprehensive evaluation capabilities for the RAG pipeline using the RAGAS framework configured to use local Ollama models.
+This guide shows you how to use DeepEval for RAG evaluation.
 
-## Setup
+## Prerequisites
 
-Install evaluation dependencies:
+1. **RAG Server Running**:
+   ```bash
+   docker compose up -d
+   ```
+
+2. **Anthropic API Key**:
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+3. **Install Dependencies**:
+   ```bash
+   cd services/rag_server
+   uv sync --group eval
+   ```
+
+## Quick Start (30 seconds)
 
 ```bash
+# 1. Check dataset
+.venv/bin/python -m evaluation.cli stats
+
+# 2. Run quick evaluation (5 test cases)
+.venv/bin/python -m evaluation.cli eval --samples 5
+
+# 3. View results (DeepEval displays detailed output)
+```
+
+## Common Tasks
+
+### View Dataset Statistics
+
+```bash
+.venv/bin/python -m evaluation.cli stats
+```
+
+Output:
+```
+📊 Golden Dataset Statistics
+============================================================
+Total Q&A pairs: 10
+
+By Query Type:
+  factual        :   8 (80.0%)
+  reasoning      :   2 (20.0%)
+
+By Document:
+  conformism.html          :   5
+  greatwork.html           :   1
+  talk.html                :   4
+```
+
+### Run Evaluation
+
+```bash
+# Quick test (5 samples)
+.venv/bin/python -m evaluation.cli eval --samples 5
+
+# Full evaluation
+.venv/bin/python -m evaluation.cli eval
+
+# With custom server URL
+.venv/bin/python -m evaluation.cli eval --server-url http://localhost:8001
+```
+
+### Generate Q&A Pairs
+
+```bash
+# From a single document
+.venv/bin/python -m evaluation.cli generate document.txt -n 10 -o generated.json
+
+# From a directory
+.venv/bin/python -m evaluation.cli generate documents/ -n 5 --pattern "*.html"
+
+# Merge with existing dataset
+.venv/bin/python -m evaluation.cli generate documents/ --merge
+```
+
+### Run Pytest Tests
+
+```bash
+# Run evaluation tests
+pytest tests/test_rag_eval.py --run-eval
+
+# Quick test (5 samples)
+pytest tests/test_rag_eval.py --run-eval --eval-samples=5
+
+# Run specific metric
+pytest tests/test_rag_eval.py::test_rag_faithfulness --run-eval
+```
+
+## Python API
+
+### Basic Evaluation
+
+```python
+from evaluation.live_eval import run_live_evaluation_sync
+from evaluation.dataset_loader import load_golden_dataset
+
+# Load dataset
+dataset = load_golden_dataset(limit=5)
+
+# Run evaluation
+results = run_live_evaluation_sync(
+    dataset=dataset,
+    include_reason=True,  # Get explanations for scores
+    verbose=True
+)
+```
+
+### Custom Metrics
+
+```python
+from evaluation.metrics import get_rag_metrics, get_retrieval_metrics
+from evaluation.deepeval_config import get_default_evaluator
+from deepeval import evaluate
+
+# Get all RAG metrics
+metrics = get_rag_metrics()
+
+# Or get only retrieval metrics (faster, cheaper)
+retrieval_metrics = get_retrieval_metrics()
+
+# Custom thresholds
+custom_metrics = get_rag_metrics(
+    thresholds={
+        "faithfulness": 0.8,
+        "answer_relevancy": 0.85,
+    }
+)
+
+# Run evaluation
+results = evaluate(test_cases, metrics)
+```
+
+### Create Test Cases
+
+```python
+from evaluation.test_cases import create_test_case
+
+test_case = create_test_case(
+    question="What is Python?",
+    actual_output="Python is a high-level programming language.",
+    expected_output="Python is a programming language.",
+    retrieval_context=["Python is a programming language created by Guido van Rossum."],
+    tags=["factual", "easy"]
+)
+```
+
+## Metrics Explained
+
+### Retrieval Quality
+
+- **Contextual Precision**: Are retrieved chunks ranked correctly?
+- **Contextual Recall**: Did we retrieve all necessary information?
+
+### Generation Quality
+
+- **Faithfulness**: Is the answer grounded in the retrieved context?
+- **Answer Relevancy**: Does the answer directly address the question?
+
+### Safety
+
+- **Hallucination**: Does the answer contain information not in the context?
+
+## Environment Variables
+
+```bash
+# Required for evaluation
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional: Override default model (defaults to claude-sonnet-4-20250514)
+export EVAL_MODEL=claude-sonnet-4-20250514
+
+# Optional: RAG server URL (defaults to http://localhost:8001)
+export RAG_SERVER_URL=http://localhost:8001
+```
+
+## Troubleshooting
+
+### "RAG server not responding"
+
+```bash
+# Check if server is running
+docker compose ps
+
+# Start server
+docker compose up -d
+
+# Check health
+curl http://localhost:8001/health
+```
+
+### "ANTHROPIC_API_KEY not set"
+
+```bash
+# Set API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Or add to .env file (if using direnv/dotenv)
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+```
+
+### "No test cases created"
+
+- Ensure RAG server has documents indexed
+- Check that golden dataset exists: `eval_data/golden_qa.json`
+- Verify dataset loads: `.venv/bin/python -m evaluation.cli stats`
+
+### Import errors
+
+```bash
+# Reinstall dependencies
 cd services/rag_server
 uv sync --group eval
 ```
 
-## Quick Start
-
-Run a simple evaluation with mock data:
+## CLI Help
 
 ```bash
-.venv/bin/python evaluation/eval_runner.py
+# Main help
+.venv/bin/python -m evaluation.cli --help
+
+# Command-specific help
+.venv/bin/python -m evaluation.cli eval --help
+.venv/bin/python -m evaluation.cli generate --help
 ```
 
-## Components
+## Cost Management
 
-### 1. Configuration (`ragas_config.py`)
+- **Quick tests**: Use `--samples 5` to limit API calls
+- **Skip explanations**: Use `--no-reason` for faster (cheaper) evaluation
+- **Batch generation**: Generate Q&A in batches to reduce API costs
 
-Configures RAGAS to use Ollama models instead of OpenAI:
+## Next Steps
 
-```python
-from evaluation.ragas_config import create_default_ragas_config
+1. Review [Implementation Summary](../../../docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md)
+2. Set up CI/CD for automated evaluation
+3. Expand golden dataset to 100+ Q&A pairs
 
-config = create_default_ragas_config()
-# Uses gemma3:4b for LLM judge and qwen3-embedding:8b for embeddings
-```
+## Support
 
-### 2. Retrieval Evaluation (`retrieval_eval.py`)
-
-Evaluates retrieval quality with:
-- **Context Precision**: Signal-to-noise ratio of retrieved context
-- **Context Recall**: Completeness of retrieved information
-- **Hit Rate@K**: Percentage of queries with at least one relevant result in top-K
-- **MRR**: Mean Reciprocal Rank of first relevant result
-
-```python
-from evaluation.retrieval_eval import RetrievalEvaluator
-from evaluation.data_models import EvaluationSample
-
-samples = [
-    EvaluationSample(
-        user_input="What are the three qualities for great work?",
-        retrieved_contexts=["context 1", "context 2"],
-        reference="natural aptitude, deep interest, and scope"
-    )
-]
-
-evaluator = RetrievalEvaluator(config)
-result = evaluator.evaluate(samples)
-print(f"Context Precision: {result.context_precision}")
-```
-
-### 3. Reranking Evaluation (`reranking_eval.py`)
-
-Compares retrieval quality before and after reranking:
-
-```python
-from evaluation.reranking_eval import RerankingEvaluator
-
-evaluator = RerankingEvaluator()
-comparison = evaluator.compare_reranking(
-    samples_before_rerank,
-    samples_after_rerank
-)
-print(f"Precision@1 improvement: {comparison.precision_improvement:.1f}%")
-print(f"NDCG improvement: {comparison.ndcg_improvement:.1f}%")
-```
-
-### 4. Generation Evaluation (`generation_eval.py`)
-
-Evaluates answer quality with:
-- **Faithfulness**: Factual accuracy (no hallucinations)
-- **Answer Relevancy**: How well the answer addresses the question
-- **Answer Correctness**: Semantic similarity to ground truth (requires reference answer)
-
-```python
-from evaluation.generation_eval import GenerationEvaluator
-
-samples = [
-    EvaluationSample(
-        user_input="What is the trick for getting more people to read?",
-        retrieved_contexts=["Write in spoken language..."],
-        response="The trick is to write in spoken language.",
-        reference="Write in spoken language."
-    )
-]
-
-evaluator = GenerationEvaluator(config)
-result = evaluator.evaluate(samples, include_correctness=True)
-print(f"Faithfulness: {result.faithfulness}")
-print(f"Answer Relevancy: {result.answer_relevancy}")
-```
-
-### 5. End-to-End Evaluation (`end_to_end_eval.py`)
-
-Combines all metrics for comprehensive evaluation:
-
-```python
-from evaluation.end_to_end_eval import EndToEndEvaluator
-
-evaluator = EndToEndEvaluator()
-result = evaluator.evaluate(samples)
-
-print(f"Overall Score: {result.overall_score}")
-print(f"Context Precision: {result.retrieval.context_precision}")
-print(f"Faithfulness: {result.generation.faithfulness}")
-```
-
-## Dataset Format
-
-The golden Q&A dataset (`eval_data/golden_qa.json`) format:
-
-```json
-[
-  {
-    "question": "What are the three qualities for great work?",
-    "answer": "Natural aptitude, deep interest, and scope to do great work.",
-    "document": "greatwork.html",
-    "context_hint": "The essay discusses the first step",
-    "query_type": "factual"
-  }
-]
-```
-
-## Evaluation Data Model
-
-```python
-from evaluation.data_models import EvaluationSample
-
-sample = EvaluationSample(
-    user_input="The question",          # Required
-    retrieved_contexts=["ctx1", "ctx2"], # Required
-    response="The answer",               # Optional, needed for generation metrics
-    reference="Ground truth answer"      # Optional, needed for recall and correctness
-)
-```
-
-## Integration with RAG Pipeline
-
-To evaluate your actual RAG pipeline:
-
-1. **Run queries through your RAG system** to get retrieved contexts and generated answers
-2. **Create EvaluationSample objects** from the results
-3. **Run evaluation** with the appropriate evaluator
-
-Example integration:
-
-```python
-from core_logic.rag_pipeline import query_with_rag
-from evaluation.data_models import EvaluationSample
-from evaluation.end_to_end_eval import EndToEndEvaluator
-from evaluation.dataset_loader import load_default_dataset
-
-# Load test questions
-golden_qa = load_default_dataset()
-
-# Run RAG pipeline for each question
-samples = []
-for qa in golden_qa:
-    response = query_with_rag(qa.question)
-
-    sample = EvaluationSample(
-        user_input=qa.question,
-        retrieved_contexts=[node.text for node in response.source_nodes],
-        response=response.response,
-        reference=qa.answer
-    )
-    samples.append(sample)
-
-# Evaluate
-evaluator = EndToEndEvaluator()
-result = evaluator.evaluate(samples)
-print(f"Overall Score: {result.overall_score}")
-```
-
-## Known Limitations
-
-### Ollama Integration Challenges
-
-RAGAS + Ollama integration has some known issues (as of 2025):
-
-1. **Timeouts**: Evaluation may timeout on large datasets or slow models
-2. **Context Windows**: Some models have limited context windows affecting evaluation
-3. **Performance**: Local LLM evaluation is slower than cloud APIs
-
-**Workarounds**:
-- Use smaller, faster models (gemma3:4b recommended over llama3:70b)
-- Increase timeout in `RagasOllamaConfig` (default: 300s)
-- Evaluate in smaller batches (5-10 samples at a time)
-- Consider hybrid approach: Use Ollama for embeddings, cloud API for LLM judge
-
-### Model Requirements
-
-Ensure Ollama models are downloaded:
-
-```bash
-ollama pull gemma3:4b              # LLM judge
-ollama pull qwen3-embedding:8b     # Embeddings
-```
-
-## Baseline Targets
-
-Expected performance targets for a well-functioning RAG system:
-
-| Metric              | Target | Good  | Excellent |
-|---------------------|--------|-------|-----------|
-| Context Precision   | >0.85  | >0.90 | >0.95     |
-| Context Recall      | >0.90  | >0.95 | >0.98     |
-| Faithfulness        | >0.90  | >0.95 | >0.98     |
-| Answer Relevancy    | >0.85  | >0.90 | >0.95     |
-| Hit Rate@10         | >0.95  | >0.98 | >0.99     |
-
-**Reranking improvement targets**:
-- Precision@1 increase: >15%
-- NDCG increase: >10%
-
-## Troubleshooting
-
-**ImportError for langchain_ollama**:
-```bash
-uv sync --group eval
-```
-
-**Timeout errors**:
-```python
-config = RagasOllamaConfig(request_timeout=600.0)  # Increase timeout
-```
-
-**"No module named 'evaluation'"**:
-```bash
-# Use .venv/bin/python directly instead of uv run
-.venv/bin/python evaluation/eval_runner.py
-```
-
-**Ollama connection refused**:
-```bash
-# Check Ollama is running
-ollama list
-
-# Verify URL in config
-export OLLAMA_URL="http://localhost:11434"
-```
-
-## Running Tests
-
-```bash
-.venv/bin/pytest tests/evaluation/ -v
-```
-
-## References
-
-- [RAGAS Documentation](https://docs.ragas.io/)
-- [RAGAS GitHub](https://github.com/explodinggradients/ragas)
-- [LlamaIndex + RAGAS Integration](https://docs.ragas.io/en/stable/howtos/integrations/_llamaindex/)
+- DeepEval Docs: https://docs.confident-ai.com/
+- Anthropic API: https://docs.anthropic.com/
+- Issue tracker: See project README

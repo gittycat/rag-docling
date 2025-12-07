@@ -1,5 +1,5 @@
 import pytest
-from evaluation.retrieval_eval import calculate_hit_rate, calculate_mrr
+from evaluation.reranking_eval import calculate_hit_rate, calculate_mrr
 from evaluation.data_models import EvaluationSample
 
 

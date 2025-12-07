@@ -268,7 +268,7 @@ docker compose -f docker-compose.ci.yml down
 - `services/rag_server/tasks.py`: Celery tasks (process_document_task)
 
 **Evaluation:**
-- `services/rag_server/evaluation/`: RAGAS-based evaluation system
+- `services/rag_server/evaluation/`: DeepEval-based evaluation system
 - `services/rag_server/eval_data/golden_qa.json`: Test Q&A dataset (10 pairs)
 
 **Backup & Maintenance:**
@@ -333,7 +333,7 @@ For comprehensive guides on specific topics, see:
 - **[Performance Optimizations Summary](docs/PERFORMANCE_OPTIMIZATIONS_SUMMARY.md)** - Recent optimizations: contextual retrieval toggle, keep-alive (15x speedup)
 - **[Performance Analysis](docs/PERFORMANCE_ANALYSIS.md)** - Document processing bottlenecks, timing breakdown, optimization opportunities
 - **[Ollama Optimization Guide](docs/OLLAMA_OPTIMIZATION.md)** - Keep-alive settings, KV cache quantization, prompt caching investigation
-- **[Evaluation System](docs/evaluation/EVALUATION_SYSTEM.md)** - RAGAS metrics, evaluation workflow, best practices
+- **[DeepEval Implementation](docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md)** - DeepEval metrics, evaluation workflow, best practices
 - **[Troubleshooting History](docs/troubleshooting/)** - Historical issues and fixes
 - **[Accuracy Improvement Plan](docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md)** - Future optimizations and plans
 - **[Phase 1 Implementation Summary](docs/PHASE1_IMPLEMENTATION_SUMMARY.md)** - Completed critical fixes (Redis chat store, backups, reranker cleanup)

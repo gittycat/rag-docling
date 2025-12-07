@@ -1,6 +1,6 @@
 """Report generation for RAG evaluation results.
 
-Supports both RAGAS-based (legacy) and DeepEval-based evaluation reports.
+Supports DeepEval-based evaluation reports.
 """
 
 import json

@@ -741,8 +741,7 @@ pytest tests/test_rag_eval.py --run-eval --eval-samples=5
 
 **Documentation:**
 - [DeepEval Implementation Summary](docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md)
-- [Quick Start Guide](services/rag_server/evaluation/README_DEEPEVAL.md)
-- [Full Implementation Plan](docs/RAG_EVALUATION_IMPLEMENTATION_PLAN.md)
+- [Quick Start Guide](services/rag_server/evaluation/README.md)
 
 ### Unit & Integration Tests
 

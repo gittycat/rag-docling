@@ -467,71 +467,29 @@ fusion_retriever = QueryFusionRetriever(
 
 ## 📊 EVALUATION IMPROVEMENTS
 
-### 13. **Add DeepEval (Keep RAGAS)** ⭐⭐
+### 13. **DeepEval Migration** ✅ COMPLETED
 
-**Adoption Status**: FAST GROWING
-- **400K+ monthly downloads** (confirmed)
-- 20M+ evaluations run
-- Strong community, active development
+**Status**: COMPLETED (2025-12-07)
 
-**Research Evidence - RAGAS Limitations**:
-- Component-separation issues (hard to debug which part failed)
-- NaN value problems (model output not JSON-parsable)
-- "Limited features and inflexibility" (2025 comparison articles)
-- Metrics not self-explaining (doesn't tell you why score is low)
+Successfully migrated from RAGAS to DeepEval - the 2025 community-recommended framework for production RAG evaluation.
 
-**DeepEval Advantages** (2025 comparisons):
-- **14+ metrics**: Faithfulness, Answer Relevancy, Contextual Precision, Contextual Recall, Hallucination, Toxicity, Bias, etc.
+**DeepEval Features** (now in use):
+- **14+ metrics**: Faithfulness, Answer Relevancy, Contextual Precision, Contextual Recall, Hallucination, etc.
 - **Self-explaining**: Metrics tell you WHY score is low (actionable feedback)
 - **Pytest integration**: Treats evaluations like unit tests
 - **CI/CD ready**: Easy to integrate into deployment pipeline
-- **Confident AI platform**: Optional cloud dashboard for team collaboration
+- **Anthropic Claude**: Uses Claude as LLM judge (cost-effective)
 
-**Implementation Strategy**: Add DeepEval alongside RAGAS (not replacement)
+**Implementation**:
+- See [DeepEval Implementation Summary](DEEPEVAL_IMPLEMENTATION_SUMMARY.md)
+- CLI: `.venv/bin/python -m evaluation.cli eval --samples 5`
+- Pytest: `pytest tests/test_rag_eval.py --run-eval`
 
-```python
-# Install
-# pyproject.toml
-eval = [
-    "ragas>=0.3.5",
-    "langchain-ollama>=0.3.10",
-    "deepeval>=1.0.0",  # Add this
-]
-
-# New file: services/rag_server/evaluation/deepeval_config.py
-from deepeval.test_case import LLMTestCase
-from deepeval.metrics import FaithfulnessMetric, AnswerRelevancyMetric
-from deepeval import evaluate
-
-def run_deepeval(samples):
-    test_cases = [
-        LLMTestCase(
-            input=s.user_input,
-            actual_output=s.response,
-            retrieval_context=s.retrieved_contexts,
-            expected_output=s.reference
-        )
-        for s in samples
-    ]
-
-    metrics = [
-        FaithfulnessMetric(threshold=0.7),
-        AnswerRelevancyMetric(threshold=0.7)
-    ]
-
-    results = evaluate(test_cases, metrics)
-    return results
-```
-
-**Expected Impact**:
+**Impact Achieved**:
 - Faster debugging (self-explaining metrics)
 - Component-level failure analysis
 - Better CI/CD integration
-- A/B comparison with RAGAS (validate metrics)
-
-**Implementation Effort**: 1-2 days (new evaluation module)
-
-**Risk**: LOW (additive change, keeps RAGAS for continuity)
+- Cleaner codebase (RAGAS dependencies removed)
 
 ---
 
@@ -750,11 +708,11 @@ def run_deepeval(samples):
 ### Phase 4: Evaluation & Monitoring (Week 7-8)
 **Goal**: Reliable regression detection, continuous improvement
 
-8. **Add DeepEval framework** ⭐⭐
-   - File: `services/rag_server/evaluation/deepeval_config.py` (new)
-   - Action: Implement DeepEval alongside RAGAS
-   - Effort: 1-2 days
-   - Impact: Faster debugging, actionable metrics
+8. **Add DeepEval framework** ✅ COMPLETED
+   - File: `services/rag_server/evaluation/deepeval_config.py`
+   - Action: Migrated from RAGAS to DeepEval (2025-12-07)
+   - Effort: Completed
+   - Impact: Faster debugging, actionable metrics, cleaner codebase
 
 9. **Expand golden QA dataset to 50+ pairs** ⭐
    - File: `services/rag_server/eval_data/golden_qa.json`
@@ -862,7 +820,7 @@ def run_deepeval(samples):
 
 ### Phase 4 (Weeks 7-8)
 - [ ] 50+ golden QA pairs covering diverse cases
-- [ ] DeepEval + RAGAS both running in CI
+- [x] DeepEval running in CI (RAGAS replaced 2025-12-07)
 - [ ] Production monitoring dashboards operational
 
 ---

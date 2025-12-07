@@ -1,7 +1,39 @@
 from .data_models import EvaluationSample
-from .retrieval_eval import calculate_hit_rate
 from pydantic import BaseModel
 import math
+
+
+def calculate_hit_rate(samples: list[EvaluationSample], k: int = 10) -> float:
+    """Calculate Hit Rate@K: percentage of queries with at least one relevant result in top-K."""
+    if not samples:
+        return 0.0
+
+    hits = 0
+    for sample in samples:
+        if sample.expected_output:
+            top_k_contexts = sample.retrieval_context[:k]
+            if any(sample.expected_output.lower() in context.lower() for context in top_k_contexts):
+                hits += 1
+
+    return hits / len(samples)
+
+
+def calculate_mrr(samples: list[EvaluationSample]) -> float:
+    """Calculate Mean Reciprocal Rank: average of 1/position of first relevant result."""
+    if not samples:
+        return 0.0
+
+    reciprocal_ranks = []
+    for sample in samples:
+        if sample.expected_output:
+            for idx, context in enumerate(sample.retrieval_context, start=1):
+                if sample.expected_output.lower() in context.lower():
+                    reciprocal_ranks.append(1 / idx)
+                    break
+            else:
+                reciprocal_ranks.append(0.0)
+
+    return sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0.0
 
 
 class RerankingComparison(BaseModel):
