@@ -109,12 +109,26 @@ uv sync
 
 ### Evaluation
 
-See [docs/evaluation/EVALUATION_SYSTEM.md](docs/evaluation/EVALUATION_SYSTEM.md) for complete evaluation guide.
+**Framework:** DeepEval with Anthropic Claude (migrated from RAGAS on 2025-12-07)
+
+See [docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md](docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md) for complete guide.
 
 ```bash
 cd services/rag_server
 uv sync --group eval
-.venv/bin/python evaluation/eval_runner.py
+
+# Quick evaluation (5 test cases)
+export ANTHROPIC_API_KEY=sk-ant-...
+.venv/bin/python -m evaluation.cli eval --samples 5
+
+# Full evaluation
+.venv/bin/python -m evaluation.cli eval
+
+# Show dataset stats
+.venv/bin/python -m evaluation.cli stats
+
+# Pytest integration
+pytest tests/test_rag_eval.py --run-eval --eval-samples=5
 ```
 
 ## Critical Implementation Details

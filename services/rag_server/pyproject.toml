@@ -34,8 +34,8 @@ dev = [
     "pytest-cov>=6.0.0",
 ]
 eval = [
-    "ragas>=0.3.6",
-    "langchain-ollama>=0.3.10",
+    "deepeval>=3.6.9",
+    "anthropic>=0.75.0",
 ]
 
 [build-system]
@@ -48,3 +48,7 @@ packages = ["."]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "eval: RAG evaluation tests (require --run-eval flag and ANTHROPIC_API_KEY)",
+]
+addopts = "--strict-markers"

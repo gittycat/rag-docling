@@ -1,6 +1,12 @@
+"""Report generation for RAG evaluation results.
+
+Supports both RAGAS-based (legacy) and DeepEval-based evaluation reports.
+"""
+
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Any
 from .data_models import EndToEndEvaluationResult, RetrievalEvaluationResult, GenerationEvaluationResult
 from .reranking_eval import RerankingComparison
 
@@ -151,3 +157,121 @@ class EvaluationReportGenerator:
             return "⚠ Minimal"
         else:
             return "✗ None/Negative"
+
+    def generate_deepeval_report(
+        self,
+        results: Any,  # DeepEval results object
+        title: str = "DeepEval RAG Evaluation Report",
+    ) -> str:
+        """Generate text report from DeepEval evaluation results.
+
+        Args:
+            results: DeepEval evaluation results
+            title: Report title
+
+        Returns:
+            Formatted text report
+        """
+        report_lines = []
+        report_lines.append("=" * 80)
+        report_lines.append(f"{title}")
+        report_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append(f"Framework: DeepEval with Anthropic Claude")
+        report_lines.append("=" * 80)
+        report_lines.append("")
+
+        # DeepEval results may have test_results attribute
+        if hasattr(results, "test_results"):
+            test_results = results.test_results
+            total_tests = len(test_results)
+            passed_tests = sum(1 for tr in test_results if hasattr(tr, "success") and tr.success)
+
+            report_lines.append("OVERALL RESULTS")
+            report_lines.append("-" * 80)
+            report_lines.append(f"  Total Test Cases:      {total_tests}")
+            report_lines.append(f"  Passed:                {passed_tests} ({passed_tests/total_tests*100:.1f}%)")
+            report_lines.append(f"  Failed:                {total_tests - passed_tests}")
+            report_lines.append("")
+
+        # Metric scores (if available)
+        report_lines.append("METRICS SUMMARY")
+        report_lines.append("-" * 80)
+
+        # Try to extract metric scores
+        if hasattr(results, "metrics_data"):
+            for metric_name, metric_data in results.metrics_data.items():
+                score = metric_data.get("score", "N/A")
+                threshold = metric_data.get("threshold", "N/A")
+                status = "✓" if metric_data.get("passed", False) else "✗"
+                report_lines.append(f"  {metric_name:30s}: {score:.3f} (threshold: {threshold}) {status}")
+        else:
+            report_lines.append("  (Detailed metric breakdown not available)")
+
+        report_lines.append("")
+        report_lines.append("=" * 80)
+
+        return "\n".join(report_lines)
+
+    def save_deepeval_report(
+        self,
+        results: Any,
+        filename: Optional[str] = None,
+    ) -> Path:
+        """Save DeepEval evaluation results as text report.
+
+        Args:
+            results: DeepEval evaluation results
+            filename: Optional output filename
+
+        Returns:
+            Path to saved report
+        """
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"deepeval_report_{timestamp}.txt"
+
+        report_path = self.output_dir / filename
+        report_text = self.generate_deepeval_report(results)
+
+        with open(report_path, "w") as f:
+            f.write(report_text)
+
+        return report_path
+
+    def save_deepeval_json(
+        self,
+        results: Any,
+        filename: Optional[str] = None,
+    ) -> Path:
+        """Save DeepEval results as JSON.
+
+        Args:
+            results: DeepEval evaluation results
+            filename: Optional output filename
+
+        Returns:
+            Path to saved JSON file
+        """
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"deepeval_results_{timestamp}.json"
+
+        json_path = self.output_dir / filename
+
+        # Try to serialize results
+        try:
+            if hasattr(results, "to_dict"):
+                results_dict = results.to_dict()
+            elif hasattr(results, "model_dump"):
+                results_dict = results.model_dump()
+            elif hasattr(results, "__dict__"):
+                results_dict = results.__dict__
+            else:
+                results_dict = {"results": str(results)}
+        except Exception:
+            results_dict = {"results": str(results)}
+
+        with open(json_path, "w") as f:
+            json.dump(results_dict, f, indent=2, default=str)
+
+        return json_path

@@ -198,6 +198,10 @@ Again, this application is run locally. No authentication is used for ChromaDB.
 **Logging:**
 - `LOG_LEVEL`: Logging level (default: `DEBUG` for rag-server, `INFO` for celery-worker)
 
+**Evaluation (DeepEval with Anthropic):**
+- `ANTHROPIC_API_KEY`: Anthropic API key for LLM-as-judge evaluation (required for eval)
+- `EVAL_MODEL`: Claude model for evaluation (default: `claude-sonnet-4-20250514` - cost-effective)
+
 ### Docker Compose Networks
 
 - **public**: RAG server (exposed to host on port 8001)
