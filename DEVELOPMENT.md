@@ -6,6 +6,7 @@ Complete technical reference for developers working on this RAG system. Covers a
 
 - [Architecture](#architecture)
 - [Development Setup](#development-setup)
+- [CI/CD](#cicd)
 - [API Documentation](#api-documentation)
 - [Configuration](#configuration)
 - [Evaluation & Testing](#evaluation--testing)
@@ -152,6 +153,154 @@ cd services/rag_server
 cd services/webapp
 npm run lint
 ```
+
+## CI/CD
+
+### Forgejo Setup
+
+This project uses **Forgejo** - a lightweight, self-hosted Git service with integrated CI/CD (Actions). Forgejo provides GitHub-compatible workflows while keeping everything local.
+
+**Why Forgejo:**
+- Self-hosted (privacy & control)
+- GitHub Actions syntax (95% compatible)
+- Lightweight (~512MB RAM)
+- Integrated CI/CD (no separate tools)
+
+For complete setup instructions, see **[Forgejo CI/CD Setup Guide](docs/FORGEJO_CI_SETUP.md)**.
+
+### Quick Start
+
+```bash
+# 1. Start Forgejo server and runner
+docker compose -f docker-compose.ci.yml up -d
+
+# 2. Access Web UI (first-time setup)
+open http://localhost:3000
+# Complete installation wizard and create admin account
+
+# 3. Register the runner (get token from http://localhost:3000/admin/actions/runners)
+docker exec -it forgejo-runner \
+  forgejo-runner register \
+  --instance http://forgejo:3000 \
+  --token <YOUR_REGISTRATION_TOKEN> \
+  --name docker-runner \
+  --labels docker:docker://node:20,docker:docker://python:3.13
+
+# 4. Restart runner to activate
+docker compose -f docker-compose.ci.yml restart forgejo-runner
+
+# 5. Create repository and push code
+# In Forgejo Web UI: Create new repository "rag-docling"
+git remote add forgejo http://localhost:3000/<username>/rag-docling.git
+git push forgejo main
+```
+
+### CI Pipeline
+
+The CI pipeline (`.forgejo/workflows/ci.yml`) runs automatically on every push and pull request.
+
+**Jobs:**
+
+1. **Core Tests** (always runs)
+   - Duration: ~30 seconds
+   - Tests: 33 unit/integration tests
+   - Command: `pytest tests/ --ignore=tests/evaluation`
+
+2. **Evaluation Tests** (optional, off by default)
+   - Duration: ~2-5 minutes
+   - Tests: 27 DeepEval tests
+   - Requires: `ANTHROPIC_API_KEY` secret
+   - Triggers:
+     - Manual workflow dispatch (Web UI button)
+     - Commit message containing `[eval]`
+
+3. **Docker Build** (always runs)
+   - Duration: ~5-10 minutes
+   - Verifies both `rag-server` and `webapp` images build successfully
+
+### Running Evaluation Tests in CI
+
+Eval tests are **OFF by default** to avoid unnecessary API costs.
+
+**Method 1 - Commit Message Flag:**
+```bash
+git commit -m "feat: improve retrieval [eval]"
+git push forgejo main
+```
+
+**Method 2 - Manual Trigger:**
+1. Go to repository **Actions** tab in Forgejo
+2. Select **CI** workflow
+3. Click **Run workflow**
+4. Check **Run evaluation tests**
+5. Click **Run**
+
+### Configuring Secrets
+
+To run evaluation tests, add your Anthropic API key:
+
+1. Repository **Settings** → **Secrets and Variables** → **Actions**
+2. Click **New secret**
+3. Name: `ANTHROPIC_API_KEY`
+4. Value: `sk-ant-...`
+5. Click **Add secret**
+
+### Viewing CI Results
+
+1. Go to repository in Forgejo
+2. Click **Actions** tab
+3. Select a workflow run to see:
+   - Job status (✓ passed, ✗ failed)
+   - Detailed logs
+   - Test results
+   - Build artifacts
+
+### Managing Forgejo
+
+```bash
+# View logs
+docker compose -f docker-compose.ci.yml logs -f forgejo
+docker compose -f docker-compose.ci.yml logs -f forgejo-runner
+
+# Stop CI infrastructure
+docker compose -f docker-compose.ci.yml down
+
+# Backup Forgejo data
+docker exec forgejo forgejo dump -c /data/gitea/conf/app.ini
+docker cp forgejo:/data/gitea-dump-*.zip ./backups/
+
+# Update Forgejo
+docker compose -f docker-compose.ci.yml pull
+docker compose -f docker-compose.ci.yml up -d
+```
+
+### Customizing the CI Workflow
+
+Edit `.forgejo/workflows/ci.yml` to add more steps:
+
+```yaml
+# Add code quality checks
+- name: Lint with ruff
+  run: |
+    cd services/rag_server
+    uv run ruff check .
+
+# Add deployment
+deploy:
+  name: Deploy to Production
+  runs-on: ubuntu-latest
+  needs: [test, docker-build]
+  if: github.ref == 'refs/heads/main'
+  steps:
+    - name: Deploy
+      run: |
+        # Your deployment commands
+```
+
+**Documentation:**
+- **[Complete Forgejo Setup Guide](docs/FORGEJO_CI_SETUP.md)** - Detailed setup, troubleshooting, advanced config
+- **[Forgejo Actions Docs](https://forgejo.org/docs/latest/user/actions/)** - Official documentation
+- **[GitHub Actions Reference](https://docs.github.com/en/actions)** - Syntax reference (mostly compatible)
 
 ## API Documentation
 
@@ -656,10 +805,17 @@ Target: **100+ Q&A pairs** for comprehensive evaluation
 - [x] Enhanced dataset loader
 - [x] Synthetic Q&A generation
 
+**CI/CD Implementation** (2025-12-07):
+- [x] Forgejo self-hosted Git + CI/CD setup
+- [x] GitHub Actions-compatible workflows
+- [x] Automated core tests on push/PR
+- [x] Optional evaluation tests (manual trigger or `[eval]` flag)
+- [x] Docker build verification
+- [x] Runner configuration and documentation
+
 ### Planned (Phase 3+)
 
 - [ ] Expand golden dataset to 100+ Q&A pairs
-- [ ] CI/CD evaluation pipeline (GitHub Actions)
 - [ ] Parent document retrieval (sentence window)
 - [ ] Query fusion (multi-query generation)
 - [ ] Production monitoring dashboard

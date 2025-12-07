@@ -131,6 +131,33 @@ export ANTHROPIC_API_KEY=sk-ant-...
 pytest tests/test_rag_eval.py --run-eval --eval-samples=5
 ```
 
+### CI/CD
+
+**Framework:** Forgejo (self-hosted GitHub alternative with integrated Actions)
+
+See [docs/FORGEJO_CI_SETUP.md](docs/FORGEJO_CI_SETUP.md) for complete setup guide.
+
+```bash
+# Start Forgejo server and runner
+docker compose -f docker-compose.ci.yml up -d
+
+# Access Forgejo Web UI
+open http://localhost:3000
+
+# View CI logs
+docker compose -f docker-compose.ci.yml logs -f
+
+# Stop CI infrastructure
+docker compose -f docker-compose.ci.yml down
+```
+
+**CI Pipeline** (`.forgejo/workflows/ci.yml`):
+- **Core tests**: Run on every push (33 tests, ~30s)
+- **Eval tests**: Optional, off by default (27 tests, ~2-5min)
+  - Trigger: Manual dispatch or `[eval]` in commit message
+  - Requires: `ANTHROPIC_API_KEY` secret
+- **Docker build**: Verifies RAG server + webapp build successfully
+
 ## Critical Implementation Details
 
 ### Phase 2: Hybrid Search & Contextual Retrieval
@@ -301,6 +328,7 @@ docker compose exec rag-server curl http://host.docker.internal:11434/api/tags
 For comprehensive guides on specific topics, see:
 
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** - Complete API documentation, configuration details, troubleshooting, and roadmap
+- **[Forgejo CI/CD Setup](docs/FORGEJO_CI_SETUP.md)** - Self-hosted CI/CD with Forgejo Actions, runner setup, workflow configuration
 - **[Conversational RAG Architecture](docs/CONVERSATIONAL_RAG.md)** - Session management, chat memory, model flexibility
 - **[Performance Optimizations Summary](docs/PERFORMANCE_OPTIMIZATIONS_SUMMARY.md)** - Recent optimizations: contextual retrieval toggle, keep-alive (15x speedup)
 - **[Performance Analysis](docs/PERFORMANCE_ANALYSIS.md)** - Document processing bottlenecks, timing breakdown, optimization opportunities

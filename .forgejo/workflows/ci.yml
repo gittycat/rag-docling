@@ -1,0 +1,98 @@
+# Forgejo CI/CD Pipeline for RAG-Docling
+#
+# Triggers:
+#   - On every push to any branch
+#   - On pull requests
+#   - Manual workflow dispatch (with eval option)
+#
+# Jobs:
+#   - test: Run core pytest tests (33 tests)
+#   - test-eval: Run evaluation tests (27 tests) - OPTIONAL, off by default
+#   - docker-build: Verify Docker images build successfully
+#
+# Eval tests are triggered by:
+#   - Manual workflow dispatch with run_eval=true
+#   - Including '[eval]' in commit message
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_eval:
+        description: 'Run evaluation tests (requires ANTHROPIC_API_KEY)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  # Core tests - always run
+  test:
+    name: Core Tests
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        working-directory: services/rag_server
+        run: |
+          uv sync
+
+      - name: Run core tests
+        working-directory: services/rag_server
+        run: |
+          uv run pytest tests/ -v --ignore=tests/evaluation --tb=short
+
+  # Evaluation tests - optional, off by default
+  test-eval:
+    name: Evaluation Tests
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    # Only run if: (1) manual dispatch with run_eval=true, OR (2) [eval] in commit message
+    if: |
+      github.event.inputs.run_eval == 'true' ||
+      contains(github.event.head_commit.message, '[eval]')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies with eval group
+        working-directory: services/rag_server
+        run: |
+          uv sync --group eval
+
+      - name: Run evaluation tests
+        working-directory: services/rag_server
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          uv run pytest tests/test_rag_eval.py --run-eval --eval-samples=5 -v --tb=short
+
+  # Docker build verification
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build RAG Server image
+        run: |
+          docker build -f services/rag_server/Dockerfile -t rag-server:${{ github.sha }} .
+
+      - name: Build Webapp image
+        run: |
+          docker build -f services/webapp/Dockerfile -t webapp:${{ github.sha }} services/webapp/
+
+      - name: Show image sizes
+        run: |
+          echo "=== Docker Images ==="
+          docker images | grep -E "(rag-server|webapp)"
