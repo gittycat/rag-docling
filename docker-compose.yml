@@ -93,7 +93,7 @@ services:
     build:
       context: .
       dockerfile: ./services/rag_server/Dockerfile
-    command: [".venv/bin/celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=2", "--without-mingle", "--without-gossip"]
+    command: [".venv/bin/celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=1", "--without-mingle", "--without-gossip"]
     user: "1000:1000"
     restart: unless-stopped
     environment:

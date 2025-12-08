@@ -12,7 +12,15 @@ import time
 
 logger = logging.getLogger(__name__)
 
-@celery_app.task(bind=True, name="tasks.process_document_task")
+@celery_app.task(
+    bind=True,
+    name="tasks.process_document_task",
+    autoretry_for=(Exception,),
+    retry_kwargs={'max_retries': 3, 'countdown': 5},
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True
+)
 def process_document_task(self, file_path: str, filename: str, batch_id: str):
     task_id = self.request.id
     task_start = time.time()
