@@ -54,16 +54,17 @@ services:
         condition: service_started
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
-      interval: 1s
-      timeout: 2s
+      interval: 2s
+      timeout: 3s
       retries: 5
-      start_period: 3s
+      start_period: 10s
     networks:
       - private
       - public
     volumes:
       - ./data/indexed_documents:/app/documents
       - docs_repo:/tmp/shared
+      - huggingface_cache:/home/appuser/.cache/huggingface
     secrets:
       - ollama_config
 
@@ -114,15 +115,19 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - redis
-      - chromadb
-      - rag-server
+      redis:
+        condition: service_started
+      chromadb:
+        condition: service_started
+      rag-server:
+        condition: service_healthy
     networks:
       - private
       - public
     volumes:
       - ./data/indexed_documents:/app/documents
       - docs_repo:/tmp/shared
+      - huggingface_cache:/home/appuser/.cache/huggingface
     secrets:
       - ollama_config
 
@@ -141,6 +146,8 @@ volumes:
   docs_repo:
     driver: local
   webapp_node_modules:
+    driver: local
+  huggingface_cache:
     driver: local
 
 # Secrets management

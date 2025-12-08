@@ -28,12 +28,16 @@ app = FastAPI(title="RAG Server")
 async def startup_event():
     initialize_settings()
 
-    # Pre-initialize reranker to download model during startup
+    # Pre-initialize reranker to download model during startup (if enabled)
     # This prevents timeout on first query when model downloads from HuggingFace
-    from core_logic.rag_pipeline import create_reranker_postprocessors
-    logger.info("[STARTUP] Pre-initializing reranker model...")
-    create_reranker_postprocessors()
-    logger.info("[STARTUP] Reranker model ready")
+    from core_logic.rag_pipeline import create_reranker_postprocessors, get_reranker_config
+    reranker_config = get_reranker_config()
+    if reranker_config['enabled']:
+        logger.info("[STARTUP] Pre-initializing reranker model...")
+        create_reranker_postprocessors()
+        logger.info("[STARTUP] Reranker model ready")
+    else:
+        logger.info("[STARTUP] Reranker disabled, skipping initialization")
 
     # Verify ChromaDB persistence (defensive measure against reported 2025 reliability issues)
     try:

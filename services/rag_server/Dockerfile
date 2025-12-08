@@ -28,7 +28,9 @@ WORKDIR /app
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app && \
     mkdir -p /tmp/shared && \
-    chown -R appuser:appuser /tmp/shared
+    chown -R appuser:appuser /tmp/shared && \
+    mkdir -p /home/appuser/.cache/huggingface && \
+    chown -R appuser:appuser /home/appuser/.cache
 
 # Switch to non-root user for dependency installation
 USER appuser
