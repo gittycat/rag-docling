@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Local RAG system with FastAPI REST API using Docling + LlamaIndex for document processing, ChromaDB for vector storage, and Ollama for LLM inference. The system implements Phase 2 high-impact retrieval improvements: Hybrid Search (BM25 + Vector + RRF) and Contextual Retrieval (Anthropic method).
+Local RAG system with FastAPI REST API using Docling + LlamaIndex for document processing, ChromaDB for vector storage, and Ollama for LLM inference. Implements Hybrid Search (BM25 + Vector + RRF) and Contextual Retrieval (Anthropic method) for improved accuracy.
 
 ## Architecture
 
@@ -39,18 +39,13 @@ Local RAG system with FastAPI REST API using Docling + LlamaIndex for document p
 
 ### Key Patterns
 
-- **Phase 2 Features**:
-  - **Hybrid Search**: BM25 (sparse) + Vector (dense) with RRF fusion (k=60) - 48% retrieval improvement
-  - **Contextual Retrieval**: LLM-generated document context prepended to chunks - 49% reduction in failures
-  - **BM25 Auto-refresh**: Index updates after uploads/deletes
-- **Async Document Processing**: Celery + Redis for background upload processing with real-time progress tracking
-- **Document Storage**: Nodes stored with `document_id` metadata, ID format: `{doc_id}-chunk-{i}`
-- **Retrieval Strategy**: Three-stage (hybrid BM25+Vector → RRF fusion → reranking → top-n selection)
-- **Dynamic Context**: Returns 5-10 nodes based on reranking scores, not fixed top-k
-- **Conversational RAG**: Session-based memory with `condense_plus_context` mode, Redis-backed persistence ([details](docs/CONVERSATIONAL_RAG.md))
-- **Prompts**: LlamaIndex native prompts (system_prompt, context_prompt, condense_prompt)
-- **Progress Tracking**: Redis-based progress tracking for async uploads
-- **Data Protection**: ChromaDB persistence verification on startup, automated backup/restore scripts
+- **Hybrid Search**: BM25 (sparse) + Vector (dense) with RRF fusion (k=60), auto-refreshes after uploads/deletes
+- **Contextual Retrieval**: LLM-generated document context prepended to chunks before embedding
+- **Retrieval Pipeline**: Hybrid BM25+Vector → RRF fusion → reranking → dynamic top-n selection (5-10 nodes)
+- **Async Processing**: Celery + Redis for background uploads with real-time progress tracking
+- **Conversational RAG**: Session-based memory with `condense_plus_context` mode, Redis persistence (1-hour TTL)
+- **Document Storage**: Nodes with `document_id` metadata, ID format: `{doc_id}-chunk-{i}`
+- **Data Protection**: ChromaDB persistence verification, automated backup/restore scripts
 
 ## Async Upload Architecture
 
@@ -98,12 +93,12 @@ docker compose down -v
 ### Testing
 
 ```bash
-# RAG Server tests (33 core tests)
+# RAG Server tests (40 core tests + 27 evaluation tests)
 cd services/rag_server
 uv sync
 .venv/bin/pytest -v
 
-# Evaluation tests (27 tests)
+# Evaluation tests only
 .venv/bin/pytest tests/evaluation/ -v
 ```
 
@@ -152,61 +147,42 @@ docker compose -f docker-compose.ci.yml down
 ```
 
 **CI Pipeline** (`.forgejo/workflows/ci.yml`):
-- **Core tests**: Run on every push (33 tests, ~30s)
-- **Eval tests**: Optional, off by default (27 tests, ~2-5min)
-  - Trigger: Manual dispatch or `[eval]` in commit message
-  - Requires: `ANTHROPIC_API_KEY` secret
-- **Docker build**: Verifies RAG server + webapp build successfully
+- **Core tests**: Run on every push (40 tests, ~30s)
+- **Eval tests**: Optional, off by default (27 tests, ~2-5min) - trigger with `[eval]` in commit or manual dispatch
+- **Docker build**: Verifies RAG server + webapp build
 
 ## Critical Implementation Details
 
-### Phase 2: Hybrid Search & Contextual Retrieval
+### Hybrid Search & Contextual Retrieval
 
-**Hybrid Search** (`services/rag_server/core_logic/hybrid_retriever.py`):
-- Combines BM25 (sparse/keyword) + Vector (dense/semantic) retrieval
-- Reciprocal Rank Fusion (RRF) with k=60 for result merging
-- Auto-initializes at startup, auto-refreshes after uploads/deletes
-- 48% improvement in retrieval quality (Pinecone benchmark)
+**Hybrid Search** (`hybrid_retriever.py`):
+- Combines BM25 + Vector with RRF fusion (k=60), auto-refreshes after uploads/deletes
+- Passed to `CondensePlusContextChatEngine.from_defaults(retriever=...)` in rag_pipeline.py
+- Falls back to vector-only if `ENABLE_HYBRID_SEARCH=false`
 
-**Contextual Retrieval** (`services/rag_server/core_logic/document_processor.py`):
-- LLM generates 1-2 sentence document context for each chunk
+**Contextual Retrieval** (`document_processor.py`):
+- LLM generates 1-2 sentence document context per chunk via `add_contextual_prefix()`
 - Context prepended before embedding (zero query-time overhead)
-- 49% reduction in retrieval failures (67% with reranking)
-- Anthropic method implementation
-
-**Integration** (`services/rag_server/core_logic/rag_pipeline.py`):
-- Hybrid retriever passed directly to `CondensePlusContextChatEngine.from_defaults(retriever=retriever)`
-- Falls back to vector-only search if hybrid disabled
-- Dynamic switching based on `ENABLE_HYBRID_SEARCH` env var
+- Toggle via `ENABLE_CONTEXTUAL_RETRIEVAL` (default: false for speed)
 
 ### Docling + LlamaIndex Integration
 
-**Document Processing** (`services/rag_server/core_logic/document_processor.py`):
-- **CRITICAL**: Must use `DoclingReader(export_type=DoclingReader.ExportType.JSON)` - DoclingNodeParser requires JSON format, not default MARKDOWN
-- ChromaDB metadata must be flat types (str, int, float, bool, None) - complex types filtered via `clean_metadata_for_chroma()`
-- Contextual prefix added via `add_contextual_prefix()` before chunking
+**Document Processing** (`document_processor.py`):
+- **CRITICAL**: Must use `DoclingReader(export_type=DoclingReader.ExportType.JSON)` - DoclingNodeParser requires JSON
+- ChromaDB metadata must be flat types (str, int, float, bool, None) - filtered via `clean_metadata_for_chroma()`
 
-**Embeddings** (`services/rag_server/core_logic/embeddings.py`):
-- `OllamaEmbedding` with `model_name` parameter
-- Default: `nomic-embed-text:latest`
+**Vector Store** (`chroma_manager.py`):
+- `ChromaVectorStore` wraps ChromaDB collection, `VectorStoreIndex.from_vector_store()` creates index
+- Direct ChromaDB access via `._vector_store._collection`, `get_all_nodes()` for BM25 indexing
 
-**Vector Store** (`services/rag_server/core_logic/chroma_manager.py`):
-- `ChromaVectorStore` wraps ChromaDB collection
-- `VectorStoreIndex.from_vector_store()` creates index
-- Direct ChromaDB access via `._vector_store._collection` for deletion/listing
-- `get_all_nodes()` exposes nodes for BM25 indexing
-
-**RAG Pipeline** (`services/rag_server/core_logic/rag_pipeline.py`):
-- Hybrid retriever: `create_hybrid_retriever()` → `CondensePlusContextChatEngine.from_defaults(retriever=...)`
+**RAG Pipeline** (`rag_pipeline.py`):
+- Hybrid: `create_hybrid_retriever()` → `CondensePlusContextChatEngine.from_defaults(retriever=...)`
 - Vector-only fallback: `index.as_chat_engine(chat_mode="condense_plus_context")`
-- Reranking: `SentenceTransformerRerank` with top-n selection (returns top 5-10 nodes)
-- Session-based memory via `ChatMemoryBuffer` with Redis-backed persistence
-- Pre-initializes reranker model at startup to avoid first-query timeout
+- Reranking: `SentenceTransformerRerank` (model: `cross-encoder/ms-marco-MiniLM-L-6-v2`, returns top 5-10 nodes)
+- Session memory via `ChatMemoryBuffer` with `RedisChatStore` (1-hour TTL)
+- Reranker pre-initializes at startup to avoid first-query timeout
 
-**Reranking Strategy**:
-- Model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (auto-downloads from HuggingFace)
-- Selection: top-n approach (returns top 5 nodes by default, or half of retrieval_top_k)
-- Configurable via env vars: `ENABLE_RERANKER`, `RERANKER_MODEL`, `RETRIEVAL_TOP_K`
+**Embeddings** (`embeddings.py`): `OllamaEmbedding` (default: `nomic-embed-text:latest`)
 
 ### Docker Build
 
@@ -216,135 +192,91 @@ docker compose -f docker-compose.ci.yml down
 
 ### Environment Variables
 
-**RAG Server (required):**
+**Required:**
 - `CHROMADB_URL`, `OLLAMA_URL`, `EMBEDDING_MODEL`, `LLM_MODEL`, `REDIS_URL`
 
-**RAG Server (retrieval):**
+**Retrieval:**
 - `ENABLE_RERANKER=true`, `RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2`, `RETRIEVAL_TOP_K=10`
 - `ENABLE_HYBRID_SEARCH=true`, `RRF_K=60`
-- `ENABLE_CONTEXTUAL_RETRIEVAL=false` (default: off for speed, set to true for 49% better accuracy)
+- `ENABLE_CONTEXTUAL_RETRIEVAL=false` (default: off for speed)
 
-**RAG Server (Ollama optimization):**
-- `OLLAMA_KEEP_ALIVE=10m` (keep model loaded: 10m, -1 for indefinite, 0 to unload immediately)
+**Optimization:**
+- `OLLAMA_KEEP_ALIVE=10m` (keep model loaded: 10m, -1 indefinite, 0 unload immediately)
+- `MAX_UPLOAD_SIZE=80` (max upload size in MB)
 
-**RAG Server (logging):**
-- `LOG_LEVEL=DEBUG` (INFO for production)
+**Other:**
+- `LOG_LEVEL=INFO` (DEBUG for development)
 
-**Celery Worker:**
-- Same env vars as RAG Server (shares configuration)
+**Note:** Celery worker shares all RAG Server env vars
 
 ## API Endpoints
 
 **RAG Server** (port 8001):
-- `GET /health`: Health check endpoint
-- `GET /models/info`: Get LLM, embedding, and reranker model info
-- `POST /query`: Chat query with session_id (optional, auto-generates if missing)
-- `GET /chat/history/{session_id}`: Get conversation history
-- `POST /chat/clear`: Clear chat history for session
-- `GET /documents`: List all indexed documents (grouped by document_id)
-- `POST /upload`: Upload documents (async via Celery, returns batch_id)
-- `GET /tasks/{batch_id}/status`: Get upload batch progress
-- `DELETE /documents/{document_id}`: Delete document and all nodes
 
-**Supported Formats:**
-`.txt`, `.md`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.html`, `.htm`, `.asciidoc`, `.adoc`
+*Info:* `GET /health`, `GET /config` (max_upload_size_mb), `GET /models/info`
+*Chat:* `POST /query` (session_id optional), `GET /chat/history/{session_id}`, `POST /chat/clear`
+*Documents:* `GET /documents`, `POST /upload` (async, returns batch_id), `GET /tasks/{batch_id}/status`, `DELETE /documents/{document_id}`
+
+**Supported formats:** `.txt`, `.md`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.html`, `.htm`, `.asciidoc`, `.adoc`
 
 ## Key Files
 
-**Core Pipeline:**
-- `services/rag_server/core_logic/rag_pipeline.py`: Chat engine with hybrid search + reranking + memory
-- `services/rag_server/core_logic/hybrid_retriever.py`: BM25 + Vector + RRF implementation (Phase 2)
-- `services/rag_server/core_logic/chat_memory.py`: Session-based ChatMemoryBuffer with RedisChatStore (persistent)
-- `services/rag_server/core_logic/document_processor.py`: DoclingReader + contextual retrieval + DoclingNodeParser
-- `services/rag_server/core_logic/chroma_manager.py`: VectorStoreIndex (supports progress callbacks + BM25 node access)
-- `services/rag_server/core_logic/embeddings.py`: OllamaEmbedding
-- `services/rag_server/core_logic/llm_handler.py`: Ollama LLM + native prompts
-- `services/rag_server/core_logic/settings.py`: Global Settings initialization
-- `services/rag_server/core_logic/progress_tracker.py`: Redis-based progress tracking
-- `services/rag_server/main.py`: FastAPI endpoints
+**Core Pipeline** (`services/rag_server/core_logic/`):
+- `rag_pipeline.py`: Chat engine with hybrid search + reranking + memory
+- `hybrid_retriever.py`: BM25 + Vector + RRF implementation
+- `document_processor.py`: DoclingReader + contextual retrieval + DoclingNodeParser
+- `chroma_manager.py`: VectorStoreIndex with progress callbacks + BM25 node access
+- `chat_memory.py`: Session-based ChatMemoryBuffer with RedisChatStore
+- `embeddings.py`, `llm_handler.py`, `settings.py`, `progress_tracker.py`, `env_config.py`, `logging_config.py`
 
-**Async Processing:**
-- `services/rag_server/celery_app.py`: Celery application config
-- `services/rag_server/tasks.py`: Celery tasks (process_document_task)
+**API & Async:** `main.py` (FastAPI), `celery_app.py`, `tasks.py` (process_document_task)
 
-**Evaluation:**
-- `services/rag_server/evaluation/`: DeepEval-based evaluation system
-- `services/rag_server/eval_data/golden_qa.json`: Test Q&A dataset (10 pairs)
+**Evaluation:** `evaluation/` (DeepEval), `eval_data/golden_qa.json` (10 Q&A pairs)
 
-**Backup & Maintenance:**
-- `scripts/backup_chromadb.sh`: Automated ChromaDB backup (30-day retention)
-- `scripts/restore_chromadb.sh`: Restore from backup
-- `scripts/README.md`: Backup/restore documentation
+**Backup:** `scripts/backup_chromadb.sh`, `scripts/restore_chromadb.sh`
 
 ## Backup & Restore
 
-### ChromaDB Backup
 ```bash
-# Manual backup to default location (./backups/chromadb/)
+# Manual backup (saves to ./backups/chromadb/)
 ./scripts/backup_chromadb.sh
 
-# Schedule daily backups at 2 AM (add to crontab)
+# Restore from backup
+./scripts/restore_chromadb.sh ./backups/chromadb/chromadb_backup_YYYYMMDD_HHMMSS.tar.gz
+
+# Schedule daily at 2 AM (crontab)
 0 2 * * * cd /path/to/rag-docling && ./scripts/backup_chromadb.sh >> /var/log/chromadb_backup.log 2>&1
 ```
 
-### ChromaDB Restore
-```bash
-# List available backups
-ls -lh ./backups/chromadb/
-
-# Restore from specific backup
-./scripts/restore_chromadb.sh ./backups/chromadb/chromadb_backup_20251013_020000.tar.gz
-```
-
-**Features**: Timestamped backups, automatic cleanup, health check verification, service stop/start handling.
+**Features:** Timestamped backups, 30-day retention, health verification, auto service stop/start
 
 ## Common Issues
 
-**Ollama not accessible:**
-```bash
-docker compose exec rag-server curl http://host.docker.internal:11434/api/tags
-```
-
-**ChromaDB connection fails:** RAG server must be on `private` network.
-
-**Docker build fails:** Ensure `--index-strategy unsafe-best-match` in Dockerfile.
-
-**Tests fail:** Use `.venv/bin/pytest` directly instead of `uv run pytest`.
-
-**Reranker performance:** First query downloads model (~80MB). Subsequent queries use cache. Adds ~100-300ms latency.
-
-**BM25 not initializing:** Check `ENABLE_HYBRID_SEARCH=true` in docker-compose.yml. Requires documents in ChromaDB at startup, otherwise initializes after first upload.
-
-**Contextual retrieval not working:** Check `ENABLE_CONTEXTUAL_RETRIEVAL=true` in docker-compose.yml. Verify LLM is accessible (check OLLAMA_URL).
-
-**Redis connection:** Redis required for Celery + chat memory persistence + progress tracking. Check with `docker compose logs redis`.
-
-**Celery worker issues:** Check `docker compose logs celery-worker`. Worker auto-restarts on crashes. Tasks timeout after 1 hour.
-
-**Slow document processing:** Contextual retrieval (Phase 1) typically takes 85% of total processing time due to LLM calls per chunk. This is expected behavior. See [Performance Analysis](docs/PERFORMANCE_ANALYSIS.md) for optimization options.
+- **Ollama not accessible:** `docker compose exec rag-server curl http://host.docker.internal:11434/api/tags`
+- **ChromaDB connection fails:** RAG server must be on `private` network
+- **Docker build fails:** Ensure `--index-strategy unsafe-best-match` in Dockerfile
+- **Tests fail:** Use `.venv/bin/pytest` directly, not `uv run pytest`
+- **Reranker performance:** First query downloads model (~80MB), adds ~100-300ms latency
+- **BM25 not initializing:** Check `ENABLE_HYBRID_SEARCH=true`, requires documents at startup or initializes after first upload
+- **Contextual retrieval not working:** Check `ENABLE_CONTEXTUAL_RETRIEVAL=true`, verify OLLAMA_URL accessible
+- **Redis/Celery issues:** `docker compose logs redis|celery-worker`. Worker auto-restarts, tasks timeout after 1 hour
+- **Slow processing:** Contextual retrieval takes ~85% of time (LLM calls per chunk). See [Performance Analysis](docs/PERFORMANCE_ANALYSIS.md)
 
 ## Detailed Documentation
 
-For comprehensive guides on specific topics, see:
-
-- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Complete API documentation, configuration details, troubleshooting, and roadmap
-- **[Forgejo CI/CD Setup](docs/FORGEJO_CI_SETUP.md)** - Self-hosted CI/CD with Forgejo Actions, runner setup, workflow configuration
-- **[Conversational RAG Architecture](docs/CONVERSATIONAL_RAG.md)** - Session management, chat memory, model flexibility
-- **[Performance Optimizations Summary](docs/PERFORMANCE_OPTIMIZATIONS_SUMMARY.md)** - Recent optimizations: contextual retrieval toggle, keep-alive (15x speedup)
-- **[Performance Analysis](docs/PERFORMANCE_ANALYSIS.md)** - Document processing bottlenecks, timing breakdown, optimization opportunities
-- **[Ollama Optimization Guide](docs/OLLAMA_OPTIMIZATION.md)** - Keep-alive settings, KV cache quantization, prompt caching investigation
-- **[DeepEval Implementation](docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md)** - DeepEval metrics, evaluation workflow, best practices
-- **[Troubleshooting History](docs/troubleshooting/)** - Historical issues and fixes
-- **[Accuracy Improvement Plan](docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md)** - Future optimizations and plans
-- **[Phase 1 Implementation Summary](docs/PHASE1_IMPLEMENTATION_SUMMARY.md)** - Completed critical fixes (Redis chat store, backups, reranker cleanup)
-- **[Phase 2 Implementation Summary](docs/PHASE2_IMPLEMENTATION_SUMMARY.md)** - Hybrid search & contextual retrieval (current implementation)
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - API docs, configuration, troubleshooting, roadmap
+- **[Forgejo CI/CD Setup](docs/FORGEJO_CI_SETUP.md)** - Self-hosted CI/CD setup
+- **[Conversational RAG](docs/CONVERSATIONAL_RAG.md)** - Session management, chat memory
+- **[Performance Optimizations](docs/PERFORMANCE_OPTIMIZATIONS_SUMMARY.md)** - Recent optimizations (15x speedup)
+- **[Performance Analysis](docs/PERFORMANCE_ANALYSIS.md)** - Bottlenecks, timing breakdown
+- **[Ollama Optimization](docs/OLLAMA_OPTIMIZATION.md)** - Keep-alive, KV cache, prompt caching
+- **[DeepEval Implementation](docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md)** - Metrics, workflow, best practices
+- **[Accuracy Improvement Plan](docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md)** - Future optimizations
+- **[Phase 1 Summary](docs/PHASE1_IMPLEMENTATION_SUMMARY.md)** - Redis chat store, backups, reranker
+- **[Phase 2 Summary](docs/PHASE2_IMPLEMENTATION_SUMMARY.md)** - Hybrid search & contextual retrieval
 
 ## Testing Strategy
 
-**Test Files:**
-- `services/rag_server/tests/`: 33 core tests + 27 evaluation tests
+**Tests:** `services/rag_server/tests/` - 40 core tests + 27 evaluation tests
 
-**Mocking Pattern:**
-- DoclingReader/DoclingNodeParser mocked to return Node objects
-- LlamaIndex components mocked via `@patch`
-- VectorStoreIndex mocked with `._vector_store._collection` for ChromaDB access
+**Mocking:** DoclingReader/DoclingNodeParser → Node objects, LlamaIndex via `@patch`, VectorStoreIndex with `._vector_store._collection` for ChromaDB
