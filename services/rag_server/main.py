@@ -348,3 +348,135 @@ async def clear_chat_session(request: ClearSessionRequest):
     except Exception as e:
         logger.error(f"[CHAT_CLEAR] Error clearing session: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Metrics & Configuration API
+# ============================================================================
+
+from core_logic.metrics_models import (
+    ModelsConfig,
+    RetrievalConfig,
+    MetricDefinition,
+    EvaluationHistory,
+    EvaluationSummary,
+    SystemMetrics,
+)
+
+
+@app.get("/metrics/system", response_model=SystemMetrics)
+async def get_system_metrics():
+    """Get complete system metrics and configuration overview.
+
+    Returns comprehensive information about:
+    - All models (LLM, embedding, reranker, eval) with sizes and references
+    - Retrieval pipeline configuration (hybrid search, BM25, reranking)
+    - Evaluation metrics definitions
+    - Latest evaluation results
+    - Document statistics
+    - Component health status
+    """
+    from core_logic.metrics_service import get_system_metrics as fetch_system_metrics
+
+    try:
+        return await fetch_system_metrics()
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching system metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/metrics/models", response_model=ModelsConfig)
+async def get_detailed_models_info():
+    """Get detailed information about all models used in the RAG system.
+
+    Returns for each model (LLM, embedding, reranker, eval):
+    - Model name and provider
+    - Size information (parameters, disk size, context window)
+    - Reference URL to model documentation
+    - Current status (loaded, available, unavailable)
+    """
+    from core_logic.metrics_service import get_models_config
+
+    try:
+        return await get_models_config()
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching models config: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/metrics/retrieval", response_model=RetrievalConfig)
+async def get_retrieval_configuration():
+    """Get retrieval pipeline configuration.
+
+    Returns configuration for:
+    - Hybrid search (BM25 + Vector + RRF fusion)
+    - Contextual retrieval (Anthropic method)
+    - Reranking settings
+    - Top-K and Top-N parameters
+    - Research references and improvement claims
+    """
+    from core_logic.metrics_service import get_retrieval_config
+
+    try:
+        return get_retrieval_config()
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching retrieval config: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/metrics/evaluation/definitions", response_model=list[MetricDefinition])
+async def get_evaluation_metric_definitions():
+    """Get definitions for all evaluation metrics.
+
+    Returns for each metric:
+    - Name and category (retrieval, generation, safety)
+    - Description of what it measures
+    - Pass/fail threshold
+    - Interpretation guide
+    - Reference documentation URL
+    """
+    from core_logic.metrics_service import get_metric_definitions
+
+    try:
+        return get_metric_definitions()
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching metric definitions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/metrics/evaluation/history", response_model=EvaluationHistory)
+async def get_evaluation_history(limit: int = 20):
+    """Get historical evaluation runs.
+
+    Args:
+        limit: Maximum number of runs to return (default: 20)
+
+    Returns:
+        List of evaluation runs with detailed results and metrics
+    """
+    from core_logic.metrics_service import load_evaluation_history
+
+    try:
+        return load_evaluation_history(limit=limit)
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching evaluation history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/metrics/evaluation/summary", response_model=EvaluationSummary)
+async def get_evaluation_summary():
+    """Get evaluation summary with trends.
+
+    Returns:
+    - Latest evaluation run
+    - Total number of runs
+    - Metric trends over time (improving/declining/stable)
+    - Best performing run
+    """
+    from core_logic.metrics_service import get_evaluation_summary as fetch_eval_summary
+
+    try:
+        return fetch_eval_summary()
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching evaluation summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

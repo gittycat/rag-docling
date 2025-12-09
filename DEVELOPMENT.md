@@ -12,6 +12,7 @@ Complete technical reference for developers working on this RAG system. Covers a
 - [Evaluation & Testing](#evaluation--testing)
 - [Implementation Details](#implementation-details)
 - [Troubleshooting](#troubleshooting)
+- [RAG Observability](#rag-observability)
 - [Roadmap](#roadmap)
 
 ## Architecture
@@ -471,7 +472,7 @@ Clear chat history for a session.
 Health check endpoint.
 
 #### GET /models/info
-Get current model configuration.
+Get basic model configuration (legacy endpoint).
 
 **Response:**
 ```json
@@ -483,6 +484,252 @@ Get current model configuration.
   "enable_reranker": true,
   "enable_hybrid_search": true,
   "enable_contextual_retrieval": true
+}
+```
+
+### Metrics & Observability Endpoints
+
+These endpoints provide comprehensive visibility into RAG system configuration, models, and evaluation results for monitoring and optimization.
+
+#### GET /metrics/system
+Complete system overview combining models, retrieval config, evaluation metrics, and health status.
+
+**Response:**
+```json
+{
+  "system_name": "RAG-Docling",
+  "version": "1.0.0",
+  "timestamp": "2025-12-09T10:30:00Z",
+  "models": { /* ModelsConfig */ },
+  "retrieval": { /* RetrievalConfig */ },
+  "evaluation_metrics": [ /* MetricDefinition[] */ ],
+  "latest_evaluation": { /* EvaluationRun or null */ },
+  "document_count": 15,
+  "chunk_count": 234,
+  "health_status": "healthy",
+  "component_status": {
+    "chromadb": "healthy",
+    "redis": "healthy",
+    "ollama": "healthy"
+  }
+}
+```
+
+#### GET /metrics/models
+Detailed information about all models with sizes and references.
+
+**Response:**
+```json
+{
+  "llm": {
+    "name": "gemma3:4b",
+    "provider": "Ollama",
+    "model_type": "llm",
+    "is_local": true,
+    "size": {
+      "parameters": "4B",
+      "disk_size_mb": 2400,
+      "context_window": 8192
+    },
+    "reference_url": "https://ollama.com/library/gemma3",
+    "description": "Google Gemma 3 4B - Lightweight, efficient LLM",
+    "status": "loaded"
+  },
+  "embedding": {
+    "name": "nomic-embed-text:latest",
+    "provider": "Ollama",
+    "model_type": "embedding",
+    "is_local": true,
+    "size": {
+      "parameters": "137M",
+      "context_window": 8192
+    },
+    "reference_url": "https://ollama.com/library/nomic-embed-text",
+    "status": "available"
+  },
+  "reranker": {
+    "name": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "provider": "HuggingFace",
+    "model_type": "reranker",
+    "is_local": true,
+    "size": {
+      "parameters": "22M",
+      "disk_size_mb": 80
+    },
+    "reference_url": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "status": "available"
+  },
+  "eval": {
+    "name": "claude-sonnet-4-20250514",
+    "provider": "Anthropic",
+    "model_type": "eval",
+    "is_local": false,
+    "size": {
+      "context_window": 200000
+    },
+    "reference_url": "https://docs.anthropic.com/en/docs/about-claude/models",
+    "status": "available"
+  }
+}
+```
+
+#### GET /metrics/retrieval
+Retrieval pipeline configuration with research references.
+
+**Response:**
+```json
+{
+  "retrieval_top_k": 10,
+  "final_top_n": 5,
+  "pipeline_description": "Query -> Hybrid Retrieval (BM25 + Vector + RRF) -> Reranking -> Top-N Selection -> LLM",
+  "hybrid_search": {
+    "enabled": true,
+    "fusion_method": "reciprocal_rank_fusion",
+    "rrf_k": 60,
+    "research_reference": "https://www.pinecone.io/learn/hybrid-search-intro/",
+    "improvement_claim": "48% improvement in retrieval quality (Pinecone benchmark)",
+    "bm25": {
+      "enabled": true,
+      "description": "Sparse text matching using BM25 algorithm",
+      "strengths": ["Exact keyword matching", "IDs and abbreviations", "Names and specific terms"]
+    },
+    "vector": {
+      "enabled": true,
+      "chunk_size": 500,
+      "chunk_overlap": 50,
+      "vector_store": "ChromaDB",
+      "collection_name": "documents"
+    }
+  },
+  "contextual_retrieval": {
+    "enabled": false,
+    "description": "LLM generates 1-2 sentence context per chunk before embedding",
+    "research_reference": "https://www.anthropic.com/news/contextual-retrieval",
+    "improvement_claim": "49% reduction in retrieval failures; 67% with hybrid search + reranking",
+    "performance_impact": "~85% slower preprocessing (LLM call per chunk)"
+  },
+  "reranker": {
+    "enabled": true,
+    "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "top_n": 5,
+    "description": "Cross-encoder model that re-scores retrieved chunks for relevance",
+    "reference_url": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2"
+  }
+}
+```
+
+#### GET /metrics/evaluation/definitions
+Definitions for all evaluation metrics.
+
+**Response:**
+```json
+[
+  {
+    "name": "contextual_precision",
+    "category": "retrieval",
+    "description": "Measures whether retrieved chunks are relevant to the query",
+    "threshold": 0.7,
+    "interpretation": "Score 0-1. Above 0.7 is good. Measures: Are the retrieved chunks actually useful?",
+    "reference_url": "https://docs.confident-ai.com/docs/metrics-contextual-precision"
+  },
+  {
+    "name": "contextual_recall",
+    "category": "retrieval",
+    "description": "Measures whether all relevant information was retrieved",
+    "threshold": 0.7,
+    "interpretation": "Score 0-1. Above 0.7 is good. Measures: Did we retrieve all the information needed?",
+    "reference_url": "https://docs.confident-ai.com/docs/metrics-contextual-recall"
+  },
+  {
+    "name": "faithfulness",
+    "category": "generation",
+    "description": "Measures whether the answer is grounded in the retrieved context",
+    "threshold": 0.7,
+    "interpretation": "Score 0-1. Above 0.7 is good. Measures: Is the answer supported by the context?",
+    "reference_url": "https://docs.confident-ai.com/docs/metrics-faithfulness"
+  },
+  {
+    "name": "answer_relevancy",
+    "category": "generation",
+    "description": "Measures whether the generated answer addresses the user's question",
+    "threshold": 0.7,
+    "interpretation": "Score 0-1. Above 0.7 is good. Measures: Does the answer address the question?",
+    "reference_url": "https://docs.confident-ai.com/docs/metrics-answer-relevancy"
+  },
+  {
+    "name": "hallucination",
+    "category": "safety",
+    "description": "Measures the proportion of hallucinated (unsupported) information",
+    "threshold": 0.5,
+    "interpretation": "Score 0-1. Below 0.5 is good (lower = less hallucination)",
+    "reference_url": "https://docs.confident-ai.com/docs/metrics-hallucination"
+  }
+]
+```
+
+#### GET /metrics/evaluation/history
+Historical evaluation runs (supports `?limit=N` parameter).
+
+**Response:**
+```json
+{
+  "runs": [
+    {
+      "run_id": "a1b2c3d4",
+      "timestamp": "2025-12-09T10:00:00Z",
+      "framework": "DeepEval",
+      "eval_model": "claude-sonnet-4-20250514",
+      "total_tests": 10,
+      "passed_tests": 8,
+      "pass_rate": 80.0,
+      "metric_averages": {
+        "contextual_precision": 0.85,
+        "contextual_recall": 0.78,
+        "faithfulness": 0.92,
+        "answer_relevancy": 0.88,
+        "hallucination": 0.12
+      },
+      "metric_pass_rates": {
+        "contextual_precision": 90.0,
+        "contextual_recall": 70.0,
+        "faithfulness": 100.0,
+        "answer_relevancy": 80.0,
+        "hallucination": 80.0
+      },
+      "retrieval_config": {
+        "hybrid_search_enabled": true,
+        "contextual_retrieval_enabled": false,
+        "reranker_enabled": true,
+        "retrieval_top_k": 10
+      }
+    }
+  ],
+  "comparison_metrics": [
+    "contextual_precision", "contextual_recall", "faithfulness",
+    "answer_relevancy", "hallucination"
+  ]
+}
+```
+
+#### GET /metrics/evaluation/summary
+Evaluation summary with trends across runs.
+
+**Response:**
+```json
+{
+  "latest_run": { /* EvaluationRun */ },
+  "total_runs": 5,
+  "metric_trends": [
+    {
+      "metric_name": "contextual_precision",
+      "values": [0.75, 0.78, 0.82, 0.85],
+      "timestamps": ["2025-12-01T...", "2025-12-05T...", "2025-12-07T...", "2025-12-09T..."],
+      "trend_direction": "improving",
+      "latest_value": 0.85,
+      "average_value": 0.80
+    }
+  ],
+  "best_run": { /* EvaluationRun with highest composite score */ }
 }
 ```
 
@@ -862,6 +1109,97 @@ Breakdown:
 
 Target: **100+ Q&A pairs** for comprehensive evaluation
 
+## RAG Observability
+
+### Why Observability Matters
+
+RAG systems require comprehensive observability to:
+- **Diagnose retrieval failures**: Identify whether problems stem from indexing, retrieval, or generation
+- **Track quality over time**: Monitor metric trends as you add documents or change configurations
+- **Compare configurations**: Understand the impact of enabling/disabling features like hybrid search or reranking
+- **Debug production issues**: Correlate user complaints with specific component failures
+
+### Key Metrics to Track
+
+Based on industry best practices (2024-2025), RAG observability should cover:
+
+#### Retrieval Metrics
+| Metric | Description | Target |
+|--------|-------------|--------|
+| **Contextual Precision** | Are the top-k retrieved chunks actually relevant? | > 0.7 |
+| **Contextual Recall** | Did we retrieve all necessary information? | > 0.7 |
+| **Mean Reciprocal Rank (MRR)** | Is the correct document ranked early? | > 0.5 |
+| **Hit Rate** | Did at least one relevant chunk appear in top-k? | > 0.9 |
+
+#### Generation Metrics
+| Metric | Description | Target |
+|--------|-------------|--------|
+| **Faithfulness** | Is the answer grounded in retrieved context? | > 0.7 |
+| **Answer Relevancy** | Does the answer address the question asked? | > 0.7 |
+| **Hallucination Rate** | What % of answer is unsupported by context? | < 0.5 |
+
+#### Operational Metrics
+| Metric | Description |
+|--------|-------------|
+| **Latency (P50, P95)** | Query response time percentiles |
+| **Retrieval Count** | Documents retrieved per query |
+| **Embedding Similarity** | Score distribution of retrieved chunks |
+| **Cost per Query** | LLM tokens used for generation |
+
+### Observability Best Practices
+
+1. **Component-Level Instrumentation**: Monitor each pipeline stage independently (retriever, reranker, generator)
+
+2. **Unified Dashboards**: Put retrieval precision, generation quality, and latency on the same view to see trade-offs
+
+3. **Trend Detection**: Track metrics over time to catch quality regressions early. Our `/metrics/evaluation/summary` endpoint provides trend analysis (improving/declining/stable)
+
+4. **Configuration Snapshots**: Record which settings were active during each evaluation run to correlate changes with improvements
+
+5. **Automated Quality Checks**: Run periodic evaluations against a golden dataset to detect drift
+
+### Using the Metrics API
+
+```bash
+# Get complete system overview
+curl http://localhost:8001/metrics/system | jq
+
+# Check model configurations
+curl http://localhost:8001/metrics/models | jq
+
+# View retrieval settings with research references
+curl http://localhost:8001/metrics/retrieval | jq
+
+# Get evaluation metric definitions
+curl http://localhost:8001/metrics/evaluation/definitions | jq
+
+# View evaluation history (last 10 runs)
+curl http://localhost:8001/metrics/evaluation/history?limit=10 | jq
+
+# Get summary with trends
+curl http://localhost:8001/metrics/evaluation/summary | jq
+```
+
+### Saving Evaluation Results
+
+Use the `--save` flag when running evaluations to store results for the metrics API:
+
+```bash
+# Run evaluation and save results
+.venv/bin/python -m evaluation.cli eval --samples 10 --save
+
+# Results stored in eval_data/results/
+# View via GET /metrics/evaluation/history
+```
+
+### Research References
+
+- [Evidently AI - RAG Evaluation Guide](https://www.evidentlyai.com/llm-guide/rag-evaluation) - Comprehensive overview of RAG metrics
+- [Braintrust - Best RAG Evaluation Tools 2025](https://www.braintrust.dev/articles/best-rag-evaluation-tools) - Tool comparison
+- [Patronus AI - RAG Evaluation Best Practices](https://www.patronus.ai/llm-testing/rag-evaluation-metrics) - Enterprise patterns
+- [DEV Community - Production RAG in 2024](https://dev.to/hamidomarov/building-production-rag-in-2024-lessons-from-50-deployments-5fh9) - Lessons from 50+ deployments
+- [Medium - RAG Observability Strategies](https://medium.com/@support_81201/monitoring-retrieval-augmented-generation-rag-applications-challenges-and-observability-42c042562a43) - Monitoring challenges
+
 ## Roadmap
 
 ### Completed
@@ -893,12 +1231,21 @@ Target: **100+ Q&A pairs** for comprehensive evaluation
 - [x] Docker build verification
 - [x] Runner configuration and documentation
 
+**Metrics & Observability API** (2025-12-09):
+- [x] Comprehensive metrics API endpoints
+- [x] Model info with sizes, parameters, and reference URLs
+- [x] Retrieval configuration with research references
+- [x] Evaluation metrics definitions and history
+- [x] Trend analysis (improving/declining/stable)
+- [x] Component health monitoring
+- [x] CLI integration (`--save` flag for eval results)
+
 ### Planned (Phase 3+)
 
+- [ ] Webapp integration for metrics visualization
 - [ ] Expand golden dataset to 100+ Q&A pairs
 - [ ] Parent document retrieval (sentence window)
 - [ ] Query fusion (multi-query generation)
-- [ ] Production monitoring dashboard
 - [ ] Multi-user support with authentication
 - [ ] Additional file formats (CSV, JSON)
 

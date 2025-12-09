@@ -27,6 +27,7 @@ def cmd_run_evaluation(args):
     print("🔍 Running RAG Evaluation...")
     print(f"   Server: {args.server_url}")
     print(f"   Limit: {args.samples or 'All test cases'}")
+    print(f"   Save results: {args.save}")
     print()
 
     # Check server health
@@ -46,9 +47,32 @@ def cmd_run_evaluation(args):
             limit=args.samples,
         )
 
-        print("\n" + "=" * 60)
-        print("✅ Evaluation Complete")
-        print("=" * 60)
+        # Save results for metrics API
+        if args.save:
+            from evaluation.results_converter import (
+                convert_deepeval_results,
+                print_evaluation_summary,
+            )
+            import os
+
+            eval_model = os.getenv("EVAL_MODEL", "claude-sonnet-4-20250514")
+            notes = f"CLI evaluation with {args.samples or 'all'} samples"
+
+            eval_run = convert_deepeval_results(
+                results,
+                eval_model=eval_model,
+                notes=notes,
+                save=True,
+            )
+
+            print_evaluation_summary(eval_run)
+            print(f"\n📁 Results saved (run_id: {eval_run.run_id})")
+            print("   View via API: GET /metrics/evaluation/history")
+        else:
+            print("\n" + "=" * 60)
+            print("✅ Evaluation Complete")
+            print("=" * 60)
+            print("\n💡 Tip: Use --save to store results for comparison")
 
         return 0
 
@@ -206,6 +230,12 @@ Examples:
         "--server-url",
         default="http://localhost:8001",
         help="RAG server URL",
+    )
+    eval_parser.add_argument(
+        "-s",
+        "--save",
+        action="store_true",
+        help="Save results for metrics API (enables historical comparison)",
     )
     eval_parser.set_defaults(func=cmd_run_evaluation)
 

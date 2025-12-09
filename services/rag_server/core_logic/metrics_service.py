@@ -1,0 +1,565 @@
+"""Service for gathering RAG system metrics and configuration.
+
+Provides methods to:
+- Query model information from Ollama/HuggingFace
+- Gather retrieval configuration
+- Load and manage evaluation history
+"""
+
+import json
+import os
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+import httpx
+
+from core_logic.metrics_models import (
+    ModelInfo,
+    ModelSize,
+    ModelsConfig,
+    VectorSearchConfig,
+    BM25Config,
+    HybridSearchConfig,
+    ContextualRetrievalConfig,
+    RerankerConfig,
+    RetrievalConfig,
+    MetricDefinition,
+    EvaluationRun,
+    EvaluationHistory,
+    EvaluationSummary,
+    MetricTrend,
+    SystemMetrics,
+)
+from core_logic.env_config import get_optional_env
+from core_logic.hybrid_retriever import get_hybrid_retriever_config
+from core_logic.rag_pipeline import get_reranker_config
+from core_logic.document_processor import get_contextual_retrieval_config
+
+logger = logging.getLogger(__name__)
+
+# Model reference URLs
+MODEL_REFERENCES = {
+    # Ollama models
+    "gemma3:4b": {
+        "url": "https://ollama.com/library/gemma3",
+        "description": "Google Gemma 3 4B - Lightweight, efficient LLM for text generation",
+        "parameters": "4B",
+    },
+    "gemma2:9b": {
+        "url": "https://ollama.com/library/gemma2",
+        "description": "Google Gemma 2 9B - Mid-size LLM with strong reasoning",
+        "parameters": "9B",
+    },
+    "llama3.2:3b": {
+        "url": "https://ollama.com/library/llama3.2",
+        "description": "Meta Llama 3.2 3B - Efficient instruction-following model",
+        "parameters": "3B",
+    },
+    "llama3.1:8b": {
+        "url": "https://ollama.com/library/llama3.1",
+        "description": "Meta Llama 3.1 8B - Powerful open-source LLM",
+        "parameters": "8B",
+    },
+    "mistral:7b": {
+        "url": "https://ollama.com/library/mistral",
+        "description": "Mistral 7B - Fast, efficient open-source model",
+        "parameters": "7B",
+    },
+    "nomic-embed-text:latest": {
+        "url": "https://ollama.com/library/nomic-embed-text",
+        "description": "Nomic Embed Text - High-quality text embeddings (768 dims)",
+        "parameters": "137M",
+        "context_window": 8192,
+    },
+    "nomic-embed-text": {
+        "url": "https://ollama.com/library/nomic-embed-text",
+        "description": "Nomic Embed Text - High-quality text embeddings (768 dims)",
+        "parameters": "137M",
+        "context_window": 8192,
+    },
+    "mxbai-embed-large": {
+        "url": "https://ollama.com/library/mxbai-embed-large",
+        "description": "MixedBread Embed Large - State-of-the-art embeddings (1024 dims)",
+        "parameters": "335M",
+        "context_window": 512,
+    },
+    # HuggingFace reranker models
+    "cross-encoder/ms-marco-MiniLM-L-6-v2": {
+        "url": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2",
+        "description": "MS MARCO MiniLM L-6 - Fast cross-encoder for passage reranking",
+        "parameters": "22M",
+        "disk_size_mb": 80,
+    },
+    "BAAI/bge-reranker-base": {
+        "url": "https://huggingface.co/BAAI/bge-reranker-base",
+        "description": "BGE Reranker Base - High-quality Chinese/English reranker",
+        "parameters": "278M",
+        "disk_size_mb": 1100,
+    },
+    # Anthropic eval models
+    "claude-sonnet-4-20250514": {
+        "url": "https://docs.anthropic.com/en/docs/about-claude/models",
+        "description": "Claude Sonnet 4 - Fast, intelligent model for evaluation tasks",
+        "parameters": "Unknown",
+        "context_window": 200000,
+    },
+    "claude-3-5-sonnet-20241022": {
+        "url": "https://docs.anthropic.com/en/docs/about-claude/models",
+        "description": "Claude 3.5 Sonnet - Balanced performance and cost for evals",
+        "parameters": "Unknown",
+        "context_window": 200000,
+    },
+}
+
+
+async def get_ollama_model_info(model_name: str) -> Optional[dict]:
+    """Query Ollama API for model details."""
+    ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                f"{ollama_url}/api/show",
+                json={"name": model_name}
+            )
+            if response.status_code == 200:
+                return response.json()
+    except Exception as e:
+        logger.warning(f"Failed to get Ollama model info for {model_name}: {e}")
+
+    return None
+
+
+async def check_ollama_model_loaded(model_name: str) -> bool:
+    """Check if a model is currently loaded in Ollama."""
+    ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{ollama_url}/api/ps")
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                return any(m.get("name", "").startswith(model_name.split(":")[0]) for m in models)
+    except Exception as e:
+        logger.warning(f"Failed to check Ollama model status: {e}")
+
+    return False
+
+
+def get_model_reference(model_name: str) -> dict:
+    """Get reference information for a model."""
+    # Check exact match first
+    if model_name in MODEL_REFERENCES:
+        return MODEL_REFERENCES[model_name]
+
+    # Check prefix match (for models with tags)
+    base_name = model_name.split(":")[0]
+    for key, value in MODEL_REFERENCES.items():
+        if key.startswith(base_name):
+            return value
+
+    return {
+        "url": None,
+        "description": f"Model: {model_name}",
+        "parameters": "Unknown",
+    }
+
+
+async def get_models_config() -> ModelsConfig:
+    """Get complete models configuration with details."""
+    llm_model = get_optional_env("LLM_MODEL", "gemma3:4b")
+    embedding_model = get_optional_env("EMBEDDING_MODEL", "nomic-embed-text:latest")
+    eval_model = get_optional_env("EVAL_MODEL", "claude-sonnet-4-20250514")
+
+    reranker_config = get_reranker_config()
+
+    # Get LLM info
+    llm_ref = get_model_reference(llm_model)
+    llm_ollama_info = await get_ollama_model_info(llm_model)
+    llm_loaded = await check_ollama_model_loaded(llm_model)
+
+    llm_size = ModelSize(
+        parameters=llm_ref.get("parameters"),
+        disk_size_mb=llm_ollama_info.get("size", 0) / 1024 / 1024 if llm_ollama_info else None,
+        context_window=llm_ref.get("context_window"),
+    )
+
+    llm_info = ModelInfo(
+        name=llm_model,
+        provider="Ollama",
+        model_type="llm",
+        is_local=True,
+        size=llm_size,
+        reference_url=llm_ref.get("url"),
+        description=llm_ref.get("description"),
+        status="loaded" if llm_loaded else "available",
+    )
+
+    # Get embedding info
+    embed_ref = get_model_reference(embedding_model)
+    embed_ollama_info = await get_ollama_model_info(embedding_model)
+
+    embed_size = ModelSize(
+        parameters=embed_ref.get("parameters"),
+        disk_size_mb=embed_ollama_info.get("size", 0) / 1024 / 1024 if embed_ollama_info else None,
+        context_window=embed_ref.get("context_window"),
+    )
+
+    embedding_info = ModelInfo(
+        name=embedding_model,
+        provider="Ollama",
+        model_type="embedding",
+        is_local=True,
+        size=embed_size,
+        reference_url=embed_ref.get("url"),
+        description=embed_ref.get("description"),
+        status="available",
+    )
+
+    # Get reranker info (if enabled)
+    reranker_info = None
+    if reranker_config["enabled"]:
+        reranker_model = reranker_config["model"]
+        reranker_ref = get_model_reference(reranker_model)
+
+        reranker_size = ModelSize(
+            parameters=reranker_ref.get("parameters"),
+            disk_size_mb=reranker_ref.get("disk_size_mb"),
+        )
+
+        reranker_info = ModelInfo(
+            name=reranker_model,
+            provider="HuggingFace",
+            model_type="reranker",
+            is_local=True,
+            size=reranker_size,
+            reference_url=reranker_ref.get("url"),
+            description=reranker_ref.get("description"),
+            status="available",
+        )
+
+    # Get eval model info
+    eval_ref = get_model_reference(eval_model)
+    eval_size = ModelSize(
+        parameters=eval_ref.get("parameters"),
+        context_window=eval_ref.get("context_window"),
+    )
+
+    eval_info = ModelInfo(
+        name=eval_model,
+        provider="Anthropic",
+        model_type="eval",
+        is_local=False,
+        size=eval_size,
+        reference_url=eval_ref.get("url"),
+        description=eval_ref.get("description"),
+        status="available" if os.getenv("ANTHROPIC_API_KEY") else "unavailable",
+    )
+
+    return ModelsConfig(
+        llm=llm_info,
+        embedding=embedding_info,
+        reranker=reranker_info,
+        eval=eval_info,
+    )
+
+
+def get_retrieval_config() -> RetrievalConfig:
+    """Get complete retrieval pipeline configuration."""
+    hybrid_config = get_hybrid_retriever_config()
+    reranker_config = get_reranker_config()
+    contextual_config = get_contextual_retrieval_config()
+
+    # Vector search config
+    vector_config = VectorSearchConfig(
+        enabled=True,
+        chunk_size=500,  # From settings.py
+        chunk_overlap=50,
+        vector_store="ChromaDB",
+        collection_name="documents",
+    )
+
+    # BM25 config
+    bm25_config = BM25Config(
+        enabled=hybrid_config["enabled"],
+    )
+
+    # Hybrid search config
+    hybrid_search_config = HybridSearchConfig(
+        enabled=hybrid_config["enabled"],
+        bm25=bm25_config,
+        vector=vector_config,
+        fusion_method="reciprocal_rank_fusion",
+        rrf_k=hybrid_config["rrf_k"],
+    )
+
+    # Contextual retrieval config
+    contextual_retrieval_config = ContextualRetrievalConfig(
+        enabled=contextual_config["enabled"],
+    )
+
+    # Reranker config
+    top_k = reranker_config["retrieval_top_k"]
+    top_n = max(5, top_k // 2) if reranker_config["enabled"] else top_k
+
+    reranker_cfg = RerankerConfig(
+        enabled=reranker_config["enabled"],
+        model=reranker_config["model"] if reranker_config["enabled"] else None,
+        top_n=top_n if reranker_config["enabled"] else None,
+    )
+
+    return RetrievalConfig(
+        retrieval_top_k=top_k,
+        final_top_n=top_n,
+        hybrid_search=hybrid_search_config,
+        contextual_retrieval=contextual_retrieval_config,
+        reranker=reranker_cfg,
+    )
+
+
+def get_metric_definitions() -> list[MetricDefinition]:
+    """Get definitions for all evaluation metrics."""
+    return [
+        MetricDefinition(
+            name="contextual_precision",
+            category="retrieval",
+            description="Measures whether retrieved chunks are relevant to the query. Higher scores mean less noise in retrieved context.",
+            threshold=0.7,
+            interpretation="Score 0-1. Above 0.7 is good. Measures: Are the retrieved chunks actually useful?",
+            reference_url="https://docs.confident-ai.com/docs/metrics-contextual-precision",
+        ),
+        MetricDefinition(
+            name="contextual_recall",
+            category="retrieval",
+            description="Measures whether all relevant information was retrieved. Higher scores mean better coverage of needed information.",
+            threshold=0.7,
+            interpretation="Score 0-1. Above 0.7 is good. Measures: Did we retrieve all the information needed to answer?",
+            reference_url="https://docs.confident-ai.com/docs/metrics-contextual-recall",
+        ),
+        MetricDefinition(
+            name="faithfulness",
+            category="generation",
+            description="Measures whether the answer is grounded in the retrieved context without adding unsupported claims.",
+            threshold=0.7,
+            interpretation="Score 0-1. Above 0.7 is good. Measures: Is the answer supported by the context?",
+            reference_url="https://docs.confident-ai.com/docs/metrics-faithfulness",
+        ),
+        MetricDefinition(
+            name="answer_relevancy",
+            category="generation",
+            description="Measures whether the generated answer actually addresses the user's question.",
+            threshold=0.7,
+            interpretation="Score 0-1. Above 0.7 is good. Measures: Does the answer address the question asked?",
+            reference_url="https://docs.confident-ai.com/docs/metrics-answer-relevancy",
+        ),
+        MetricDefinition(
+            name="hallucination",
+            category="safety",
+            description="Measures the proportion of the answer that contains hallucinated (unsupported) information.",
+            threshold=0.5,
+            interpretation="Score 0-1. Below 0.5 is good (lower = less hallucination). Measures: How much is made up?",
+            reference_url="https://docs.confident-ai.com/docs/metrics-hallucination",
+        ),
+    ]
+
+
+# ============================================================================
+# Evaluation History Management
+# ============================================================================
+
+EVAL_RESULTS_DIR = Path("eval_data/results")
+
+
+def ensure_eval_results_dir():
+    """Ensure evaluation results directory exists."""
+    EVAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_evaluation_run(run: EvaluationRun) -> Path:
+    """Save an evaluation run to disk."""
+    ensure_eval_results_dir()
+
+    filename = f"eval_run_{run.run_id}_{run.timestamp.strftime('%Y%m%d_%H%M%S')}.json"
+    filepath = EVAL_RESULTS_DIR / filename
+
+    with open(filepath, "w") as f:
+        json.dump(run.model_dump(), f, indent=2, default=str)
+
+    logger.info(f"Saved evaluation run to {filepath}")
+    return filepath
+
+
+def load_evaluation_history(limit: int = 20) -> EvaluationHistory:
+    """Load evaluation history from disk."""
+    ensure_eval_results_dir()
+
+    runs = []
+    result_files = sorted(
+        EVAL_RESULTS_DIR.glob("eval_run_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True
+    )[:limit]
+
+    for filepath in result_files:
+        try:
+            with open(filepath) as f:
+                data = json.load(f)
+                # Parse timestamp
+                if isinstance(data.get("timestamp"), str):
+                    data["timestamp"] = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
+                runs.append(EvaluationRun(**data))
+        except Exception as e:
+            logger.warning(f"Failed to load evaluation run from {filepath}: {e}")
+
+    return EvaluationHistory(runs=runs)
+
+
+def get_evaluation_summary() -> EvaluationSummary:
+    """Get summary of evaluation history with trends."""
+    history = load_evaluation_history()
+
+    if not history.runs:
+        return EvaluationSummary(
+            latest_run=None,
+            total_runs=0,
+            metric_trends=[],
+            best_run=None,
+        )
+
+    # Sort runs by timestamp (oldest first for trend calculation)
+    sorted_runs = sorted(history.runs, key=lambda r: r.timestamp)
+
+    # Calculate trends for each metric
+    metric_trends = []
+    metric_names = ["contextual_precision", "contextual_recall", "faithfulness", "answer_relevancy", "hallucination"]
+
+    for metric_name in metric_names:
+        values = []
+        timestamps = []
+
+        for run in sorted_runs:
+            if metric_name in run.metric_averages:
+                values.append(run.metric_averages[metric_name])
+                timestamps.append(run.timestamp)
+
+        if values:
+            # Determine trend
+            if len(values) >= 2:
+                recent_avg = sum(values[-3:]) / len(values[-3:])
+                older_avg = sum(values[:3]) / len(values[:3])
+                if recent_avg > older_avg + 0.05:
+                    trend = "improving"
+                elif recent_avg < older_avg - 0.05:
+                    trend = "declining"
+                else:
+                    trend = "stable"
+            else:
+                trend = "stable"
+
+            metric_trends.append(MetricTrend(
+                metric_name=metric_name,
+                values=values,
+                timestamps=timestamps,
+                trend_direction=trend,
+                latest_value=values[-1],
+                average_value=sum(values) / len(values),
+            ))
+
+    # Find best run (highest average of non-hallucination metrics)
+    best_run = None
+    best_score = -1
+    for run in history.runs:
+        if run.metric_averages:
+            # Calculate composite score (invert hallucination since lower is better)
+            scores = []
+            for m in ["contextual_precision", "contextual_recall", "faithfulness", "answer_relevancy"]:
+                if m in run.metric_averages:
+                    scores.append(run.metric_averages[m])
+            if "hallucination" in run.metric_averages:
+                scores.append(1 - run.metric_averages["hallucination"])
+
+            if scores:
+                avg_score = sum(scores) / len(scores)
+                if avg_score > best_score:
+                    best_score = avg_score
+                    best_run = run
+
+    return EvaluationSummary(
+        latest_run=sorted_runs[-1] if sorted_runs else None,
+        total_runs=len(history.runs),
+        metric_trends=metric_trends,
+        best_run=best_run,
+    )
+
+
+# ============================================================================
+# System Overview
+# ============================================================================
+
+async def get_system_metrics() -> SystemMetrics:
+    """Get complete system metrics overview."""
+    from core_logic.chroma_manager import get_or_create_collection, list_documents
+
+    # Get all configurations
+    models = await get_models_config()
+    retrieval = get_retrieval_config()
+    metrics_defs = get_metric_definitions()
+    eval_summary = get_evaluation_summary()
+
+    # Get document stats
+    try:
+        index = get_or_create_collection()
+        documents = list_documents(index)
+        doc_count = len(documents)
+        chunk_count = sum(d.get("chunks", 0) for d in documents)
+    except Exception as e:
+        logger.warning(f"Failed to get document stats: {e}")
+        doc_count = 0
+        chunk_count = 0
+
+    # Check component health
+    component_status = {}
+
+    # Check ChromaDB
+    chromadb_url = get_optional_env("CHROMADB_URL", "http://chromadb:8000")
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{chromadb_url}/api/v1/heartbeat")
+            component_status["chromadb"] = "healthy" if resp.status_code == 200 else "unhealthy"
+    except Exception:
+        component_status["chromadb"] = "unavailable"
+
+    # Check Redis
+    redis_url = get_optional_env("REDIS_URL", "redis://redis:6379/0")
+    try:
+        import redis
+        r = redis.from_url(redis_url)
+        r.ping()
+        component_status["redis"] = "healthy"
+    except Exception:
+        component_status["redis"] = "unavailable"
+
+    # Check Ollama
+    ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{ollama_url}/api/tags")
+            component_status["ollama"] = "healthy" if resp.status_code == 200 else "unhealthy"
+    except Exception:
+        component_status["ollama"] = "unavailable"
+
+    # Overall health
+    health_status = "healthy" if all(s == "healthy" for s in component_status.values()) else "degraded"
+
+    return SystemMetrics(
+        models=models,
+        retrieval=retrieval,
+        evaluation_metrics=metrics_defs,
+        latest_evaluation=eval_summary.latest_run,
+        document_count=doc_count,
+        chunk_count=chunk_count,
+        health_status=health_status,
+        component_status=component_status,
+    )
