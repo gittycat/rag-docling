@@ -153,7 +153,7 @@ The `.forgejo/workflows/ci.yml` defines 3 jobs:
 - **Duration**: ~30 seconds
 - **Tests**: 33 core unit/integration tests
 - **Container**: `ghcr.io/astral-sh/uv:python3.13-bookworm-slim`
-- **Command**: `pytest tests/ --ignore=tests/evaluation`
+- **Command**: `pytest tests/ --ignore=tests/evaluation --ignore=tests/test_rag_eval.py`
 
 ### 2. Evaluation Tests (Optional)
 - **Duration**: ~2-5 minutes

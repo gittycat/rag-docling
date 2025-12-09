@@ -1,0 +1,294 @@
+"""
+Integration tests for async document upload via Celery.
+
+Tests the full async workflow: API upload -> Celery task -> Progress tracking -> Completion
+
+Run with: pytest tests/integration/test_async_upload.py -v --run-integration
+Requires: docker compose up -d (all services including celery-worker)
+"""
+import pytest
+import os
+import sys
+import uuid
+import time
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestCeleryTaskCompletion:
+    """
+    Test Celery async task execution and completion.
+
+    These tests require the full stack running:
+    - rag-server (API)
+    - celery-worker (task processing)
+    - redis (message broker + progress tracking)
+    - chromadb (vector storage)
+    - ollama (embeddings)
+    """
+
+    def test_celery_task_completes(
+        self,
+        integration_env,
+        check_services,
+        sample_text_file,
+        rag_server_url,
+        wait_for_task,
+    ):
+        """
+        Upload via API -> Celery processes -> status shows completed.
+
+        This validates the entire async processing pipeline works end-to-end.
+        """
+        import httpx
+
+        # Check RAG server is running
+        try:
+            health = httpx.get(f"{rag_server_url}/health", timeout=5.0)
+            health.raise_for_status()
+        except Exception as e:
+            pytest.skip(f"RAG server not available at {rag_server_url}: {e}")
+
+        # Upload file
+        with open(sample_text_file, "rb") as f:
+            files = {"files": (sample_text_file.name, f, "text/plain")}
+            response = httpx.post(
+                f"{rag_server_url}/upload",
+                files=files,
+                timeout=30.0,
+            )
+
+        assert response.status_code == 200, f"Upload failed: {response.text}"
+        upload_result = response.json()
+
+        assert "batch_id" in upload_result, "Upload should return batch_id"
+        batch_id = upload_result["batch_id"]
+
+        # Wait for task completion
+        final_status = wait_for_task(rag_server_url, batch_id, timeout=120)
+
+        assert final_status["completed"] == final_status["total"], \
+            f"All tasks should complete. Status: {final_status}"
+
+        # Verify document is queryable
+        query_response = httpx.post(
+            f"{rag_server_url}/query",
+            json={"query": "UNIQUE_TEXT_12345", "session_id": str(uuid.uuid4())},
+            timeout=60.0,
+        )
+
+        assert query_response.status_code == 200, f"Query failed: {query_response.text}"
+        result = query_response.json()
+        assert "answer" in result, "Query should return answer"
+
+    def test_progress_tracking_accuracy(
+        self,
+        integration_env,
+        check_services,
+        large_text_file,
+        rag_server_url,
+        wait_for_task,
+    ):
+        """
+        Multi-chunk doc -> progress increments correctly.
+
+        Verifies the progress tracking system accurately reports chunk processing.
+        """
+        import httpx
+
+        # Check RAG server
+        try:
+            httpx.get(f"{rag_server_url}/health", timeout=5.0).raise_for_status()
+        except Exception as e:
+            pytest.skip(f"RAG server not available: {e}")
+
+        # Upload large file
+        with open(large_text_file, "rb") as f:
+            files = {"files": (large_text_file.name, f, "text/plain")}
+            response = httpx.post(
+                f"{rag_server_url}/upload",
+                files=files,
+                timeout=30.0,
+            )
+
+        assert response.status_code == 200
+        batch_id = response.json()["batch_id"]
+
+        # Poll progress and verify it increments
+        progress_readings = []
+        start = time.time()
+        timeout = 180  # Large files may take longer
+
+        while time.time() - start < timeout:
+            status_response = httpx.get(
+                f"{rag_server_url}/tasks/{batch_id}/status",
+                timeout=10.0,
+            )
+            status = status_response.json()
+            progress_readings.append(status)
+
+            if status.get("completed", 0) == status.get("total", 0):
+                break
+
+            time.sleep(2)
+
+        # Verify progress was tracked
+        assert len(progress_readings) > 0, "Should have progress readings"
+
+        # Final status should show completion
+        final = progress_readings[-1]
+        assert final["completed"] == final["total"], \
+            f"All tasks should complete. Final: {final}"
+
+        # Verify total_chunks was tracked (for large docs)
+        if "total_chunks" in final:
+            assert final["total_chunks"] > 0, "Should track chunk count for large docs"
+
+    def test_multiple_file_upload(
+        self,
+        integration_env,
+        check_services,
+        sample_text_file,
+        sample_pdf,
+        rag_server_url,
+        wait_for_task,
+    ):
+        """
+        Upload multiple files simultaneously -> all processed correctly.
+        """
+        import httpx
+
+        try:
+            httpx.get(f"{rag_server_url}/health", timeout=5.0).raise_for_status()
+        except Exception as e:
+            pytest.skip(f"RAG server not available: {e}")
+
+        # Upload both files
+        files = [
+            ("files", (sample_text_file.name, open(sample_text_file, "rb"), "text/plain")),
+            ("files", (sample_pdf.name, open(sample_pdf, "rb"), "application/pdf")),
+        ]
+
+        try:
+            response = httpx.post(
+                f"{rag_server_url}/upload",
+                files=files,
+                timeout=30.0,
+            )
+        finally:
+            # Close file handles
+            for _, (_, f, _) in files:
+                f.close()
+
+        assert response.status_code == 200
+        result = response.json()
+        batch_id = result["batch_id"]
+
+        # Should have 2 tasks
+        assert result["total"] == 2, f"Should have 2 tasks, got {result}"
+
+        # Wait for all tasks
+        final_status = wait_for_task(rag_server_url, batch_id, timeout=180)
+
+        assert final_status["completed"] == 2, \
+            f"Both files should be processed. Status: {final_status}"
+
+
+@pytest.mark.integration
+class TestTaskProgressAPI:
+    """Test the task status API endpoints."""
+
+    def test_invalid_batch_id_returns_error(
+        self,
+        integration_env,
+        rag_server_url,
+    ):
+        """Query with invalid batch ID should return appropriate error."""
+        import httpx
+
+        try:
+            httpx.get(f"{rag_server_url}/health", timeout=5.0).raise_for_status()
+        except Exception as e:
+            pytest.skip(f"RAG server not available: {e}")
+
+        response = httpx.get(
+            f"{rag_server_url}/tasks/nonexistent-batch-id/status",
+            timeout=10.0,
+        )
+
+        # Should return 404 or empty status, not crash
+        assert response.status_code in [200, 404], \
+            f"Should handle invalid batch ID gracefully: {response.status_code}"
+
+    def test_concurrent_uploads_no_race(
+        self,
+        integration_env,
+        check_services,
+        sample_text_file,
+        rag_server_url,
+        wait_for_task,
+    ):
+        """
+        Upload 3 files simultaneously -> all indexed correctly.
+
+        Tests for race conditions in BM25 refresh and progress tracking.
+        """
+        import httpx
+        import concurrent.futures
+
+        try:
+            httpx.get(f"{rag_server_url}/health", timeout=5.0).raise_for_status()
+        except Exception as e:
+            pytest.skip(f"RAG server not available: {e}")
+
+        # Create 3 unique files
+        files_to_upload = []
+        for i in range(3):
+            content = f"""
+            Concurrent Upload Test File {i}
+
+            Unique identifier: CONCURRENT_{i}_{uuid.uuid4().hex[:8]}
+
+            This tests race conditions in parallel uploads.
+            """
+            file_path = sample_text_file.parent / f"concurrent_{i}.txt"
+            file_path.write_text(content)
+            files_to_upload.append(file_path)
+
+        batch_ids = []
+
+        def upload_file(file_path):
+            with open(file_path, "rb") as f:
+                response = httpx.post(
+                    f"{rag_server_url}/upload",
+                    files={"files": (file_path.name, f, "text/plain")},
+                    timeout=30.0,
+                )
+            return response.json()
+
+        # Upload all files concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(upload_file, f) for f in files_to_upload]
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                assert "batch_id" in result
+                batch_ids.append(result["batch_id"])
+
+        # Wait for all batches to complete
+        for batch_id in batch_ids:
+            status = wait_for_task(rag_server_url, batch_id, timeout=120)
+            assert status["completed"] == status["total"], \
+                f"Batch {batch_id} should complete: {status}"
+
+        # Verify all documents are queryable
+        for i in range(3):
+            query_response = httpx.post(
+                f"{rag_server_url}/query",
+                json={"query": f"CONCURRENT_{i}", "session_id": str(uuid.uuid4())},
+                timeout=60.0,
+            )
+            assert query_response.status_code == 200

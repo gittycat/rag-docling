@@ -92,14 +92,26 @@ docker compose down -v
 
 ### Testing
 
-```bash
-# RAG Server tests (40 core tests + 27 evaluation tests)
-cd services/rag_server
-uv sync
-.venv/bin/pytest -v
+**Task Runner**: mise (https://mise.jdx.dev/) - see `.mise.toml` for all tasks
 
-# Evaluation tests only
-.venv/bin/pytest tests/evaluation/ -v
+```bash
+# Install dev dependencies
+mise run dev
+
+# Unit tests (32 tests, mocked)
+mise run test
+
+# Integration tests (25 tests, requires docker compose up -d)
+mise run test:integration
+
+# Evaluation tests (5 samples)
+mise run test:eval
+
+# Evaluation tests (all samples)
+mise run test:eval-full
+
+# List all tasks
+mise tasks
 ```
 
 ### Evaluation
@@ -277,6 +289,15 @@ docker compose -f docker-compose.ci.yml down
 
 ## Testing Strategy
 
-**Tests:** `services/rag_server/tests/` - 40 core tests + 27 evaluation tests
+**Tests:** `services/rag_server/tests/`
+- 32 unit tests (mocked dependencies)
+- 25 integration tests (requires docker services, `--run-integration` flag)
+- 27 evaluation tests (requires `--run-eval` flag and `ANTHROPIC_API_KEY`)
 
-**Mocking:** DoclingReader/DoclingNodeParser → Node objects, LlamaIndex via `@patch`, VectorStoreIndex with `._vector_store._collection` for ChromaDB
+**Unit Tests:** Mock external dependencies via `@patch`. DoclingReader/DoclingNodeParser → Node objects, VectorStoreIndex with `._vector_store._collection` for ChromaDB.
+
+**Integration Tests:** Test real services (ChromaDB, Redis, Ollama). Key tests:
+- `test_pdf_full_pipeline`: PDF → Docling → ChromaDB → queryable
+- `test_bm25_refresh_after_upload`: Index sync after document operations
+- `test_celery_task_completes`: Async upload via Celery
+- `test_corrupted_pdf_handling`: Graceful error handling

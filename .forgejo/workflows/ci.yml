@@ -48,7 +48,7 @@ jobs:
       - name: Run core tests
         working-directory: services/rag_server
         run: |
-          uv run pytest tests/ -v --ignore=tests/evaluation --tb=short
+          uv run pytest tests/ -v --ignore=tests/evaluation --ignore=tests/test_rag_eval.py --tb=short
 
   # Evaluation tests - optional, off by default
   test-eval:

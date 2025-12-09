@@ -134,14 +134,24 @@ npm run dev
 
 ### Running Tests
 
+This project uses [mise](https://mise.jdx.dev/) for task management. See `.mise.toml` for all tasks.
+
 ```bash
-# Core tests (33 tests)
-cd services/rag_server
-.venv/bin/pytest -v
+# Install dev dependencies
+mise run dev
+
+# Unit tests (32 tests, mocked, fast)
+mise run test
+
+# Integration tests (25 tests, requires docker compose up -d)
+mise run test:integration
 
 # Evaluation tests (requires ANTHROPIC_API_KEY)
 export ANTHROPIC_API_KEY=sk-ant-...
-.venv/bin/pytest tests/test_rag_eval.py --run-eval --eval-samples=5
+mise run test:eval
+
+# List all tasks
+mise tasks
 
 # Frontend tests
 cd services/webapp
@@ -210,8 +220,8 @@ The CI pipeline (`.forgejo/workflows/ci.yml`) runs automatically on every push a
 
 1. **Core Tests** (always runs)
    - Duration: ~30 seconds
-   - Tests: 33 unit/integration tests
-   - Command: `pytest tests/ --ignore=tests/evaluation`
+   - Tests: 32 unit tests (mocked)
+   - Command: `pytest tests/ --ignore=tests/integration --ignore=tests/evaluation --ignore=tests/test_rag_eval.py`
 
 2. **Evaluation Tests** (optional, off by default)
    - Duration: ~2-5 minutes
@@ -712,14 +722,14 @@ uv sync --group eval
 # Set API key
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# Run quick evaluation (5 test cases)
+# Run pytest evaluation tests (recommended)
+mise run test:eval
+
+# Or use the CLI directly for more control
 .venv/bin/python -m evaluation.cli eval --samples 5
 
 # Show dataset statistics
 .venv/bin/python -m evaluation.cli stats
-
-# Run pytest evaluation tests
-pytest tests/test_rag_eval.py --run-eval --eval-samples=5
 ```
 
 #### Available Commands
@@ -753,19 +763,83 @@ pytest tests/test_rag_eval.py --run-eval --eval-samples=5
 ### Unit & Integration Tests
 
 **Test Coverage:**
-- **33 Core Tests**: Document processing, embeddings, LLM integration, RAG pipeline, API endpoints
-- **Evaluation Tests**: DeepEval metrics, dataset loading, live RAG evaluation
+- **32 Unit Tests**: Document processing, embeddings, LLM integration, ChromaDB, API endpoints (mocked)
+- **25 Integration Tests**: Full pipeline with real services (docker required)
+- **27 Evaluation Tests**: DeepEval metrics, dataset loading, live RAG evaluation
+
+#### Test Organization
+
+```
+tests/
+├── conftest.py                          # Shared fixtures, env setup, skip logic
+├── test_*.py                            # Unit tests (mocked dependencies)
+├── evaluation/                          # Evaluation framework tests
+│   ├── test_dataset_loader.py
+│   ├── test_data_models.py
+│   ├── test_retrieval_eval.py
+│   └── test_reranking_eval.py
+└── integration/                         # Integration tests (real services)
+    ├── conftest.py                      # Service checks, fixtures
+    ├── test_document_pipeline.py        # PDF/text processing → ChromaDB
+    ├── test_hybrid_search.py            # BM25 + Vector + RRF
+    ├── test_async_upload.py             # Celery task completion
+    └── test_error_recovery.py           # Graceful degradation
+```
+
+#### Running Tests
+
+This project uses [mise](https://mise.jdx.dev/) for task management. See `.mise.toml` for all tasks.
 
 ```bash
-# Run core tests
+# Install dev dependencies
+mise run dev
+
+# Unit tests only (fast, no services required)
+mise run test
+
+# Integration tests (requires docker compose up -d)
+mise run test:integration
+
+# List all tasks
+mise tasks
+
+# Advanced: Integration + slow tests (large file processing)
 cd services/rag_server
-.venv/bin/pytest -v
+.venv/bin/pytest tests/integration -v --run-integration --run-slow
 
-# Run specific test file
-.venv/bin/pytest tests/test_document_processing.py -v
+# Advanced: Specific integration test file
+.venv/bin/pytest tests/integration/test_document_pipeline.py -v --run-integration
 
-# Run with coverage
-.venv/bin/pytest --cov=. --cov-report=html
+# Advanced: Run with coverage
+.venv/bin/pytest --cov=. --cov-report=html --ignore=tests/integration
+```
+
+#### Integration Test Categories
+
+| File | Tests | What It Validates |
+|------|-------|-------------------|
+| `test_document_pipeline.py` | 6 | PDF parsing, text files, metadata, large docs, unsupported formats |
+| `test_hybrid_search.py` | 5 | BM25 refresh after upload/delete, RRF fusion, keyword matching |
+| `test_async_upload.py` | 5 | Celery task completion, progress tracking, concurrent uploads |
+| `test_error_recovery.py` | 9 | Corrupted files, LLM timeout, service failures, graceful degradation |
+
+#### Key Integration Tests
+
+1. **`test_pdf_full_pipeline`**: Upload real PDF → Docling parses → ChromaDB stores → queryable
+2. **`test_bm25_refresh_after_upload`**: New document → BM25 refreshed → keyword search finds it
+3. **`test_celery_task_completes`**: API upload → Celery processes → status shows completed
+4. **`test_corrupted_pdf_handling`**: Invalid PDF → fails cleanly with error, not crash
+
+#### Test Markers
+
+```python
+# pyproject.toml
+[tool.pytest.ini_options]
+markers = [
+    "integration: Tests requiring docker services",
+    "slow: Tests taking > 30s",
+    "eval: RAG evaluation tests (require --run-eval and ANTHROPIC_API_KEY)",
+]
 ```
 
 ### Golden Dataset

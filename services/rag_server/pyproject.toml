@@ -32,6 +32,7 @@ dev = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    "fpdf2>=2.8.0",
 ]
 eval = [
     "deepeval>=3.6.9",
@@ -50,5 +51,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "eval: RAG evaluation tests (require --run-eval flag and ANTHROPIC_API_KEY)",
+    "integration: Integration tests requiring docker services (chromadb, redis, ollama)",
+    "slow: Tests taking > 30s",
 ]
 addopts = "--strict-markers"

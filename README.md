@@ -82,6 +82,28 @@ That's it! Open your browser to **http://localhost:8000**
 
 The system works out-of-the-box with sensible defaults. Advanced users can modify settings in `docker-compose.yml` to change models, adjust retrieval parameters, or enable/disable features. See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
 
+## Testing
+
+This project uses [mise](https://mise.jdx.dev/) for task management. Install with `brew install mise` or see [installation guide](https://mise.jdx.dev/getting-started.html).
+
+```bash
+# Install dev dependencies
+mise run dev
+
+# Unit tests (mocked, no services required)
+mise run test
+
+# Integration tests (requires: docker compose up -d)
+mise run test:integration
+
+# Evaluation tests (requires ANTHROPIC_API_KEY)
+export ANTHROPIC_API_KEY=sk-ant-...
+mise run test:eval
+
+# List all available tasks
+mise tasks
+```
+
 
 ## Need Help?
 

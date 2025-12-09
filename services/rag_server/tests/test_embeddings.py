@@ -7,19 +7,20 @@ import os
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def test_embedding_function_initializes():
-    """LlamaIndex OllamaEmbedding should initialize with nomic-embed-text model"""
+    """LlamaIndex OllamaEmbedding should initialize with configured model"""
     from core_logic.embeddings import get_embedding_function
 
-    with patch('core_logic.embeddings.OllamaEmbedding') as mock_embeddings:
-        mock_instance = MagicMock()
-        mock_embeddings.return_value = mock_instance
+    with patch.dict(os.environ, {'OLLAMA_URL': 'http://localhost:11434', 'EMBEDDING_MODEL': 'nomic-embed-text'}):
+        with patch('core_logic.embeddings.OllamaEmbedding') as mock_embeddings:
+            mock_instance = MagicMock()
+            mock_embeddings.return_value = mock_instance
 
-        embedding_fn = get_embedding_function()
-        assert embedding_fn is not None
+            embedding_fn = get_embedding_function()
+            assert embedding_fn is not None
 
-        mock_embeddings.assert_called_once()
-        call_kwargs = mock_embeddings.call_args.kwargs
-        assert call_kwargs['model_name'] == 'nomic-embed-text'
+            mock_embeddings.assert_called_once()
+            call_kwargs = mock_embeddings.call_args.kwargs
+            assert call_kwargs['model_name'] == 'nomic-embed-text'
 
 
 def test_embedding_function_has_correct_endpoint():
