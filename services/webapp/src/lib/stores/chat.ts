@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { Message } from '$lib/utils/api';
+import type { Message, Source } from '$lib/utils/api';
 
 export interface ChatState {
 	messages: Message[];
@@ -22,6 +22,13 @@ function createChatStore() {
 			update((state) => ({
 				...state,
 				messages: [...state.messages, message],
+				error: null
+			}));
+		},
+		addMessageWithSources: (content: string, sources?: Source[]) => {
+			update((state) => ({
+				...state,
+				messages: [...state.messages, { role: 'assistant', content, sources }],
 				error: null
 			}));
 		},

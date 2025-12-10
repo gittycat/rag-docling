@@ -1,6 +1,13 @@
+export interface Source {
+	document_name: string;
+	excerpt: string;
+	distance?: number;
+}
+
 export interface Message {
 	role: 'user' | 'assistant';
 	content: string;
+	sources?: Source[];
 }
 
 export interface QueryRequest {
@@ -11,7 +18,7 @@ export interface QueryRequest {
 export interface QueryResponse {
 	answer: string;
 	session_id: string;
-	sources?: string[];
+	sources?: Source[];
 }
 
 export interface Document {

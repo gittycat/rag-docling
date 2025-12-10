@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { chatStore } from '$lib/stores/chat';
-	import { themeStore } from '$lib/stores/theme';
 	import { sendQuery } from '$lib/utils/api';
 	import { getSessionId } from '$lib/utils/session';
+	import { Send } from 'lucide-svelte';
+	import ChatMessage from './chat/ChatMessage.svelte';
 
 	let query = $state('');
 	let sessionId = $state('');
@@ -26,7 +27,7 @@
 
 		try {
 			const response = await sendQuery(userMessage, sessionId);
-			chatStore.addMessage({ role: 'assistant', content: response.answer });
+			chatStore.addMessageWithSources(response.answer, response.sources);
 			setTimeout(scrollToBottom, 0);
 		} catch (error) {
 			chatStore.setError(error instanceof Error ? error.message : 'Failed to send query');
@@ -49,60 +50,46 @@
 	}
 </script>
 
-<div class="flex flex-col h-full {$themeStore === 'dark' ? 'bg-gray-900' : 'bg-white'}">
-	<!-- Theme toggle button -->
-	<div class="absolute top-4 right-4 z-10">
-		<button
-			onclick={() => themeStore.toggle()}
-			aria-label="Toggle theme"
-			class="p-2 rounded-lg transition {$themeStore === 'dark'
-				? 'bg-gray-800 hover:bg-gray-700 text-yellow-400'
-				: 'bg-gray-100 hover:bg-gray-200 text-gray-700'}"
-		>
-			{#if $themeStore === 'dark'}
-				<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-				</svg>
-			{:else}
-				<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-				</svg>
-			{/if}
-		</button>
-	</div>
-
+<div class="flex flex-col h-full bg-surface">
 	<!-- Messages container -->
 	<div bind:this={messagesContainer} class="flex-1 overflow-y-auto p-4 space-y-4">
 		{#if $chatStore.messages.length === 0}
-			<div class="flex items-center justify-center h-full">
-				<h1 class="text-6xl font-semibold {$themeStore === 'dark' ? 'text-blue-400' : 'text-blue-600'}">
+			<div class="flex flex-col items-center justify-center h-full px-4 space-y-6">
+				<h1 class="text-4xl md:text-5xl font-semibold text-primary text-center">
 					g'day, ask me about your docs
 				</h1>
+				<div class="max-w-2xl space-y-3">
+					<p class="text-on-surface-muted text-center text-sm md:text-base">
+						I can help you find information across your documents. Try asking questions like:
+					</p>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+						<div class="p-4 bg-surface-raised border border-default rounded-lg">
+							<p class="text-muted text-sm">"What are the main topics covered?"</p>
+						</div>
+						<div class="p-4 bg-surface-raised border border-default rounded-lg">
+							<p class="text-muted text-sm">"Summarize the key points"</p>
+						</div>
+						<div class="p-4 bg-surface-raised border border-default rounded-lg">
+							<p class="text-muted text-sm">"Find information about..."</p>
+						</div>
+						<div class="p-4 bg-surface-raised border border-default rounded-lg">
+							<p class="text-muted text-sm">"Compare different sections"</p>
+						</div>
+					</div>
+				</div>
 			</div>
 		{:else}
 			{#each $chatStore.messages as message, i (i)}
-				<div class="flex" class:justify-end={message.role === 'user'}>
-					<div
-						class="max-w-[70%] rounded-lg px-4 py-3 {$themeStore === 'dark'
-							? message.role === 'user'
-								? 'bg-blue-600 text-white'
-								: 'bg-gray-800 text-gray-100'
-							: message.role === 'user'
-								? 'bg-blue-600 text-white'
-								: 'bg-gray-200 text-gray-900'}"
-					>
-						<p class="whitespace-pre-wrap">{message.content}</p>
-					</div>
-				</div>
+				<ChatMessage {message} />
 			{/each}
 
 			{#if $chatStore.isLoading}
 				<div class="flex">
-					<div class="max-w-[70%] rounded-lg px-4 py-3 {$themeStore === 'dark' ? 'bg-gray-800' : 'bg-gray-200'}">
+					<div class="max-w-[70%] rounded-lg px-4 py-3 bg-surface-raised border border-default">
 						<div class="flex gap-2">
-							<div class="w-2 h-2 {$themeStore === 'dark' ? 'bg-gray-400' : 'bg-gray-600'} rounded-full animate-bounce"></div>
-							<div class="w-2 h-2 {$themeStore === 'dark' ? 'bg-gray-400' : 'bg-gray-600'} rounded-full animate-bounce delay-100"></div>
-							<div class="w-2 h-2 {$themeStore === 'dark' ? 'bg-gray-400' : 'bg-gray-600'} rounded-full animate-bounce delay-200"></div>
+							<div class="w-2 h-2 bg-muted rounded-full animate-bounce"></div>
+							<div class="w-2 h-2 bg-muted rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+							<div class="w-2 h-2 bg-muted rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
 						</div>
 					</div>
 				</div>
@@ -112,14 +99,12 @@
 
 	<!-- Error message -->
 	{#if $chatStore.error}
-		<div class="mx-4 p-3 {$themeStore === 'dark'
-			? 'bg-red-900 border border-red-700 text-red-200'
-			: 'bg-red-100 border border-red-400 text-red-700'} rounded">
+		<div class="mx-4 p-3 bg-red-900/20 border border-red-500/50 text-red-400 rounded">
 			{$chatStore.error}
 		</div>
 	{/if}
 
-	<!-- Input area with glow effect -->
+	<!-- Input area -->
 	<div class="p-4 pb-6">
 		<div class="flex gap-3 items-end max-w-3xl mx-auto">
 			<div class="flex-1 relative">
@@ -129,9 +114,8 @@
 					placeholder="Message..."
 					rows="1"
 					class="w-full px-4 py-3 pr-12 rounded-3xl resize-none focus:outline-none transition
-						{$themeStore === 'dark'
-							? 'bg-gray-800 text-gray-100 border-2 border-blue-500/30 focus:border-blue-400/50 shadow-[0_0_10px_rgba(59,130,246,0.3)] focus:shadow-[0_0_20px_rgba(59,130,246,0.5)]'
-							: 'bg-white text-gray-900 border-2 border-gray-300 focus:border-blue-400 shadow-sm focus:shadow-md'}"
+						bg-surface-raised text-on-surface border-2 border-default
+						focus:border-primary placeholder:text-muted"
 					disabled={$chatStore.isLoading}
 				></textarea>
 				<button
@@ -139,25 +123,10 @@
 					disabled={!query.trim() || $chatStore.isLoading}
 					aria-label="Send message"
 					class="absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center rounded-full transition
-						{$themeStore === 'dark'
-							? 'bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 shadow-[0_0_10px_rgba(37,99,235,0.4)]'
-							: 'bg-black hover:bg-gray-800 disabled:bg-gray-300'}
-						disabled:cursor-not-allowed"
+						bg-primary hover:bg-primary-hover disabled:bg-surface-sunken disabled:text-muted
+						disabled:cursor-not-allowed text-white"
 				>
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						class="h-4 w-4 text-white"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke="currentColor"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M5 10l7-7m0 0l7 7m-7-7v18"
-						/>
-					</svg>
+					<Send class="w-4 h-4" />
 				</button>
 			</div>
 		</div>
