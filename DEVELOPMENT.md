@@ -133,6 +133,10 @@ cd ../webapp
 npm run dev
 ```
 
+#### Svelte Web development
+Use the prompt in `SVELTE_PROMPT.md` when requesting a tasks to be performed 
+on the web frontend requiring Svelte or SvelteKit knowledge.
+
 ### Running Tests
 
 This project uses [mise](https://mise.jdx.dev/) for task management. See `.mise.toml` for all tasks.

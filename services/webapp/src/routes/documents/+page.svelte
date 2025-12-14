@@ -1,105 +1,12 @@
-<script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
-	import FileUpload from '$lib/components/FileUpload.svelte';
-	import DocumentTable from '$lib/components/DocumentTable.svelte';
-	import LoadingSkeleton from '$lib/components/feedback/LoadingSkeleton.svelte';
-	import { documentsStore } from '$lib/stores/documents';
-	import { getDocuments, getBatchStatus } from '$lib/utils/api';
-
-	let pollingInterval: ReturnType<typeof setInterval> | null = null;
-
-	onMount(async () => {
-		await loadDocuments();
-		startPolling();
-	});
-
-	onDestroy(() => {
-		stopPolling();
-	});
-
-	async function loadDocuments() {
-		documentsStore.setLoading(true);
-		try {
-			const docs = await getDocuments();
-			documentsStore.setDocuments(docs);
-		} catch (error) {
-			documentsStore.setError(
-				error instanceof Error ? error.message : 'Failed to load documents'
-			);
-		} finally {
-			documentsStore.setLoading(false);
-		}
-	}
-
-	function handleUploadStart(batchId: string) {
-		documentsStore.addUploadingBatch(batchId, {
-			batch_id: batchId,
-			total: 0,
-			completed: 0,
-			total_chunks: 0,
-			completed_chunks: 0,
-			tasks: {}
-		});
-		pollBatchStatus(batchId);
-	}
-
-	async function pollBatchStatus(batchId: string) {
-		try {
-			const status = await getBatchStatus(batchId);
-			documentsStore.updateBatchStatus(batchId, status);
-
-			if (status.completed === status.total) {
-				documentsStore.removeBatch(batchId);
-				await loadDocuments();
-			}
-		} catch (error) {
-			console.error('Failed to poll batch status:', error);
-		}
-	}
-
-	function startPolling() {
-		pollingInterval = setInterval(async () => {
-			const batches = $documentsStore.uploadingBatches;
-			if (batches.size > 0) {
-				for (const batchId of batches.keys()) {
-					await pollBatchStatus(batchId);
-				}
-			}
-		}, 2000);
-	}
-
-	function stopPolling() {
-		if (pollingInterval) {
-			clearInterval(pollingInterval);
-			pollingInterval = null;
-		}
-	}
-</script>
-
-<svelte:head>
-	<title>RAG System - Documents</title>
-</svelte:head>
-
-<div class="p-6 space-y-6">
-	<div class="bg-surface-raised rounded-lg shadow-lg p-6 border border-default">
-		<h2 class="text-2xl font-bold mb-4 text-on-surface">Document Management</h2>
-
-		<FileUpload onUploadStart={handleUploadStart} />
-
-		{#if $documentsStore.error}
-			<div class="mt-4 p-3 bg-red-900/20 border border-red-500/50 text-red-400 rounded">
-				{$documentsStore.error}
-			</div>
-		{/if}
-	</div>
-
-	<div class="bg-surface-raised rounded-lg shadow-lg p-6 border border-default">
-		<h3 class="text-xl font-bold mb-4 text-on-surface">Documents</h3>
-
-		{#if $documentsStore.isLoading}
-			<LoadingSkeleton rows={5} height="h-12" />
-		{:else}
-			<DocumentTable uploadingBatches={$documentsStore.uploadingBatches} />
-		{/if}
-	</div>
+<div class="flex flex-col items-center justify-center h-[calc(100vh-200px)]">
+  <svg xmlns="http://www.w3.org/2000/svg" class="h-24 w-24 text-warning mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+  </svg>
+  <h1 class="text-3xl font-bold mb-2">Documents</h1>
+  <div class="badge badge-warning badge-lg gap-2">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+    </svg>
+    Under Construction
+  </div>
 </div>
