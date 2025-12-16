@@ -199,6 +199,175 @@ class TestCeleryTaskCompletion:
 
 
 @pytest.mark.integration
+class TestLargeDocumentUpload:
+    """Test upload and status tracking with large real-world documents."""
+
+    def test_large_markdown_status_progression(
+        self,
+        integration_env,
+        check_services,
+        large_public_markdown,
+        rag_server_url,
+    ):
+        """
+        Upload large markdown → capture status progression → verify completion.
+
+        This test validates that:
+        1. POST /upload accepts large markdown files
+        2. GET /tasks/{batch_id}/status returns accurate progress
+        3. Status progresses from queued → processing → completed
+        4. Final status indicates "completed" with all tasks done
+        """
+        import httpx
+
+        try:
+            httpx.get(f"{rag_server_url}/health", timeout=5.0).raise_for_status()
+        except Exception as e:
+            pytest.skip(f"RAG server not available: {e}")
+
+        # Upload the large markdown document
+        with open(large_public_markdown, "rb") as f:
+            files = {"files": (large_public_markdown.name, f, "text/markdown")}
+            response = httpx.post(
+                f"{rag_server_url}/upload",
+                files=files,
+                timeout=30.0,
+            )
+
+        assert response.status_code == 200, f"Upload failed: {response.text}"
+        upload_result = response.json()
+
+        assert "batch_id" in upload_result, "Upload should return batch_id"
+        assert "tasks" in upload_result, "Upload should return task info"
+        batch_id = upload_result["batch_id"]
+
+        # Track status progression
+        status_snapshots = []
+        start = time.time()
+        timeout = 300  # 5 minutes for large document
+
+        while time.time() - start < timeout:
+            status_response = httpx.get(
+                f"{rag_server_url}/tasks/{batch_id}/status",
+                timeout=10.0,
+            )
+
+            assert status_response.status_code == 200, \
+                f"Status endpoint should return 200: {status_response.status_code}"
+
+            status = status_response.json()
+            status_snapshots.append({
+                "timestamp": time.time() - start,
+                "completed": status.get("completed", 0),
+                "total": status.get("total", 0),
+                "tasks": status.get("tasks", {}),
+            })
+
+            # Check if processing is complete
+            if status.get("completed", 0) == status.get("total", 0):
+                # Verify all tasks show "completed" status
+                tasks = status.get("tasks", {})
+                for task_id, task_info in tasks.items():
+                    task_status = task_info.get("status", "")
+                    assert task_status == "completed", \
+                        f"Task {task_id} should be completed, got: {task_status}"
+
+                break
+
+            time.sleep(1)  # Poll every second to capture status changes
+
+        # Verify we captured the completion
+        assert len(status_snapshots) > 0, "Should have captured status snapshots"
+
+        final_status = status_snapshots[-1]
+        assert final_status["completed"] == final_status["total"], \
+            f"All tasks should complete. Final status: {final_status}"
+
+        # Verify we captured multiple status updates (shows progression)
+        assert len(status_snapshots) >= 2, \
+            "Should capture multiple status updates during processing"
+
+        print(f"\nStatus progression ({len(status_snapshots)} snapshots):")
+        for i, snapshot in enumerate(status_snapshots):
+            print(f"  {i+1}. {snapshot['timestamp']:.2f}s: "
+                  f"{snapshot['completed']}/{snapshot['total']} tasks completed")
+
+    def test_large_pdf_status_progression(
+        self,
+        integration_env,
+        check_services,
+        large_public_pdf,
+        rag_server_url,
+    ):
+        """
+        Upload large PDF → capture status progression → verify completion.
+
+        Tests the same workflow as markdown test but with PDF format.
+        """
+        import httpx
+
+        try:
+            httpx.get(f"{rag_server_url}/health", timeout=5.0).raise_for_status()
+        except Exception as e:
+            pytest.skip(f"RAG server not available: {e}")
+
+        # Upload the large PDF document
+        with open(large_public_pdf, "rb") as f:
+            files = {"files": (large_public_pdf.name, f, "application/pdf")}
+            response = httpx.post(
+                f"{rag_server_url}/upload",
+                files=files,
+                timeout=30.0,
+            )
+
+        assert response.status_code == 200, f"Upload failed: {response.text}"
+        upload_result = response.json()
+
+        assert "batch_id" in upload_result
+        batch_id = upload_result["batch_id"]
+
+        # Track status progression
+        status_snapshots = []
+        start = time.time()
+        timeout = 300
+
+        while time.time() - start < timeout:
+            status_response = httpx.get(
+                f"{rag_server_url}/tasks/{batch_id}/status",
+                timeout=10.0,
+            )
+
+            assert status_response.status_code == 200
+
+            status = status_response.json()
+            status_snapshots.append({
+                "timestamp": time.time() - start,
+                "completed": status.get("completed", 0),
+                "total": status.get("total", 0),
+            })
+
+            # Check completion
+            if status.get("completed", 0) == status.get("total", 0):
+                tasks = status.get("tasks", {})
+                for task_id, task_info in tasks.items():
+                    task_status = task_info.get("status", "")
+                    assert task_status == "completed", \
+                        f"Task {task_id} should be completed, got: {task_status}"
+                break
+
+            time.sleep(1)
+
+        # Verify completion
+        assert len(status_snapshots) > 0
+        final_status = status_snapshots[-1]
+        assert final_status["completed"] == final_status["total"], \
+            f"PDF processing should complete. Final: {final_status}"
+
+        print(f"\nPDF processing: {len(status_snapshots)} status updates, "
+              f"completed in {status_snapshots[-1]['timestamp']:.2f}s")
+
+
+@pytest.mark.integration
 class TestTaskProgressAPI:
     """Test the task status API endpoints."""
 

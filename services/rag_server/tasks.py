@@ -111,16 +111,27 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
         logger.error(f"[TASK {task_id}] Error processing {filename}: {str(e)}")
         logger.error(f"[TASK {task_id}] Traceback:\n{error_trace}")
 
+        # Create user-friendly error message (hide temp file paths)
+        user_friendly_error = str(e).replace(file_path, filename)
+
         update_task_progress(batch_id, task_id, "error", {
             "filename": filename,
-            "error": str(e),
-            "message": f"Error: {str(e)}"
+            "error": user_friendly_error,
+            "message": f"Error: {user_friendly_error}"
         })
 
         raise
     finally:
-        try:
-            Path(file_path).unlink()
-            logger.info(f"[TASK {task_id}] Cleaned up temporary file: {file_path}")
-        except Exception as e:
-            logger.warning(f"[TASK {task_id}] Could not delete temp file {file_path}: {e}")
+        # Only delete file if task won't be retried
+        # self.request.retries is current retry count
+        # self.max_retries is max allowed retries (3 in our config)
+        will_retry = self.request.retries < self.max_retries
+
+        if not will_retry:
+            try:
+                Path(file_path).unlink()
+                logger.info(f"[TASK {task_id}] Cleaned up temporary file: {file_path}")
+            except Exception as e:
+                logger.warning(f"[TASK {task_id}] Could not delete temp file {file_path}: {e}")
+        else:
+            logger.info(f"[TASK {task_id}] Keeping temp file for retry (attempt {self.request.retries + 1}/{self.max_retries + 1})")

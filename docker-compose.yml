@@ -8,6 +8,7 @@ services:
     ports:
       - "8000:3000"
     environment:
+      - ORIGIN=http://localhost:8000
       - RAG_SERVER_URL=http://rag-server:8001
       - MAX_UPLOAD_SIZE=80
     depends_on:

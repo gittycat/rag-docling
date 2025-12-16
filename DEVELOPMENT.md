@@ -72,7 +72,8 @@ Complete technical reference for developers working on this RAG system. Covers a
 
 **Frontend:**
 - SvelteKit 2.0 - Modern web framework
-- Tailwind CSS - Utility-first styling
+- Tailwind CSS 4 - Utility-first styling
+- DaisyUI 5 - UI components and themes
 - TypeScript - Type-safe JavaScript
 
 **Backend:**
@@ -474,6 +475,16 @@ Clear chat history for a session.
 
 #### GET /health
 Health check endpoint.
+
+#### GET /config
+Get configuration settings for the RAG system.
+
+**Response:**
+```json
+{
+  "max_upload_size_mb": 80
+}
+```
 
 #### GET /models/info
 Get basic model configuration (legacy endpoint).

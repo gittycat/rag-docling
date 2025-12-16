@@ -7,7 +7,6 @@ A locally hosted RAG (Retrieval-Augmented Generation) system for intelligent doc
 Create an optimized RAG pipeline for local machines that balances accuracy with performance. Since consumer laptops can't run top-tier models, this project helps you find the best combination of small models and techniques for your documents.
 
 
-
 ## Features
 
 - **Private & Local**: Runs entirely on your machine—no data leaves your computer
@@ -88,20 +87,20 @@ This project uses [mise](https://mise.jdx.dev/) for task management. Install wit
 
 ```bash
 # Install dev dependencies
-mise run dev
+TODO: complete
 
 # Unit tests (mocked, no services required)
-mise run test
+TODO: complete
 
 # Integration tests (requires: docker compose up -d)
-mise run test:integration
+TODO: complete
 
 # Evaluation tests (requires ANTHROPIC_API_KEY)
 export ANTHROPIC_API_KEY=sk-ant-...
-mise run test:eval
+TODO: complete
 
 # List all available tasks
-mise tasks
+TODO: complete
 ```
 
 

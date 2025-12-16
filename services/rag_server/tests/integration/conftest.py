@@ -176,6 +176,66 @@ def clean_test_collection(integration_env, check_services):
         pass  # Collection may not exist
 
 
+@pytest.fixture(scope="session")
+def large_public_markdown(tmp_path_factory):
+    """
+    Download a large public markdown document for realistic testing.
+    Uses Anthropic's Claude documentation as a comprehensive test document.
+    """
+    tmp_dir = tmp_path_factory.mktemp("downloads")
+    doc_path = tmp_dir / "claude_docs.md"
+
+    # Download Anthropic's Claude API documentation (large, well-structured markdown)
+    url = "https://raw.githubusercontent.com/anthropics/anthropic-sdk-python/main/README.md"
+
+    try:
+        response = httpx.get(url, timeout=30.0, follow_redirects=True)
+        response.raise_for_status()
+        doc_path.write_bytes(response.content)
+
+        # Verify it's substantial (should be > 10KB)
+        size_kb = doc_path.stat().st_size / 1024
+        if size_kb < 10:
+            pytest.skip(f"Downloaded document too small ({size_kb:.1f}KB), may not be valid")
+
+        return doc_path
+    except Exception as e:
+        pytest.skip(f"Failed to download test document: {e}")
+
+
+@pytest.fixture(scope="session")
+def large_public_pdf(tmp_path_factory):
+    """
+    Download a large public PDF document for realistic testing.
+    Uses a research paper from arXiv.
+    """
+    tmp_dir = tmp_path_factory.mktemp("downloads")
+    pdf_path = tmp_dir / "research_paper.pdf"
+
+    # Download "Attention Is All You Need" paper (Transformers paper, ~15 pages)
+    url = "https://arxiv.org/pdf/1706.03762.pdf"
+
+    try:
+        response = httpx.get(url, timeout=30.0, follow_redirects=True)
+        response.raise_for_status()
+        pdf_path.write_bytes(response.content)
+
+        # Verify it's a valid PDF and substantial
+        size_kb = pdf_path.stat().st_size / 1024
+        if size_kb < 50:
+            pytest.skip(f"Downloaded PDF too small ({size_kb:.1f}KB), may not be valid")
+
+        # Check PDF header
+        with open(pdf_path, 'rb') as f:
+            header = f.read(4)
+            if header != b'%PDF':
+                pytest.skip("Downloaded file is not a valid PDF")
+
+        return pdf_path
+    except Exception as e:
+        pytest.skip(f"Failed to download test PDF: {e}")
+
+
 @pytest.fixture
 def rag_server_url():
     """Get RAG server URL for API tests."""

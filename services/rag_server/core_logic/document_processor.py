@@ -111,14 +111,25 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
     extension = file_path_obj.suffix.lower()
     logger.info(f"[DOCLING] File extension: {extension}, chunk_size: {chunk_size}")
 
+    # Check file exists before processing
+    if not file_path_obj.exists():
+        raise FileNotFoundError(f"File does not exist: {file_path}")
+
     if extension not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: {extension}")
 
     if extension in SIMPLE_TEXT_EXTENSIONS:
         logger.info(f"[DOCLING] Using SimpleDirectoryReader for text file")
-        reader = SimpleDirectoryReader(input_files=[str(file_path)])
-        documents = reader.load_data()
-        logger.info(f"[DOCLING] SimpleDirectoryReader returned {len(documents)} documents")
+        try:
+            reader = SimpleDirectoryReader(input_files=[str(file_path)])
+            documents = reader.load_data()
+            logger.info(f"[DOCLING] SimpleDirectoryReader returned {len(documents)} documents")
+        except FileNotFoundError as e:
+            # Re-raise with clear error message
+            raise FileNotFoundError(f"File not found during processing: {file_path}") from e
+        except Exception as e:
+            # Catch other reader errors and provide context
+            raise ValueError(f"Failed to read file {file_path}: {str(e)}") from e
 
         if not documents:
             error_msg = f"Could not load document: {file_path}"
@@ -135,9 +146,18 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
 
         logger.info(f"[DOCLING] Starting DoclingReader.load_data() - this may take time for large/complex documents")
         read_start = time.time()
-        documents = reader.load_data(file_path=str(file_path))
-        read_duration = time.time() - read_start
-        logger.info(f"[DOCLING] DoclingReader.load_data() completed in {read_duration:.2f}s - returned {len(documents)} documents")
+        try:
+            documents = reader.load_data(file_path=str(file_path))
+            read_duration = time.time() - read_start
+            logger.info(f"[DOCLING] DoclingReader.load_data() completed in {read_duration:.2f}s - returned {len(documents)} documents")
+        except FileNotFoundError as e:
+            # Re-raise with clear error message
+            raise FileNotFoundError(f"File not found during processing: {file_path}") from e
+        except Exception as e:
+            # Catch DoclingReader errors (corrupted files, parsing errors, etc.)
+            read_duration = time.time() - read_start
+            logger.error(f"[DOCLING] DoclingReader failed after {read_duration:.2f}s: {str(e)}")
+            raise ValueError(f"Failed to process document {file_path}: {str(e)}") from e
 
         if not documents:
             error_msg = f"Could not load document: {file_path}"
@@ -146,10 +166,15 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
 
         logger.info(f"[DOCLING] Starting DoclingNodeParser.get_nodes_from_documents()")
         parse_start = time.time()
-        node_parser = DoclingNodeParser()
-        nodes = node_parser.get_nodes_from_documents(documents)
-        parse_duration = time.time() - parse_start
-        logger.info(f"[DOCLING] DoclingNodeParser completed in {parse_duration:.2f}s - returned {len(nodes)} nodes")
+        try:
+            node_parser = DoclingNodeParser()
+            nodes = node_parser.get_nodes_from_documents(documents)
+            parse_duration = time.time() - parse_start
+            logger.info(f"[DOCLING] DoclingNodeParser completed in {parse_duration:.2f}s - returned {len(nodes)} nodes")
+        except Exception as e:
+            parse_duration = time.time() - parse_start
+            logger.error(f"[DOCLING] DoclingNodeParser failed after {parse_duration:.2f}s: {str(e)}")
+            raise ValueError(f"Failed to parse document into chunks: {str(e)}") from e
 
         logger.info(f"[DOCLING] Cleaning metadata for ChromaDB compatibility")
         for node in nodes:

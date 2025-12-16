@@ -42,6 +42,47 @@ def get_or_create_collection():
     return index
 
 
+def _insert_node_with_retry(index, node, max_retries=3, base_delay=2.0):
+    """
+    Insert a node with retry logic for Ollama connection errors.
+
+    Args:
+        index: VectorStoreIndex to insert into
+        node: TextNode to insert
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds for exponential backoff
+
+    Raises:
+        Exception: If all retries fail
+    """
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            index.insert_nodes([node])
+            return  # Success
+        except Exception as e:
+            last_error = e
+            error_msg = str(e).lower()
+
+            # Check if it's an Ollama connection error
+            is_connection_error = any(term in error_msg for term in [
+                'eof', 'connection', 'timeout', 'refused', 'unavailable'
+            ])
+
+            if is_connection_error and attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(f"[CHROMA] Ollama connection error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                logger.info(f"[CHROMA] Retrying in {delay:.1f}s...")
+                time.sleep(delay)
+            else:
+                # Not a connection error or last attempt - raise immediately
+                raise
+
+    # All retries failed
+    raise Exception(f"Failed to embed node after {max_retries} attempts. Last error: {str(last_error)}") from last_error
+
+
 def add_documents(index, nodes: List, progress_callback=None):
     logger.info(f"[CHROMA] Starting embedding generation and indexing for {len(nodes)} nodes")
     embedding_start = time.time()
@@ -57,7 +98,11 @@ def add_documents(index, nodes: List, progress_callback=None):
         node_start = time.time()
         logger.info(f"[CHROMA] Starting embedding for chunk {i}/{total_nodes}")
 
-        index.insert_nodes([node])
+        try:
+            _insert_node_with_retry(index, node, max_retries=3, base_delay=2.0)
+        except Exception as e:
+            # Add context about which chunk failed
+            raise Exception(f"Failed to embed chunk {i}/{total_nodes}: {str(e)}") from e
 
         node_duration = time.time() - node_start
         elapsed = time.time() - embedding_start

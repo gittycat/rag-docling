@@ -92,26 +92,20 @@ docker compose down -v
 
 ### Testing
 
-**Task Runner**: mise (https://mise.jdx.dev/) - see `.mise.toml` for all tasks
+**Task Runner**: just. Use context7 with id "just_systems-man"
 
 ```bash
-# Install dev dependencies
-mise run dev
+# Unit tests
+just test-unit
 
-# Unit tests (32 tests, mocked)
-mise run test
+# integration tests
+just test-integration
 
-# Integration tests (25 tests, requires docker compose up -d)
-mise run test:integration
+# run eval tests
+just test-eval
 
-# Evaluation tests (5 samples)
-mise run test:eval
-
-# Evaluation tests (all samples)
-mise run test:eval-full
-
-# List all tasks
-mise tasks
+# Full eval tests
+just test-eval-full
 ```
 
 ### Evaluation

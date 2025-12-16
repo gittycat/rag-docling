@@ -187,8 +187,7 @@ Create a Webapp SvelteKit service under /services for the project.
 TECHNOLOGIES:
 - The `docker-compose.yml` already contains an entry for this service.
 - Use Svelte 5 and the latest SvelteKit.
-- Use the Svelte UX **next** components to style the main components.
-See the context7 MCP with id `next.svelte-ux.techniq.dev` for the correct documentation on this library.
+- Use DaisyUI components and themes
 
 DESCRIPTION:
 The webapp has a menu for 3 pages.
@@ -199,7 +198,7 @@ That page should also display a table that lists uploaded documents, and remove 
 
 Use a hideable menu on the left hand side.
 At the bottom of the menu, include one button to toggle between Dark and Light modes.
-Use the browsers default mode to set it. Use Svelte UX or Svelte for this mode work.
+Use the browsers default mode to set it.
 
 Theme:
 For the dark mode, use the "dim" theme that is included in Svelte UX next.
