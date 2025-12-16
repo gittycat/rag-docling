@@ -54,6 +54,24 @@ export interface BatchProgressResponse {
 	tasks: Record<string, TaskStatus>;
 }
 
+export interface FileCheckItem {
+	filename: string;
+	size: number;
+	hash: string;
+}
+
+export interface FileCheckResult {
+	filename: string;
+	exists: boolean;
+	document_id?: string;
+	existing_filename?: string;
+	reason?: string;
+}
+
+export interface FileCheckResponse {
+	results: Record<string, FileCheckResult>;
+}
+
 // ============================================================================
 // Types - Metrics/Dashboard
 // ============================================================================
@@ -227,6 +245,40 @@ export async function fetchBatchProgress(batchId: string): Promise<BatchProgress
 	if (!response.ok) {
 		throw new Error(`Failed to fetch batch progress: ${response.statusText}`);
 	}
+	return response.json();
+}
+
+/**
+ * Compute SHA256 hash of a file using Web Crypto API.
+ * Matches LlamaIndex's document hashing approach.
+ */
+export async function computeFileHash(file: File): Promise<string> {
+	const buffer = await file.arrayBuffer();
+	const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+	const hashArray = Array.from(new Uint8Array(hashBuffer));
+	const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+	return hashHex;
+}
+
+/**
+ * Check if files with given hashes already exist in the system.
+ * Returns information about which files are duplicates.
+ */
+export async function checkDuplicateFiles(
+	files: FileCheckItem[]
+): Promise<FileCheckResponse> {
+	const response = await fetch(`${API_BASE}/documents/check-duplicates`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ files })
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to check duplicates: ${response.statusText}`);
+	}
+
 	return response.json();
 }
 

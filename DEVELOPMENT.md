@@ -431,6 +431,39 @@ List all indexed documents (grouped by document_id).
 }
 ```
 
+#### POST /documents/check-duplicates
+Check if documents with given file hashes already exist in the system to prevent duplicate uploads.
+
+**Request:**
+```json
+{
+  "files": [
+    {
+      "filename": "document.pdf",
+      "size": 102400,
+      "hash": "a9dce56a5f43e8859e03ae59d37704b03e97766a141c5812897d0cc587226325"
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "results": {
+    "document.pdf": {
+      "filename": "document.pdf",
+      "exists": true,
+      "document_id": "doc-123",
+      "existing_filename": "document.pdf",
+      "reason": "Duplicate of 'document.pdf' (already uploaded)"
+    }
+  }
+}
+```
+
+**Note:** Hash is computed using SHA-256 of file content, matching LlamaIndex's document hashing approach.
+
 #### DELETE /documents/{document_id}
 Delete a document and all its chunks.
 
@@ -791,13 +824,30 @@ Again, this application is run locally. No authentication is used for ChromaDB.
 ### Document Processing Pipeline
 
 1. **Upload**: Documents uploaded via `/upload` endpoint
-2. **Async Processing**: Celery worker processes each file
-3. **Docling Parsing**: DoclingReader extracts text, tables, structure
-4. **Contextual Enhancement**: LLM adds document context to each chunk
-5. **Structural Chunking**: DoclingNodeParser creates nodes preserving hierarchy
-6. **Embedding**: Each chunk embedded with context (nomic-embed-text)
-7. **Storage**: Nodes stored in ChromaDB with metadata
-8. **BM25 Refresh**: BM25 index updated with new nodes
+2. **Deduplication Check**: Client computes SHA-256 hash, queries backend to skip duplicates
+3. **Async Processing**: Celery worker processes each file
+4. **Docling Parsing**: DoclingReader extracts text, tables, structure
+5. **Contextual Enhancement**: LLM adds document context to each chunk
+6. **Structural Chunking**: DoclingNodeParser creates nodes preserving hierarchy
+7. **Embedding**: Each chunk embedded with context (nomic-embed-text)
+8. **Storage**: Nodes stored in ChromaDB with metadata (including file_hash)
+9. **BM25 Refresh**: BM25 index updated with new nodes
+
+### Document Deduplication
+
+Prevents re-uploading identical documents by comparing SHA-256 file hashes before processing:
+
+**How It Works:**
+1. **Client-Side Hashing**: Browser computes SHA-256 hash of each file using Web Crypto API (zero server upload for duplicates)
+2. **Backend Verification**: `/documents/check-duplicates` endpoint queries ChromaDB metadata for matching `file_hash` values
+3. **Smart Filtering**: Duplicate files marked as "skipped" in UI with reason tooltip, only new files uploaded to server
+4. **Metadata Storage**: Each document's `file_hash` stored in ChromaDB metadata during processing for future deduplication checks
+
+**Benefits:**
+- Saves bandwidth (duplicates never leave browser)
+- Prevents redundant processing (no Celery tasks for duplicates)
+- User-friendly feedback (clear "Already uploaded" messages in UI)
+- Hash persistence across sessions (survives server restarts)
 
 ### Query Processing Pipeline
 

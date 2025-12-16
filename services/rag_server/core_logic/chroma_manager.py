@@ -203,3 +203,70 @@ def get_all_nodes(index) -> List[TextNode]:
 
     logger.info(f"[CHROMA] Retrieved {len(nodes)} nodes for BM25 indexing")
     return nodes
+
+
+def check_documents_exist(index, file_checks: List[Dict]) -> Dict[str, Dict]:
+    """
+    Check if documents with given file hashes already exist in ChromaDB.
+
+    Args:
+        index: VectorStoreIndex to query
+        file_checks: List of dicts with {filename, size, hash}
+
+    Returns:
+        Dict mapping filename to status info:
+        {
+            "filename.pdf": {
+                "exists": True/False,
+                "document_id": "...",  # if exists
+                "reason": "Already uploaded"  # if exists
+            }
+        }
+    """
+    logger.info(f"[CHROMA] Checking {len(file_checks)} files for duplicates")
+    chroma_collection = index._vector_store._collection
+
+    # Get all documents from ChromaDB
+    results = chroma_collection.get()
+
+    # Build map of file_hash -> document info
+    hash_to_doc = {}
+    if results and results['ids']:
+        for i, node_id in enumerate(results['ids']):
+            metadata = results['metadatas'][i] if i < len(results['metadatas']) else {}
+            file_hash = metadata.get('file_hash')
+
+            if file_hash and file_hash not in hash_to_doc:
+                # Store first occurrence of each hash
+                hash_to_doc[file_hash] = {
+                    "document_id": metadata.get('document_id'),
+                    "file_name": metadata.get('file_name', 'Unknown'),
+                    "file_size_bytes": metadata.get('file_size_bytes', 0)
+                }
+
+    logger.info(f"[CHROMA] Found {len(hash_to_doc)} unique document hashes in database")
+
+    # Check each file
+    result = {}
+    for file_check in file_checks:
+        filename = file_check['filename']
+        file_hash = file_check['hash']
+
+        if file_hash in hash_to_doc:
+            doc_info = hash_to_doc[file_hash]
+            result[filename] = {
+                "exists": True,
+                "document_id": doc_info["document_id"],
+                "existing_filename": doc_info["file_name"],
+                "reason": f"Duplicate of '{doc_info['file_name']}' (already uploaded)"
+            }
+            logger.info(f"[CHROMA] Found duplicate: {filename} matches {doc_info['file_name']}")
+        else:
+            result[filename] = {
+                "exists": False
+            }
+
+    duplicates_count = sum(1 for v in result.values() if v["exists"])
+    logger.info(f"[CHROMA] Duplicate check complete: {duplicates_count}/{len(file_checks)} files are duplicates")
+
+    return result

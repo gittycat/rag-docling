@@ -8,6 +8,7 @@ from llama_index.core.schema import Document, TextNode
 from core_logic.env_config import get_optional_env
 import logging
 import time
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -209,13 +210,34 @@ def chunk_document_from_file(file_path: str, chunk_size: int = 500):
     return nodes
 
 
+def compute_file_hash(file_path: str) -> str:
+    """
+    Compute SHA256 hash of file content.
+    Matches LlamaIndex's document hashing approach.
+
+    Args:
+        file_path: Path to file
+
+    Returns:
+        Hex digest of SHA256 hash
+    """
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # Read file in chunks to handle large files
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+
 def extract_metadata(file_path: str) -> dict[str, str]:
     file_path_obj = Path(file_path)
     file_size = file_path_obj.stat().st_size
+    file_hash = compute_file_hash(file_path)
 
     return {
         "file_name": file_path_obj.name,
         "file_type": file_path_obj.suffix,
         "path": str(file_path_obj.parent),
-        "file_size_bytes": file_size
+        "file_size_bytes": file_size,
+        "file_hash": file_hash
     }

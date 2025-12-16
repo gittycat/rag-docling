@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { uploadFiles, fetchBatchProgress, type BatchProgressResponse, type TaskStatus } from '$lib/api';
+	import {
+		uploadFiles,
+		fetchBatchProgress,
+		computeFileHash,
+		checkDuplicateFiles,
+		type BatchProgressResponse,
+		type TaskStatus,
+		type FileCheckItem
+	} from '$lib/api';
 
 	interface UploadItem {
 		id: string;
@@ -7,8 +15,9 @@
 		size: number;
 		uploadProgress: number;
 		processingProgress: number;
-		status: 'uploading' | 'processing' | 'done' | 'error';
+		status: 'uploading' | 'processing' | 'done' | 'error' | 'skipped';
 		error?: string;
+		skipReason?: string;
 		taskId?: string;
 		batchId?: string;
 	}
@@ -51,24 +60,91 @@
 			size: file.size,
 			uploadProgress: 0,
 			processingProgress: 0,
-			status: 'uploading'
+			status: 'uploading' as const
 		}));
 
 		uploads = [...newItems, ...uploads];
 
-		// Simulate upload progress (actual upload is one-shot via FormData)
-		const uploadProgressInterval = setInterval(() => {
-			uploads = uploads.map((item) => {
-				if (newItems.some((n) => n.id === item.id) && item.status === 'uploading') {
-					const newProgress = Math.min(item.uploadProgress + 20, 90);
-					return { ...item, uploadProgress: newProgress };
-				}
-				return item;
-			});
-		}, 100);
-
 		try {
-			const response = await uploadFiles(files);
+			// Step 1: Compute hashes for all files
+			const fileChecks: FileCheckItem[] = [];
+			const fileMap = new Map<string, File>();
+
+			for (let i = 0; i < files.length; i++) {
+				const file = files[i];
+				const filename = file.webkitRelativePath || file.name;
+
+				// Show progress for hashing
+				uploads = uploads.map((item) => {
+					if (item.id === newItems[i].id) {
+						return { ...item, uploadProgress: 10 };
+					}
+					return item;
+				});
+
+				const hash = await computeFileHash(file);
+				fileChecks.push({ filename, size: file.size, hash });
+				fileMap.set(filename, file);
+
+				// Update progress after hashing
+				uploads = uploads.map((item) => {
+					if (item.id === newItems[i].id) {
+						return { ...item, uploadProgress: 30 };
+					}
+					return item;
+				});
+			}
+
+			// Step 2: Check for duplicates
+			const duplicateCheck = await checkDuplicateFiles(fileChecks);
+
+			// Step 3: Separate files into upload vs skipped
+			const filesToUpload: File[] = [];
+			const skippedFiles = new Set<string>();
+
+			for (const filename of fileMap.keys()) {
+				const checkResult = duplicateCheck.results[filename];
+				if (checkResult?.exists) {
+					skippedFiles.add(filename);
+					// Mark as skipped immediately
+					uploads = uploads.map((item) => {
+						if (newItems.some((n) => n.id === item.id && n.filename === filename)) {
+							return {
+								...item,
+								status: 'skipped' as const,
+								skipReason: checkResult.reason || 'Already uploaded'
+							};
+						}
+						return item;
+					});
+				} else {
+					filesToUpload.push(fileMap.get(filename)!);
+				}
+			}
+
+			// Step 4: Upload non-duplicate files only
+			if (filesToUpload.length === 0) {
+				// All files were duplicates
+				isUploading = false;
+				return;
+			}
+
+			// Simulate upload progress for files being uploaded
+			const uploadProgressInterval = setInterval(() => {
+				uploads = uploads.map((item) => {
+					if (
+						newItems.some((n) => n.id === item.id) &&
+						item.status === 'uploading' &&
+						!skippedFiles.has(item.filename)
+					) {
+						const newProgress = Math.min(item.uploadProgress + 20, 90);
+						return { ...item, uploadProgress: newProgress };
+					}
+					return item;
+				});
+			}, 100);
+
+			const response = await uploadFiles(filesToUpload);
 
 			clearInterval(uploadProgressInterval);
 
@@ -85,7 +161,7 @@
 						taskId: matchingTask.task_id,
 						batchId: response.batch_id
 					};
-				} else if (newItems.some((n) => n.id === item.id)) {
+				} else if (newItems.some((n) => n.id === item.id) && !skippedFiles.has(item.filename)) {
 					return { ...item, uploadProgress: 100, status: 'processing' as const };
 				}
 				return item;
@@ -95,11 +171,9 @@
 			activeBatches.add(response.batch_id);
 			pollBatchProgress(response.batch_id);
 		} catch (error) {
-			clearInterval(uploadProgressInterval);
-
-			// Mark all new items as error
+			// Mark all non-skipped items as error
 			uploads = uploads.map((item) => {
-				if (newItems.some((n) => n.id === item.id)) {
+				if (newItems.some((n) => n.id === item.id) && item.status !== 'skipped') {
 					return {
 						...item,
 						status: 'error' as const,
@@ -163,7 +237,7 @@
 	}
 
 	function clearCompleted() {
-		uploads = uploads.filter((u) => u.status !== 'done' && u.status !== 'error');
+		uploads = uploads.filter((u) => u.status !== 'done' && u.status !== 'error' && u.status !== 'skipped');
 	}
 
 	function getStatusBadgeClass(status: UploadItem['status']): string {
@@ -176,6 +250,8 @@
 				return 'badge-success';
 			case 'error':
 				return 'badge-error';
+			case 'skipped':
+				return 'badge-ghost';
 			default:
 				return 'badge-ghost';
 		}
@@ -245,7 +321,7 @@
 
 		<div class="flex-1"></div>
 
-		{#if uploads.some((u) => u.status === 'done' || u.status === 'error')}
+		{#if uploads.some((u) => u.status === 'done' || u.status === 'error' || u.status === 'skipped')}
 			<button class="btn btn-ghost btn-sm" onclick={clearCompleted}>Clear Completed</button>
 		{/if}
 		<span class="text-sm text-base-content/60">{uploads.length} uploads</span>
@@ -288,6 +364,8 @@
 						<td>
 							{#if upload.status === 'uploading'}
 								<span class="text-xs text-base-content/40">Waiting...</span>
+							{:else if upload.status === 'skipped'}
+								<span class="text-xs text-base-content/40">—</span>
 							{:else if upload.status === 'error' && upload.uploadProgress < 100}
 								<span class="text-xs text-error">—</span>
 							{:else}
@@ -302,26 +380,30 @@
 							{/if}
 						</td>
 						<td>
-							<span class="badge badge-sm {getStatusBadgeClass(upload.status)}">
-								{upload.status === 'done' ? 'Done' : upload.status === 'error' ? 'Error' : upload.status === 'uploading' ? 'Uploading' : 'Processing'}
-							</span>
 							{#if upload.status === 'error' && upload.error}
-								<div class="tooltip tooltip-left" data-tip={upload.error}>
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										class="h-4 w-4 text-error inline ml-1 cursor-help"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-										/>
-									</svg>
+								<div class="tooltip tooltip-error tooltip-top before:-top-1" data-tip={upload.error}>
+									<span class="badge badge-sm {getStatusBadgeClass(upload.status)} cursor-help">
+										Error
+									</span>
 								</div>
+							{:else if upload.status === 'skipped' && upload.skipReason}
+								<div class="tooltip tooltip-info tooltip-top before:-top-1" data-tip={upload.skipReason}>
+									<span class="badge badge-sm {getStatusBadgeClass(upload.status)} cursor-help">
+										Skipped
+									</span>
+								</div>
+							{:else}
+								<span class="badge badge-sm {getStatusBadgeClass(upload.status)}">
+									{upload.status === 'done'
+										? 'Done'
+										: upload.status === 'error'
+											? 'Error'
+											: upload.status === 'uploading'
+												? 'Uploading'
+												: upload.status === 'skipped'
+													? 'Skipped'
+													: 'Processing'}
+								</span>
 							{/if}
 						</td>
 					</tr>

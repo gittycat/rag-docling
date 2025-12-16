@@ -4,7 +4,7 @@ warnings.filterwarnings("ignore", category=UserWarning, message=".*validate_defa
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from core_logic.rag_pipeline import query_rag
-from core_logic.chroma_manager import get_or_create_collection, list_documents, delete_document, add_documents
+from core_logic.chroma_manager import get_or_create_collection, list_documents, delete_document, add_documents, check_documents_exist
 from core_logic.chat_memory import get_chat_history, clear_session_memory
 from core_logic.document_processor import chunk_document_from_file, extract_metadata, SUPPORTED_EXTENSIONS
 from core_logic.settings import initialize_settings
@@ -121,6 +121,24 @@ class ModelsInfoResponse(BaseModel):
 class ConfigResponse(BaseModel):
     max_upload_size_mb: int
 
+class FileCheckItem(BaseModel):
+    filename: str
+    size: int
+    hash: str
+
+class FileCheckRequest(BaseModel):
+    files: list[FileCheckItem]
+
+class FileCheckResult(BaseModel):
+    filename: str
+    exists: bool
+    document_id: str | None = None
+    existing_filename: str | None = None
+    reason: str | None = None
+
+class FileCheckResponse(BaseModel):
+    results: dict[str, FileCheckResult]
+
 def process_and_index_document(file_path: str, filename: str) -> dict:
     logger.info(f"[CHUNKING] Calling chunk_document_from_file for {filename}")
     nodes = chunk_document_from_file(file_path)
@@ -215,6 +233,45 @@ async def get_documents():
         documents = list_documents(index)
         return DocumentListResponse(documents=documents)
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/documents/check-duplicates", response_model=FileCheckResponse)
+async def check_duplicate_documents(request: FileCheckRequest):
+    """
+    Check if documents with given hashes already exist in the system.
+    Returns information about which files are duplicates and should be skipped.
+
+    Args:
+        request: List of files with {filename, size, hash}
+
+    Returns:
+        Dictionary mapping filenames to their duplicate status
+    """
+    try:
+        logger.info(f"[CHECK_DUPLICATES] Checking {len(request.files)} files for duplicates")
+
+        index = get_or_create_collection()
+        file_checks = [{"filename": f.filename, "size": f.size, "hash": f.hash} for f in request.files]
+        results = check_documents_exist(index, file_checks)
+
+        # Convert to response model
+        formatted_results = {}
+        for filename, info in results.items():
+            formatted_results[filename] = FileCheckResult(
+                filename=filename,
+                exists=info["exists"],
+                document_id=info.get("document_id"),
+                existing_filename=info.get("existing_filename"),
+                reason=info.get("reason")
+            )
+
+        duplicates_count = sum(1 for r in formatted_results.values() if r.exists)
+        logger.info(f"[CHECK_DUPLICATES] Found {duplicates_count} duplicate(s) out of {len(request.files)} files")
+
+        return FileCheckResponse(results=formatted_results)
+
+    except Exception as e:
+        logger.error(f"[CHECK_DUPLICATES] Error checking duplicates: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload", response_model=BatchUploadResponse)
