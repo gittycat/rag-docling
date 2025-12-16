@@ -526,9 +526,14 @@ async def get_system_metrics() -> SystemMetrics:
     chromadb_url = get_optional_env("CHROMADB_URL", "http://chromadb:8000")
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{chromadb_url}/api/v1/heartbeat")
-            component_status["chromadb"] = "healthy" if resp.status_code == 200 else "unhealthy"
-    except Exception:
+            resp = await client.get(f"{chromadb_url}/api/v2/heartbeat")
+            if resp.status_code == 200:
+                component_status["chromadb"] = "healthy"
+            else:
+                logger.warning(f"ChromaDB health check failed: status={resp.status_code}, body={resp.text[:200]}")
+                component_status["chromadb"] = "unhealthy"
+    except Exception as e:
+        logger.warning(f"ChromaDB health check error: {e}")
         component_status["chromadb"] = "unavailable"
 
     # Check Redis
@@ -538,7 +543,8 @@ async def get_system_metrics() -> SystemMetrics:
         r = redis.from_url(redis_url)
         r.ping()
         component_status["redis"] = "healthy"
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Redis health check error: {e}")
         component_status["redis"] = "unavailable"
 
     # Check Ollama
@@ -546,8 +552,13 @@ async def get_system_metrics() -> SystemMetrics:
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(f"{ollama_url}/api/tags")
-            component_status["ollama"] = "healthy" if resp.status_code == 200 else "unhealthy"
-    except Exception:
+            if resp.status_code == 200:
+                component_status["ollama"] = "healthy"
+            else:
+                logger.warning(f"Ollama health check failed: status={resp.status_code}, body={resp.text[:200]}")
+                component_status["ollama"] = "unhealthy"
+    except Exception as e:
+        logger.warning(f"Ollama health check error: {e}")
         component_status["ollama"] = "unavailable"
 
     # Overall health
