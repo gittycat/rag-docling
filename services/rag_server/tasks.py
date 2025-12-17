@@ -9,6 +9,10 @@ from core_logic.settings import initialize_settings
 import logging
 from pathlib import Path
 import time
+import shutil
+
+# Persistent document storage path (shared with main.py via docker volume)
+DOCUMENT_STORAGE_PATH = Path("/data/documents")
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,7 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
 
         # Refresh BM25 retriever after adding documents (for hybrid search)
         logger.info(f"[TASK {task_id}] Phase 3: BM25 index refresh")
+        bm25_duration = 0
         try:
             bm25_start = time.time()
             from core_logic.hybrid_retriever import refresh_bm25_retriever
@@ -85,6 +90,18 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
         except Exception as e:
             logger.warning(f"[TASK {task_id}] Failed to refresh BM25 retriever: {e}")
             # Non-critical, continue
+
+        # Store original document for download functionality
+        logger.info(f"[TASK {task_id}] Phase 4: Storing original document for downloads")
+        try:
+            doc_storage_dir = DOCUMENT_STORAGE_PATH / doc_id
+            doc_storage_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = doc_storage_dir / filename
+            shutil.copy2(file_path, dest_path)
+            logger.info(f"[TASK {task_id}] Phase 4 completed - Document stored at {dest_path}")
+        except Exception as e:
+            logger.warning(f"[TASK {task_id}] Failed to store document for downloads: {e}")
+            # Non-critical - indexing succeeded, just download won't work
 
         result = {
             "id": doc_id,

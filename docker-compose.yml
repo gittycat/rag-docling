@@ -63,6 +63,7 @@ services:
       - ./data/indexed_documents:/app/documents
       - docs_repo:/tmp/shared
       - huggingface_cache:/home/appuser/.cache/huggingface
+      - documents_data:/data/documents
     secrets:
       - ollama_config
 
@@ -128,6 +129,7 @@ services:
       - ./data/indexed_documents:/app/documents
       - docs_repo:/tmp/shared
       - huggingface_cache:/home/appuser/.cache/huggingface
+      - documents_data:/data/documents
     secrets:
       - ollama_config
 
@@ -146,6 +148,8 @@ volumes:
   docs_repo:
     driver: local
   huggingface_cache:
+    driver: local
+  documents_data:
     driver: local
 
 # Secrets management

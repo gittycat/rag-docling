@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Generator
 from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
 from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from llama_index.core.query_engine import RetrieverQueryEngine
@@ -8,6 +8,7 @@ from core_logic.env_config import get_optional_env
 from core_logic.chat_memory import get_or_create_chat_memory
 from core_logic.hybrid_retriever import create_hybrid_retriever, get_hybrid_retriever_config
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -105,18 +106,7 @@ def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
     else:
         logger.warning("[RAG] No context nodes retrieved - LLM will respond without context")
 
-    sources = []
-    for node in response.source_nodes:
-        metadata = node.metadata
-        full_text = node.get_content()
-        source = {
-            'document_name': metadata.get('file_name', 'Unknown'),
-            'excerpt': full_text[:200] + '...' if len(full_text) > 200 else full_text,
-            'full_text': full_text,
-            'path': metadata.get('path', ''),
-            'distance': 1.0 - node.score if hasattr(node, 'score') and node.score else None
-        }
-        sources.append(source)
+    sources = _extract_sources(response.source_nodes)
 
     logger.info(f"[RAG] Query completed. Sources returned: {len(sources)}")
 
@@ -126,3 +116,115 @@ def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
         'query': query_text,
         'session_id': session_id
     }
+
+
+def _extract_sources(source_nodes) -> List[Dict]:
+    """Extract source information from response nodes."""
+    sources = []
+    seen_docs = set()  # Deduplicate by document_id
+
+    for node in source_nodes:
+        metadata = node.metadata
+        doc_id = metadata.get('document_id')
+
+        # Deduplicate sources by document_id
+        if doc_id and doc_id in seen_docs:
+            continue
+        if doc_id:
+            seen_docs.add(doc_id)
+
+        full_text = node.get_content()
+        source = {
+            'document_id': doc_id,
+            'document_name': metadata.get('file_name', 'Unknown'),
+            'excerpt': full_text[:200] + '...' if len(full_text) > 200 else full_text,
+            'full_text': full_text,
+            'path': metadata.get('path', ''),
+            'score': node.score if hasattr(node, 'score') and node.score else None
+        }
+        sources.append(source)
+
+    return sources
+
+
+def _create_chat_engine(index, session_id: str):
+    """Create chat engine with hybrid search and reranking."""
+    config = get_reranker_config()
+    hybrid_config = get_hybrid_retriever_config()
+
+    system_prompt = get_system_prompt()
+    context_prompt = get_context_prompt()
+    condense_prompt = get_condense_prompt()
+
+    memory = get_or_create_chat_memory(session_id)
+    retrieval_top_k = config['retrieval_top_k']
+
+    logger.info(f"[RAG] Creating chat engine: retrieval_top_k={retrieval_top_k}, reranker={config['enabled']}, hybrid={hybrid_config['enabled']}")
+
+    retriever = create_hybrid_retriever(index, similarity_top_k=retrieval_top_k)
+
+    if retriever is not None:
+        logger.info("[RAG] Using hybrid retriever (BM25 + Vector + RRF)")
+        chat_engine = CondensePlusContextChatEngine.from_defaults(
+            retriever=retriever,
+            memory=memory,
+            node_postprocessors=create_reranker_postprocessors(),
+            system_prompt=system_prompt,
+            context_prompt=context_prompt,
+            condense_prompt=condense_prompt,
+            verbose=False
+        )
+    else:
+        logger.info("[RAG] Using vector retriever only")
+        chat_engine = index.as_chat_engine(
+            chat_mode="condense_plus_context",
+            memory=memory,
+            similarity_top_k=retrieval_top_k,
+            node_postprocessors=create_reranker_postprocessors(),
+            system_prompt=system_prompt,
+            context_prompt=context_prompt,
+            condense_prompt=condense_prompt,
+            verbose=False
+        )
+
+    return chat_engine
+
+
+def query_rag_stream(query_text: str, session_id: str) -> Generator[str, None, None]:
+    """
+    Stream RAG query response as Server-Sent Events.
+
+    Yields SSE-formatted strings:
+    - event: token, data: {"token": "..."}
+    - event: sources, data: {"sources": [...], "session_id": "..."}
+    - event: done, data: {}
+
+    On error:
+    - event: error, data: {"error": "..."}
+    """
+    try:
+        index = get_or_create_collection()
+        chat_engine = _create_chat_engine(index, session_id)
+
+        logger.info(f"[RAG_STREAM] Starting streaming query, session_id={session_id}")
+
+        # Use stream_chat for token-by-token streaming
+        streaming_response = chat_engine.stream_chat(query_text)
+
+        # Stream tokens
+        for token in streaming_response.response_gen:
+            yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
+
+        # After streaming completes, extract sources
+        sources = _extract_sources(streaming_response.source_nodes)
+        logger.info(f"[RAG_STREAM] Streaming complete. Sources: {len(sources)}")
+
+        # Send sources
+        yield f"event: sources\ndata: {json.dumps({'sources': sources, 'session_id': session_id})}\n\n"
+
+        # Send done event
+        yield f"event: done\ndata: {{}}\n\n"
+
+    except Exception as e:
+        logger.error(f"[RAG_STREAM] Error during streaming: {str(e)}")
+        yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"

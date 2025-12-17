@@ -301,3 +301,187 @@ export async function fetchHealth(): Promise<{ status: string }> {
 	}
 	return response.json();
 }
+
+// ============================================================================
+// Types - Chat
+// ============================================================================
+
+export interface ChatSource {
+	document_id: string | null;
+	document_name: string;
+	excerpt: string;
+	full_text: string;
+	path: string;
+	score: number | null;
+}
+
+export interface ChatMessage {
+	role: 'user' | 'assistant';
+	content: string;
+	sources?: ChatSource[];
+	timestamp?: string;
+}
+
+export interface QueryResponse {
+	answer: string;
+	sources: ChatSource[];
+	session_id: string;
+}
+
+export interface ChatHistoryMessage {
+	role: string;
+	content: string;
+}
+
+export interface ChatHistoryResponse {
+	session_id: string;
+	messages: ChatHistoryMessage[];
+}
+
+export type SSEEventType = 'token' | 'sources' | 'done' | 'error';
+
+export interface SSETokenEvent {
+	event: 'token';
+	data: { token: string };
+}
+
+export interface SSESourcesEvent {
+	event: 'sources';
+	data: { sources: ChatSource[]; session_id: string };
+}
+
+export interface SSEDoneEvent {
+	event: 'done';
+	data: Record<string, never>;
+}
+
+export interface SSEErrorEvent {
+	event: 'error';
+	data: { error: string };
+}
+
+export type SSEEvent = SSETokenEvent | SSESourcesEvent | SSEDoneEvent | SSEErrorEvent;
+
+// ============================================================================
+// API Functions - Chat
+// ============================================================================
+
+/**
+ * Stream a RAG query response using Server-Sent Events.
+ * Yields SSE events as they arrive from the server.
+ */
+export async function* streamQuery(
+	query: string,
+	sessionId: string
+): AsyncGenerator<SSEEvent, void, undefined> {
+	const response = await fetch(`${API_BASE}/query/stream`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ query, session_id: sessionId })
+	});
+
+	if (!response.ok) {
+		throw new Error(`Query failed: ${response.statusText}`);
+	}
+
+	if (!response.body) {
+		throw new Error('No response body');
+	}
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+
+			buffer += decoder.decode(value, { stream: true });
+
+			// Parse SSE events from buffer
+			const lines = buffer.split('\n');
+			buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+			let currentEvent: SSEEventType | null = null;
+			let currentData = '';
+
+			for (const line of lines) {
+				if (line.startsWith('event: ')) {
+					currentEvent = line.slice(7).trim() as SSEEventType;
+				} else if (line.startsWith('data: ')) {
+					currentData = line.slice(6);
+				} else if (line === '' && currentEvent && currentData) {
+					// Empty line marks end of event
+					try {
+						const parsedData = JSON.parse(currentData);
+						yield { event: currentEvent, data: parsedData } as SSEEvent;
+					} catch {
+						console.warn('Failed to parse SSE data:', currentData);
+					}
+					currentEvent = null;
+					currentData = '';
+				}
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
+
+/**
+ * Send a non-streaming query to the RAG server.
+ * Returns the complete response at once.
+ */
+export async function sendQuery(query: string, sessionId?: string): Promise<QueryResponse> {
+	const response = await fetch(`${API_BASE}/query`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ query, session_id: sessionId })
+	});
+
+	if (!response.ok) {
+		throw new Error(`Query failed: ${response.statusText}`);
+	}
+
+	return response.json();
+}
+
+/**
+ * Get chat history for a session.
+ */
+export async function getChatHistory(sessionId: string): Promise<ChatHistoryResponse> {
+	const response = await fetch(`${API_BASE}/chat/history/${sessionId}`);
+	if (!response.ok) {
+		throw new Error(`Failed to fetch chat history: ${response.statusText}`);
+	}
+	return response.json();
+}
+
+/**
+ * Clear chat history for a session.
+ */
+export async function clearChatSession(sessionId: string): Promise<void> {
+	const response = await fetch(`${API_BASE}/chat/clear`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ session_id: sessionId })
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to clear session: ${response.statusText}`);
+	}
+}
+
+/**
+ * Get the download URL for a document.
+ */
+export function getDocumentDownloadUrl(documentId: string): string {
+	return `${API_BASE}/documents/${documentId}/download`;
+}

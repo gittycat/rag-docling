@@ -383,14 +383,13 @@ Get upload batch progress.
 ```
 
 #### POST /query
-Search documents and get AI-generated answer.
+Search documents and get AI-generated answer (non-streaming).
 
 **Request:**
 ```json
 {
   "query": "What is the main topic?",
-  "session_id": "user-123",
-  "n_results": 5
+  "session_id": "user-123"
 }
 ```
 
@@ -400,15 +399,70 @@ Search documents and get AI-generated answer.
   "answer": "Based on the documents...",
   "sources": [
     {
+      "document_id": "abc-123",
       "document_name": "file.pdf",
       "excerpt": "The main topic is...",
       "full_text": "...",
       "path": "/docs/file.pdf",
-      "distance": 0.15
+      "score": 0.85
     }
   ],
+  "session_id": "user-123"
+}
+```
+
+#### POST /query/stream
+Stream AI-generated answer using Server-Sent Events (SSE). Provides real-time token-by-token response.
+
+**Request:**
+```json
+{
   "query": "What is the main topic?",
   "session_id": "user-123"
+}
+```
+
+**Response:** `text/event-stream`
+```
+event: token
+data: {"token": "Based"}
+
+event: token
+data: {"token": " on"}
+
+event: token
+data: {"token": " the"}
+
+... (more tokens)
+
+event: sources
+data: {"sources": [...], "session_id": "user-123"}
+
+event: done
+data: {}
+```
+
+**Event Types:**
+- `token`: Streamed response token (`{"token": "..."}`)
+- `sources`: Source documents after response completes (`{"sources": [...], "session_id": "..."}`)
+- `done`: Stream complete (`{}`)
+- `error`: Error occurred (`{"error": "..."}`)
+
+**Client Example (JavaScript):**
+```javascript
+const response = await fetch('/api/query/stream', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ query: 'What is...?', session_id: 'abc' })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  // Parse SSE events from decoder.decode(value)
 }
 ```
 
@@ -465,7 +519,7 @@ Check if documents with given file hashes already exist in the system to prevent
 **Note:** Hash is computed using SHA-256 of file content, matching LlamaIndex's document hashing approach.
 
 #### DELETE /documents/{document_id}
-Delete a document and all its chunks.
+Delete a document and all its chunks. Also removes stored original file if available.
 
 **Response:**
 ```json
@@ -475,6 +529,20 @@ Delete a document and all its chunks.
   "deleted_chunks": 5
 }
 ```
+
+#### GET /documents/{document_id}/download
+Download the original document file. Documents are stored persistently after upload for download functionality.
+
+**Response:** Binary file with `Content-Disposition: attachment` header.
+
+**Example:**
+```bash
+curl -O http://localhost:8001/documents/abc-123/download
+```
+
+**Error Responses:**
+- `404`: Document not found or original file no longer available
+- `500`: Server error
 
 #### GET /chat/history/{session_id}
 Get conversation history for a session.
@@ -874,6 +942,43 @@ Prevents re-uploading identical documents by comparing SHA-256 file hashes befor
 - **Data Protection**: Automated backups, startup persistence verification
 - **Async Processing**: Celery handles document uploads in background
 - **Progress Tracking**: Real-time upload progress via Redis
+
+## Chat UI
+
+### Features
+
+The SvelteKit webapp provides a ChatGPT-like interface for interacting with the RAG system:
+
+- **Real-time Streaming**: Token-by-token response streaming via Server-Sent Events (SSE)
+- **Source Document Links**: Clickable badges showing source documents with download functionality
+- **New Chat**: Clear current session and start a fresh conversation
+- **Save Chat**: Export conversation history to JSON file
+- **Session Persistence**: Session ID stored in localStorage, survives page refreshes
+- **Chat Memory**: Server-side conversation history via Redis (1-hour TTL)
+
+### UI Components (DaisyUI)
+
+- `chat-start` / `chat-end`: Message alignment for assistant/user
+- `chat-bubble`: Message content with streaming indicator
+- `badge`: Source document links with hover states
+- `join`: Input field with send button
+
+### Data Flow
+
+1. User types message → `sendMessage()` called
+2. User message appended to local state
+3. `streamQuery()` SSE generator starts
+4. Tokens streamed and displayed in real-time
+5. On `sources` event: message finalized with sources
+6. Sources deduplicated by `document_id`
+7. Chat exported to JSON via `saveChat()`
+
+### Session Management
+
+- **Client**: Session ID generated with `crypto.randomUUID()`
+- **Persistence**: Stored in `localStorage.chat_session_id`
+- **Server**: Redis stores conversation history with 1-hour TTL
+- **Clear**: `POST /chat/clear` resets server-side history
 
 ## Phase 2 Implementation
 

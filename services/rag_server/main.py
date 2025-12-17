@@ -2,8 +2,10 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, message=".*validate_default.*")
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
-from core_logic.rag_pipeline import query_rag
+from core_logic.rag_pipeline import query_rag, query_rag_stream
+import shutil
 from core_logic.chroma_manager import get_or_create_collection, list_documents, delete_document, add_documents, check_documents_exist
 from core_logic.chat_memory import get_chat_history, clear_session_memory
 from core_logic.document_processor import chunk_document_from_file, extract_metadata, SUPPORTED_EXTENSIONS
@@ -23,6 +25,9 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="RAG Server")
+
+# Persistent document storage path
+DOCUMENT_STORAGE_PATH = Path("/data/documents")
 
 @app.on_event("startup")
 async def startup_event():
@@ -226,6 +231,31 @@ async def query(request: QueryRequest):
         logger.error(f"[QUERY] Traceback:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/query/stream")
+async def query_stream(request: QueryRequest):
+    """
+    Stream RAG query response using Server-Sent Events.
+
+    Returns a stream of SSE events:
+    - event: token, data: {"token": "..."}  (streamed response tokens)
+    - event: sources, data: {"sources": [...], "session_id": "..."}  (source documents)
+    - event: done, data: {}  (completion signal)
+    - event: error, data: {"error": "..."}  (on error)
+    """
+    session_id = request.session_id or str(uuid.uuid4())
+    logger.info(f"[QUERY_STREAM] Starting streaming query with session_id: {session_id}")
+
+    return StreamingResponse(
+        query_rag_stream(request.query, session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
 @app.get("/documents", response_model=DocumentListResponse)
 async def get_documents():
     try:
@@ -364,11 +394,66 @@ async def delete_document_by_id(document_id: str):
             logger.warning(f"[DELETE] Failed to refresh BM25 retriever: {e}")
             # Non-critical, continue
 
+        # Clean up stored document file if it exists
+        doc_storage_dir = DOCUMENT_STORAGE_PATH / document_id
+        if doc_storage_dir.exists():
+            try:
+                shutil.rmtree(doc_storage_dir)
+                logger.info(f"[DELETE] Removed stored document files for {document_id}")
+            except Exception as e:
+                logger.warning(f"[DELETE] Failed to remove stored files: {e}")
+
         return DeleteResponse(
             status="success",
             message=f"Document {document_id} deleted successfully"
         )
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents/{document_id}/download")
+async def download_document(document_id: str):
+    """
+    Download the original document file.
+
+    Returns the original file if available, or 404 if not found.
+    """
+    try:
+        doc_storage_dir = DOCUMENT_STORAGE_PATH / document_id
+
+        if not doc_storage_dir.exists():
+            # Try to get document metadata from ChromaDB for error message
+            index = get_or_create_collection()
+            documents = list_documents(index)
+            doc_info = next((d for d in documents if d.get('id') == document_id), None)
+
+            if doc_info:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Original file for '{doc_info.get('file_name', document_id)}' is no longer available"
+                )
+            raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+
+        # Find the file in the storage directory
+        files = list(doc_storage_dir.iterdir())
+        if not files:
+            raise HTTPException(status_code=404, detail="Document file not found in storage")
+
+        file_path = files[0]  # Should be only one file per document
+        filename = file_path.name
+
+        logger.info(f"[DOWNLOAD] Serving document {document_id}: {filename}")
+
+        return FileResponse(
+            path=str(file_path),
+            filename=filename,
+            media_type="application/octet-stream"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DOWNLOAD] Error downloading document: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/chat/history/{session_id}", response_model=ChatHistoryResponse)
