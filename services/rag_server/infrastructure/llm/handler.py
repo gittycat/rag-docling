@@ -1,5 +1,5 @@
 from llama_index.llms.ollama import Ollama
-from core_logic.env_config import get_required_env, get_optional_env
+from core.config import get_required_env, get_optional_env
 from typing import Optional
 import logging
 

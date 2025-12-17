@@ -3,8 +3,8 @@ import chromadb
 from llama_index.core import VectorStoreIndex
 from llama_index.core.schema import TextNode
 from llama_index.vector_stores.chroma import ChromaVectorStore
-from core_logic.embeddings import get_embedding_function
-from core_logic.env_config import get_required_env
+from infrastructure.llm.embeddings import get_embedding_function
+from core.config import get_required_env
 import logging
 import time
 

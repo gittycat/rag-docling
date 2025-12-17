@@ -9,12 +9,12 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from core_logic.metrics_models import (
+from schemas.metrics import (
     EvaluationRun,
     MetricResult,
     TestCaseResult,
 )
-from core_logic.metrics_service import (
+from services.metrics import (
     get_retrieval_config,
     save_evaluation_run,
 )

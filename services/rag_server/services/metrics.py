@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 import httpx
 
-from core_logic.metrics_models import (
+from schemas.metrics import (
     ModelInfo,
     ModelSize,
     ModelsConfig,
@@ -31,10 +31,10 @@ from core_logic.metrics_models import (
     MetricTrend,
     SystemMetrics,
 )
-from core_logic.env_config import get_optional_env
-from core_logic.hybrid_retriever import get_hybrid_retriever_config
-from core_logic.rag_pipeline import get_reranker_config
-from core_logic.document_processor import get_contextual_retrieval_config
+from core.config import get_optional_env
+from services.hybrid_retriever import get_hybrid_retriever_config
+from services.rag import get_reranker_config
+from services.document import get_contextual_retrieval_config
 
 logger = logging.getLogger(__name__)
 
@@ -500,7 +500,7 @@ def get_evaluation_summary() -> EvaluationSummary:
 
 async def get_system_metrics() -> SystemMetrics:
     """Get complete system metrics overview."""
-    from core_logic.chroma_manager import get_or_create_collection, list_documents
+    from infrastructure.database.chroma import get_or_create_collection, list_documents
 
     # Get all configurations
     models = await get_models_config()

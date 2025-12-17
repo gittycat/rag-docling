@@ -45,11 +45,15 @@ RUN --mount=type=cache,target=/home/appuser/.cache/uv,uid=1000,gid=1000 \
     uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
 
 # Copy application code (exclude pyproject.toml to avoid overwriting .venv)
-COPY --chown=appuser:appuser services/rag_server/core_logic ./core_logic
+COPY --chown=appuser:appuser services/rag_server/api ./api
+COPY --chown=appuser:appuser services/rag_server/schemas ./schemas
+COPY --chown=appuser:appuser services/rag_server/services ./services
+COPY --chown=appuser:appuser services/rag_server/infrastructure ./infrastructure
+COPY --chown=appuser:appuser services/rag_server/core ./core
+COPY --chown=appuser:appuser services/rag_server/evaluation ./evaluation
+COPY --chown=appuser:appuser services/rag_server/eval_data ./eval_data
 COPY --chown=appuser:appuser services/rag_server/tests ./tests
 COPY --chown=appuser:appuser services/rag_server/main.py ./
-COPY --chown=appuser:appuser services/rag_server/celery_app.py ./
-COPY --chown=appuser:appuser services/rag_server/tasks.py ./
 
 # Expose port
 EXPOSE 8001

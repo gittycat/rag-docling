@@ -2,8 +2,8 @@ from typing import Optional
 from llama_index.core import VectorStoreIndex
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.retrievers.bm25 import BM25Retriever
-from core_logic.chroma_manager import get_all_nodes
-from core_logic.env_config import get_optional_env
+from infrastructure.database.chroma import get_all_nodes
+from core.config import get_optional_env
 import logging
 
 logger = logging.getLogger(__name__)

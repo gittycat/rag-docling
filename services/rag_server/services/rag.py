@@ -2,11 +2,11 @@ from typing import Dict, List, Optional, Generator
 from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
 from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from llama_index.core.query_engine import RetrieverQueryEngine
-from core_logic.chroma_manager import get_or_create_collection
-from core_logic.llm_handler import get_system_prompt, get_context_prompt, get_condense_prompt
-from core_logic.env_config import get_optional_env
-from core_logic.chat_memory import get_or_create_chat_memory
-from core_logic.hybrid_retriever import create_hybrid_retriever, get_hybrid_retriever_config
+from infrastructure.database.chroma import get_or_create_collection
+from infrastructure.llm.handler import get_system_prompt, get_context_prompt, get_condense_prompt
+from core.config import get_optional_env
+from services.chat import get_or_create_chat_memory
+from services.hybrid_retriever import create_hybrid_retriever, get_hybrid_retriever_config
 import logging
 import json
 

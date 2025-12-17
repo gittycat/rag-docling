@@ -1,7 +1,7 @@
 import redis
 import json
 from typing import Dict, List
-from core_logic.env_config import get_required_env
+from core.config import get_required_env
 import logging
 
 logger = logging.getLogger(__name__)

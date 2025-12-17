@@ -1,7 +1,7 @@
 from celery import Celery
 from celery.signals import worker_process_init
-from core_logic.env_config import get_required_env
-from core_logic.logging_config import configure_logging
+from core.config import get_required_env
+from core.logging import configure_logging
 import logging
 
 configure_logging()
@@ -13,7 +13,7 @@ celery_app = Celery(
     "rag_tasks",
     broker=redis_url,
     backend=redis_url,
-    include=["tasks"]
+    include=["infrastructure.tasks.worker"]
 )
 
 celery_app.conf.update(
@@ -34,7 +34,7 @@ celery_app.conf.update(
 
 @worker_process_init.connect
 def init_worker(**kwargs):
-    from core_logic.settings import initialize_settings
+    from core.config import initialize_settings
     logger.info("[CELERY] Initializing settings for worker process")
     initialize_settings()
     logger.info("[CELERY] Worker process initialization complete")

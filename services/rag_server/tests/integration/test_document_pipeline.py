@@ -44,8 +44,8 @@ class TestPDFFullPipeline:
         document processing pipeline works end-to-end without mocking.
         """
         # Import after env is set
-        from core_logic.document_processor import chunk_document_from_file
-        from core_logic.chroma_manager import (
+        from services.document import chunk_document_from_file
+        from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             query_documents,
@@ -116,8 +116,8 @@ class TestPDFFullPipeline:
 
         This verifies the fallback path for .txt/.md files works correctly.
         """
-        from core_logic.document_processor import chunk_document_from_file
-        from core_logic.chroma_manager import (
+        from services.document import chunk_document_from_file
+        from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             query_documents,
@@ -162,11 +162,11 @@ class TestPDFFullPipeline:
         ChromaDB only supports flat types (str, int, float, bool, None).
         This tests the metadata cleaning works correctly.
         """
-        from core_logic.document_processor import (
+        from services.document import (
             chunk_document_from_file,
             extract_metadata,
         )
-        from core_logic.chroma_manager import (
+        from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             list_documents,
@@ -211,8 +211,8 @@ class TestPDFFullPipeline:
         - All chunks have reasonable size
         - Content is distributed across chunks
         """
-        from core_logic.document_processor import chunk_document_from_file
-        from core_logic.chroma_manager import (
+        from services.document import chunk_document_from_file
+        from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             delete_document,
@@ -248,7 +248,7 @@ class TestUnsupportedFormats:
 
     def test_unsupported_format_rejected(self, integration_env, tmp_path):
         """Unsupported file types should raise clear error."""
-        from core_logic.document_processor import chunk_document_from_file
+        from services.document import chunk_document_from_file
 
         # Create fake executable file
         exe_path = tmp_path / "program.exe"
@@ -259,7 +259,7 @@ class TestUnsupportedFormats:
 
     def test_missing_file_error(self, integration_env):
         """Non-existent file should raise clear error."""
-        from core_logic.document_processor import chunk_document_from_file
+        from services.document import chunk_document_from_file
 
         with pytest.raises((FileNotFoundError, ValueError, Exception)):
             chunk_document_from_file("/nonexistent/path/file.pdf")

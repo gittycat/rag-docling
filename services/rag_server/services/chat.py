@@ -1,7 +1,7 @@
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.storage.chat_store.redis import RedisChatStore
 from llama_index.core import Settings
-from core_logic.env_config import get_required_env
+from core.config import get_required_env
 from typing import Dict, Optional
 import logging
 

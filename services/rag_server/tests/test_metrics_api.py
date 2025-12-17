@@ -30,7 +30,7 @@ client = TestClient(app)
 @pytest.fixture
 def mock_ollama():
     """Mock Ollama API responses."""
-    with patch('core_logic.metrics_service.httpx.AsyncClient') as mock_client:
+    with patch('services.metrics.httpx.AsyncClient') as mock_client:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -53,7 +53,7 @@ def mock_ollama():
 @pytest.fixture
 def mock_system_metrics():
     """Mock the get_system_metrics function to return test data."""
-    from core_logic.metrics_models import (
+    from schemas.metrics import (
         SystemMetrics,
         ModelsConfig,
         ModelInfo,
@@ -152,7 +152,7 @@ def mock_system_metrics():
     async def mock_get_system_metrics():
         return mock_metrics
 
-    with patch('core_logic.metrics_service.get_system_metrics', mock_get_system_metrics):
+    with patch('services.metrics.get_system_metrics', mock_get_system_metrics):
         yield mock_metrics
 
 

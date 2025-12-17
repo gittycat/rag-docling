@@ -5,11 +5,11 @@ from unittest.mock import Mock, patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-@patch('core_logic.chroma_manager.VectorStoreIndex')
+@patch('infrastructure.database.chroma.VectorStoreIndex')
 @patch('chromadb.HttpClient')
 def test_get_or_create_collection(mock_client_class, mock_index_class):
     """Get or create VectorStoreIndex with ChromaDB"""
-    from core_logic.chroma_manager import get_or_create_collection
+    from infrastructure.database.chroma import get_or_create_collection
 
     mock_client = MagicMock()
     mock_collection = MagicMock()
@@ -27,7 +27,7 @@ def test_get_or_create_collection(mock_client_class, mock_index_class):
 
 def test_add_documents_to_collection():
     """Add nodes to VectorStoreIndex one at a time"""
-    from core_logic.chroma_manager import add_documents
+    from infrastructure.database.chroma import add_documents
 
     mock_index = MagicMock()
 
@@ -46,7 +46,7 @@ def test_add_documents_to_collection():
 
 def test_add_documents_with_progress_callback():
     """Verify progress callback is called for each chunk"""
-    from core_logic.chroma_manager import add_documents
+    from infrastructure.database.chroma import add_documents
 
     mock_index = MagicMock()
     mock_callback = MagicMock()
@@ -69,7 +69,7 @@ def test_add_documents_with_progress_callback():
 
 def test_query_collection():
     """Query VectorStoreIndex and return results in compatible format"""
-    from core_logic.chroma_manager import query_documents
+    from infrastructure.database.chroma import query_documents
 
     mock_index = MagicMock()
     mock_retriever = MagicMock()
@@ -100,7 +100,7 @@ def test_query_collection():
 
 def test_delete_document_from_collection():
     """Delete document chunks from index by document_id"""
-    from core_logic.chroma_manager import delete_document
+    from infrastructure.database.chroma import delete_document
 
     mock_index = MagicMock()
     mock_vector_store = MagicMock()
@@ -122,7 +122,7 @@ def test_delete_document_from_collection():
 
 def test_list_all_documents():
     """List all documents in index grouped by document_id"""
-    from core_logic.chroma_manager import list_documents
+    from infrastructure.database.chroma import list_documents
 
     mock_index = MagicMock()
     mock_vector_store = MagicMock()
@@ -152,12 +152,12 @@ def test_list_all_documents():
     mock_chroma_collection.get.assert_called_once()
 
 
-@patch('core_logic.chroma_manager.VectorStoreIndex')
+@patch('infrastructure.database.chroma.VectorStoreIndex')
 @patch('chromadb.HttpClient')
-@patch('core_logic.chroma_manager.get_embedding_function')
+@patch('infrastructure.database.chroma.get_embedding_function')
 def test_collection_uses_embedding_function(mock_embed_fn, mock_client_class, mock_index_class):
     """Verify index is configured with LlamaIndex Ollama embedding function"""
-    from core_logic.chroma_manager import get_or_create_collection
+    from infrastructure.database.chroma import get_or_create_collection
 
     mock_client = MagicMock()
     mock_collection = MagicMock()

@@ -33,7 +33,7 @@ class TestCorruptedFileHandling:
         Verifies the system doesn't crash on malformed files and
         reports clear error messages.
         """
-        from core_logic.document_processor import chunk_document_from_file
+        from services.document import chunk_document_from_file
 
         # Corrupted PDF should raise an exception, not crash
         with pytest.raises(Exception) as exc_info:
@@ -120,7 +120,7 @@ class TestCorruptedFileHandling:
         """
         Empty file -> handled gracefully (error or empty result).
         """
-        from core_logic.document_processor import chunk_document_from_file
+        from services.document import chunk_document_from_file
 
         # Create empty file
         empty_file = tmp_path / "empty.txt"
@@ -153,19 +153,19 @@ class TestGracefulDegradation:
 
         Tests graceful degradation when hybrid search isn't possible.
         """
-        from core_logic.hybrid_retriever import (
+        from services.hybrid_retriever import (
             create_hybrid_retriever,
             get_hybrid_retriever_config,
         )
-        from core_logic.chroma_manager import get_or_create_collection
+        from infrastructure.database.chroma import get_or_create_collection
         from unittest.mock import patch
 
         config = get_hybrid_retriever_config()
         assert config['enabled'], "Hybrid search should be enabled"
 
         # Mock BM25 to fail
-        with patch('core_logic.hybrid_retriever.get_bm25_retriever', return_value=None):
-            with patch('core_logic.hybrid_retriever.initialize_bm25_retriever', return_value=None):
+        with patch('services.hybrid_retriever.get_bm25_retriever', return_value=None):
+            with patch('services.hybrid_retriever.initialize_bm25_retriever', return_value=None):
                 index = get_or_create_collection()
                 retriever = create_hybrid_retriever(index, similarity_top_k=10)
 
@@ -184,7 +184,7 @@ class TestGracefulDegradation:
 
         Tests that contextual retrieval failure doesn't block document processing.
         """
-        from core_logic.document_processor import (
+        from services.document import (
             chunk_document_from_file,
             add_contextual_prefix,
         )
@@ -201,7 +201,7 @@ class TestGracefulDegradation:
         original_text = test_node.text
 
         # Mock LLM to timeout
-        with patch('core_logic.document_processor.get_llm_client') as mock_llm:
+        with patch('services.document.get_llm_client') as mock_llm:
             mock_llm.return_value.complete.side_effect = TimeoutError("LLM timeout")
 
             result_node = add_contextual_prefix(
@@ -261,12 +261,12 @@ class TestServiceConnectionErrors:
 
         Note: This test uses mocking since we can't easily take down ChromaDB.
         """
-        from core_logic.chroma_manager import get_chroma_client
+        from infrastructure.database.chroma import get_chroma_client
         from unittest.mock import patch
         import chromadb
 
         # Mock ChromaDB client to simulate connection error
-        with patch('core_logic.chroma_manager.chromadb.HttpClient') as mock_client:
+        with patch('infrastructure.database.chroma.chromadb.HttpClient') as mock_client:
             mock_client.side_effect = Exception("Connection refused")
 
             with pytest.raises(Exception) as exc_info:
@@ -282,11 +282,11 @@ class TestServiceConnectionErrors:
         """
         Ollama not running -> embedding fails with meaningful error.
         """
-        from core_logic.embeddings import get_embedding_function
+        from infrastructure.llm.embeddings import get_embedding_function
         from unittest.mock import patch
 
         # Mock Ollama to be unavailable
-        with patch('core_logic.embeddings.OllamaEmbedding') as mock_embed:
+        with patch('infrastructure.llm.embeddings.OllamaEmbedding') as mock_embed:
             mock_instance = MagicMock()
             mock_instance.get_text_embedding.side_effect = Exception(
                 "Connection refused: Ollama not running"

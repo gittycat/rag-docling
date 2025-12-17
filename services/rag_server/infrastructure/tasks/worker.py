@@ -1,11 +1,11 @@
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, message=".*validate_default.*")
 
-from celery_app import celery_app
-from core_logic.document_processor import chunk_document_from_file, extract_metadata
-from core_logic.chroma_manager import get_or_create_collection, add_documents
-from core_logic.progress_tracker import update_task_progress, set_task_total_chunks, increment_task_chunk_progress
-from core_logic.settings import initialize_settings
+from infrastructure.tasks.celery_app import celery_app
+from services.document import chunk_document_from_file, extract_metadata
+from infrastructure.database.chroma import get_or_create_collection, add_documents
+from infrastructure.tasks.progress import update_task_progress, set_task_total_chunks, increment_task_chunk_progress
+from core.config import initialize_settings
 import logging
 from pathlib import Path
 import time
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(
     bind=True,
-    name="tasks.process_document_task",
+    name="infrastructure.tasks.worker.process_document_task",
     autoretry_for=(Exception,),
     retry_kwargs={'max_retries': 3, 'countdown': 5},
     retry_backoff=True,
@@ -83,7 +83,7 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
         bm25_duration = 0
         try:
             bm25_start = time.time()
-            from core_logic.hybrid_retriever import refresh_bm25_retriever
+            from services.hybrid_retriever import refresh_bm25_retriever
             refresh_bm25_retriever(index)
             bm25_duration = time.time() - bm25_start
             logger.info(f"[TASK {task_id}] Phase 3 completed in {bm25_duration:.2f}s - BM25 retriever refreshed")

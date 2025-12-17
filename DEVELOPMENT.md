@@ -98,6 +98,48 @@ Complete technical reference for developers working on this RAG system. Covers a
 - pytest - Testing framework
 - DeepEval - RAG evaluation framework
 
+### Celery Architecture
+
+#### How RAG Server, Celery, and Redis Interact
+
+```text
+┌─────────────┐                  ┌─────────────┐                  ┌────────────────┐
+│  rag-server │  1. Queue task   │    Redis    │  2. Pull task    │ celery-worker  │
+│  (FastAPI)  │ ───────────────▶ │  (broker)   │ ◀─────────────── │   (consumer)   │
+│             │                  │             │                  │                │
+│  .delay()   │                  │  task queue │                  │  execute task  │
+└─────────────┘                  └─────────────┘                  └────────────────┘
+       │                               ▲                                  │
+       │                               │ 3. Update progress/results       │
+       │                               └──────────────────────────────────┘
+       │                                                                  │
+       └──────────────────── Shared Codebase ─────────────────────────────┘
+```
+
+**Flow:**
+1. **rag-server** receives upload request, saves file to shared volume, calls `process_document_task.delay()`
+2. Task serialized to **Redis** queue (task name + arguments only, not code)
+3. **celery-worker** polls Redis, picks up task, executes using shared codebase
+4. Worker updates progress in Redis; rag-server reads progress for status endpoint
+
+**Key point:** No direct HTTP communication between rag-server and celery-worker. Redis is the message broker.
+
+#### Why Same Codebase for RAG Server and Celery Worker
+
+Both services use the same Docker image (`./services/rag_server/Dockerfile`) with different entry points:
+
+| Reason | Explanation |
+|--------|-------------|
+| **Task synchronization** | Task signatures must match between producer (rag-server) and consumer (celery-worker) |
+| **Shared business logic** | Document processing, embeddings, ChromaDB access used by both |
+| **Single dependency set** | One `pyproject.toml` = no version mismatches between services |
+| **Simpler CI/CD** | Build once, deploy with different commands |
+| **No code duplication** | Changes to processing logic apply to both automatically |
+
+**Industry standard:** This pattern is recommended by [TestDriven.io](https://testdriven.io/courses/fastapi-celery/docker/), Docker Hub's official Celery image, and most production FastAPI+Celery deployments.
+
+**When to separate:** Only if workers run on different machines/networks, need vastly different resources, or are owned by different teams.
+
 ## Development Setup
 
 ### Prerequisites
@@ -1420,3 +1462,26 @@ Use the `--save` flag when running evaluations to store results for the metrics 
 - [ ] Additional file formats (CSV, JSON)
 
 See [RAG Accuracy Improvement Plan](docs/RAG_ACCURACY_IMPROVEMENT_PLAN_2025.md) for details.
+
+## Production Suitability
+The current project is not suitable for production in an enterprise setting.
+The missing work fits into these categories:
+
+1. Data privacy and systems security.
+
+A full review here would be guided by the type of data kept and the legal requirements.
+This project can be fully run "on-prem" without relying on foreign providers.
+
+A note about this. For a fully private system, performance and accuracy will depend on the open source model used for inference and on which hardware is used. As of writing (Dec 2025), the top open source models can perform well enough for a RAG application (todo: list evals). The main limitation is in the hardware requirement. End user laptops and desktops have inadequate GPU and memory to run those LLMs at full size. At a minimum, an in-house server with powerful GPU is needed.
+
+2. Observability
+
+Very minimum monitoring is currently provided using application logs. Full monitoring at both infrastructure and application levels is expected in an enterprise setting.
+
+3. High Availability
+
+This is also missing or at least not well defined (container restarts). 
+Depending on the level of HA needed, the solution could become much more complex. Kubernetes orchestration is now common although often overkill. The SLA typically determines the technical solution needed here.
+
+4. Disaster recovery including backups. Again driven by SLA.
+

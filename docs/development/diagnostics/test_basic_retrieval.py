@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core_logic.rag_pipeline import query_rag, get_reranker_config
-from core_logic.chroma_manager import get_or_create_collection, list_documents, add_documents
-from core_logic.document_processor import chunk_document_from_file
+from services.rag import query_rag, get_reranker_config
+from infrastructure.database.chroma import get_or_create_collection, list_documents, add_documents
+from services.document import chunk_document_from_file
 import uuid
 import json
 

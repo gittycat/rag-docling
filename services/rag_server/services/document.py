@@ -5,7 +5,7 @@ from llama_index.node_parser.docling import DoclingNodeParser
 from llama_index.core import SimpleDirectoryReader
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import Document, TextNode
-from core_logic.env_config import get_optional_env
+from core.config import get_optional_env
 import logging
 import time
 import hashlib
@@ -68,7 +68,7 @@ def add_contextual_prefix(node: TextNode, document_name: str, document_type: str
     start_time = time.time()
     logger.info(f"[CONTEXTUAL] Starting LLM call for contextual prefix generation")
 
-    from core_logic.llm_handler import get_llm_client
+    from infrastructure.llm.handler import get_llm_client
 
     chunk_preview = node.get_content()[:400]  # Use first 400 chars for context
 

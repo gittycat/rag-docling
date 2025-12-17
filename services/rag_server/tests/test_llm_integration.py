@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def test_get_system_prompt():
     """System prompt should define LLM behavior and style"""
-    from core_logic.llm_handler import get_system_prompt
+    from infrastructure.llm.handler import get_system_prompt
 
     prompt = get_system_prompt()
 
@@ -20,7 +20,7 @@ def test_get_system_prompt():
 
 def test_get_context_prompt():
     """Context prompt should have template placeholders and grounding instructions"""
-    from core_logic.llm_handler import get_context_prompt
+    from infrastructure.llm.handler import get_context_prompt
 
     prompt = get_context_prompt()
 
@@ -36,7 +36,7 @@ def test_get_context_prompt():
 
 def test_get_condense_prompt():
     """Condense prompt should return None to use LlamaIndex default"""
-    from core_logic.llm_handler import get_condense_prompt
+    from infrastructure.llm.handler import get_condense_prompt
 
     prompt = get_condense_prompt()
 
@@ -46,7 +46,7 @@ def test_get_condense_prompt():
 @patch.dict('os.environ', {'OLLAMA_URL': 'http://test:11434', 'LLM_MODEL': 'test-model'})
 def test_get_llm_client():
     """LLM client should be configured with Ollama URL and model"""
-    from core_logic.llm_handler import get_llm_client
+    from infrastructure.llm.handler import get_llm_client
 
     llm = get_llm_client()
 
@@ -59,7 +59,7 @@ def test_get_llm_client():
 
 def test_system_prompt_no_conversational_fillers():
     """System prompt should explicitly discourage conversational fillers"""
-    from core_logic.llm_handler import get_system_prompt
+    from infrastructure.llm.handler import get_system_prompt
 
     prompt = get_system_prompt()
 
@@ -76,7 +76,7 @@ def test_system_prompt_no_conversational_fillers():
 
 def test_context_prompt_structure():
     """Context prompt should follow LlamaIndex chat engine format"""
-    from core_logic.llm_handler import get_context_prompt
+    from infrastructure.llm.handler import get_context_prompt
 
     prompt = get_context_prompt()
 
@@ -94,7 +94,7 @@ def test_context_prompt_structure():
 
 def test_prompts_are_consistent():
     """All prompt functions should return consistent types"""
-    from core_logic.llm_handler import (
+    from infrastructure.llm.handler import (
         get_system_prompt,
         get_context_prompt,
         get_condense_prompt
@@ -116,7 +116,7 @@ def test_prompts_are_consistent():
 @patch.dict('os.environ', {'OLLAMA_URL': 'http://test:11434', 'LLM_MODEL': 'test-model'})
 def test_llm_client_timeout():
     """LLM client should have appropriate timeout setting"""
-    from core_logic.llm_handler import get_llm_client
+    from infrastructure.llm.handler import get_llm_client
 
     llm = get_llm_client()
 
