@@ -198,19 +198,27 @@ docker compose -f docker-compose.ci.yml down
 
 ### Environment Variables
 
+**LLM Provider (multi-provider support):**
+- `LLM_PROVIDER`: Provider name - `ollama` (default), `openai`, `anthropic`, `google`, `deepseek`, `moonshot`
+- `LLM_MODEL`: Model name (required)
+- `LLM_API_KEY`: API key (required for cloud providers, optional for Ollama)
+- `LLM_BASE_URL`: Custom endpoint URL (optional, auto-set for Moonshot)
+- `LLM_TIMEOUT`: Request timeout in seconds (default: 120)
+
+**Ollama-specific (when LLM_PROVIDER=ollama):**
+- `OLLAMA_URL`: Ollama server URL (default: `http://host.docker.internal:11434`)
+- `OLLAMA_KEEP_ALIVE`: Keep model loaded (default: `10m`, use `-1` indefinite, `0` unload immediately)
+
 **Required:**
-- `CHROMADB_URL`, `OLLAMA_URL`, `EMBEDDING_MODEL`, `LLM_MODEL`, `REDIS_URL`
+- `CHROMADB_URL`, `EMBEDDING_MODEL`, `REDIS_URL`
 
 **Retrieval:**
 - `ENABLE_RERANKER=true`, `RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2`, `RETRIEVAL_TOP_K=10`
 - `ENABLE_HYBRID_SEARCH=true`, `RRF_K=60`
 - `ENABLE_CONTEXTUAL_RETRIEVAL=false` (default: off for speed)
 
-**Optimization:**
-- `OLLAMA_KEEP_ALIVE=10m` (keep model loaded: 10m, -1 indefinite, 0 unload immediately)
-- `MAX_UPLOAD_SIZE=80` (max upload size in MB)
-
 **Other:**
+- `MAX_UPLOAD_SIZE=80` (max upload size in MB)
 - `LOG_LEVEL=INFO` (DEBUG for development)
 
 **Note:** Celery worker shares all RAG Server env vars
@@ -227,15 +235,23 @@ docker compose -f docker-compose.ci.yml down
 
 ## Key Files
 
-**Core Pipeline** (`services/rag_server/core_logic/`):
-- `rag_pipeline.py`: Chat engine with hybrid search + reranking + memory
+**Services** (`services/rag_server/services/`):
+- `rag.py`: RAG query with hybrid search + reranking + chat engine
 - `hybrid_retriever.py`: BM25 + Vector + RRF implementation
-- `document_processor.py`: DoclingReader + contextual retrieval + DoclingNodeParser
-- `chroma_manager.py`: VectorStoreIndex with progress callbacks + BM25 node access
-- `chat_memory.py`: Session-based ChatMemoryBuffer with RedisChatStore
-- `embeddings.py`, `llm_handler.py`, `settings.py`, `progress_tracker.py`, `env_config.py`, `logging_config.py`
+- `document.py`: Document processing with Docling + contextual retrieval
+- `chat.py`: Session-based ChatMemoryBuffer with RedisChatStore
 
-**API & Async:** `main.py` (FastAPI), `celery_app.py`, `tasks.py` (process_document_task)
+**LLM Infrastructure** (`services/rag_server/infrastructure/llm/`):
+- `factory.py`: Multi-provider LLM client factory (Ollama, OpenAI, Anthropic, Google, DeepSeek, Moonshot)
+- `config.py`: LLMConfig dataclass + LLMProvider enum
+- `providers.py`: Provider-specific client creators
+- `prompts.py`: System, context, and condense prompts
+- `embeddings.py`: Ollama embedding configuration
+
+**Database** (`services/rag_server/infrastructure/database/`):
+- `chroma.py`: VectorStoreIndex with ChromaDB
+
+**API & Async:** `main.py` (FastAPI), `infrastructure/tasks/celery_app.py`, `tasks.py`
 
 **Evaluation:** `evaluation/` (DeepEval), `eval_data/golden_qa.json` (10 Q&A pairs)
 

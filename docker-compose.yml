@@ -29,10 +29,18 @@ services:
       - "8001:8001"
     environment:
       - CHROMADB_URL=http://chromadb:8000
-      - OLLAMA_URL=http://host.docker.internal:11434
+      # LLM Provider Configuration
+      # Supported: ollama, openai, anthropic, google, deepseek, moonshot
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-gemma3:4b}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-120}
+      # Ollama-specific (used when LLM_PROVIDER=ollama)
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-10m}
+      # Embedding Model
       - EMBEDDING_MODEL=nomic-embed-text:latest
-      - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
-      - OLLAMA_KEEP_ALIVE=10m  # Keep model loaded: 10m (default), -1 (indefinitely), 0 (unload immediately)
       - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RETRIEVAL_TOP_K=10
@@ -99,10 +107,17 @@ services:
     restart: unless-stopped
     environment:
       - CHROMADB_URL=http://chromadb:8000
-      - OLLAMA_URL=http://host.docker.internal:11434
+      # LLM Provider Configuration (same as rag-server)
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-gemma3:4b}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_TIMEOUT=${LLM_TIMEOUT:-120}
+      # Ollama-specific (used when LLM_PROVIDER=ollama)
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-10m}
+      # Embedding Model
       - EMBEDDING_MODEL=nomic-embed-text:latest
-      - LLM_MODEL=gemma3:4b    # llama3.2:latest is slower
-      - OLLAMA_KEEP_ALIVE=10m  # Keep model loaded: 10m (default), -1 (indefinitely), 0 (unload immediately)
       - ENABLE_RERANKER=true
       - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
       - RETRIEVAL_TOP_K=10

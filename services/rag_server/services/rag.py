@@ -3,7 +3,7 @@ from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
 from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from llama_index.core.query_engine import RetrieverQueryEngine
 from infrastructure.database.chroma import get_or_create_collection
-from infrastructure.llm.handler import get_system_prompt, get_context_prompt, get_condense_prompt
+from infrastructure.llm.prompts import get_system_prompt, get_context_prompt, get_condense_prompt
 from core.config import get_optional_env
 from services.chat import get_or_create_chat_memory
 from services.hybrid_retriever import create_hybrid_retriever, get_hybrid_retriever_config
@@ -12,7 +12,7 @@ import json
 
 logger = logging.getLogger(__name__)
 
-def get_reranker_config() -> Dict:
+def reranker_config() -> Dict:
     """Get reranker configuration from environment variables"""
     return {
         'enabled': get_optional_env('ENABLE_RERANKER', 'true').lower() == 'true',
@@ -22,7 +22,7 @@ def get_reranker_config() -> Dict:
 
 def create_reranker_postprocessors() -> Optional[List]:
     """Create reranker with top-n selection"""
-    config = get_reranker_config()
+    config = reranker_config()
 
     if not config['enabled']:
         logger.info("[RERANKER] Reranking disabled")
@@ -45,7 +45,7 @@ def create_reranker_postprocessors() -> Optional[List]:
 
 def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
     index = get_or_create_collection()
-    config = get_reranker_config()
+    config = reranker_config()
     hybrid_config = get_hybrid_retriever_config()
 
     # Get LlamaIndex native prompts
@@ -53,7 +53,6 @@ def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
     context_prompt = get_context_prompt()
     condense_prompt = get_condense_prompt()  # None = use LlamaIndex default
 
-    # Get or create chat memory for this session
     memory = get_or_create_chat_memory(session_id)
 
     # Always use configured retrieval_top_k for better coverage with granular Docling chunks
@@ -149,7 +148,7 @@ def _extract_sources(source_nodes) -> List[Dict]:
 
 def _create_chat_engine(index, session_id: str):
     """Create chat engine with hybrid search and reranking."""
-    config = get_reranker_config()
+    config = reranker_config()
     hybrid_config = get_hybrid_retriever_config()
 
     system_prompt = get_system_prompt()

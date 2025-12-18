@@ -1,27 +1,11 @@
-from llama_index.llms.ollama import Ollama
-from core.config import get_required_env, get_optional_env
+"""
+Centralized prompt management for RAG pipeline.
+
+All prompts used by the chat engine are defined here for easy maintenance
+and consistency across the application.
+"""
 from typing import Optional
-import logging
 
-logger = logging.getLogger(__name__)
-
-def get_llm_client():
-    ollama_url = get_required_env("OLLAMA_URL")
-    model = get_required_env("LLM_MODEL")
-
-    # Keep-alive: Keep model loaded in memory between calls
-    # Reduces latency for subsequent calls (especially important for contextual retrieval)
-    # Default: "10m" (10 minutes), use "-1" to keep indefinitely, "0" to unload immediately
-    keep_alive = get_optional_env("OLLAMA_KEEP_ALIVE", "10m")
-
-    logger.info(f"[LLM] Initializing Ollama LLM: {model}, keep_alive={keep_alive}")
-
-    return Ollama(
-        model=model,
-        base_url=ollama_url,
-        request_timeout=120.0,
-        keep_alive=keep_alive
-    )
 
 def get_system_prompt() -> str:
     """
@@ -37,6 +21,7 @@ def get_system_prompt() -> str:
         "Use bullet points for lists when appropriate."
     )
 
+
 def get_context_prompt() -> str:
     """
     Instructions for using retrieved context to answer questions.
@@ -44,9 +29,9 @@ def get_context_prompt() -> str:
     Specifies strict grounding rules to prevent hallucination and ensure
     answers are based only on the provided document context.
 
-    Placeholders:
-    - {context_str}: Retrieved document chunks (provided by LlamaIndex)
-    - {chat_history}: Previous conversation (provided by LlamaIndex)
+    Placeholders (filled by LlamaIndex):
+        {context_str}: Retrieved document chunks
+        {chat_history}: Previous conversation messages
     """
     return """Context from retrieved documents:
 {context_str}
@@ -59,6 +44,7 @@ Instructions:
 - Previous conversation context is available for reference
 
 Provide a direct, accurate answer based on the context:"""
+
 
 def get_condense_prompt() -> Optional[str]:
     """

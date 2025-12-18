@@ -22,7 +22,7 @@ def get_optional_env(var_name: str, default: str = "") -> str:
 def initialize_settings():
     """Initialize global LlamaIndex Settings"""
     from infrastructure.llm.embeddings import get_embedding_function
-    from infrastructure.llm.handler import get_llm_client
+    from infrastructure.llm.factory import get_llm_client
 
     logger.info("[SETTINGS] Initializing global LlamaIndex Settings")
 

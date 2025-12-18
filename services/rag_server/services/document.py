@@ -68,7 +68,7 @@ def add_contextual_prefix(node: TextNode, document_name: str, document_type: str
     start_time = time.time()
     logger.info(f"[CONTEXTUAL] Starting LLM call for contextual prefix generation")
 
-    from infrastructure.llm.handler import get_llm_client
+    from infrastructure.llm.factory import get_llm_client
 
     chunk_preview = node.get_content()[:400]  # Use first 400 chars for context
 
