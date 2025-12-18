@@ -1,6 +1,11 @@
-# Development Guide
+# Development Bin
 
-Complete technical reference for developers working on this RAG system. Covers architecture, API, configuration, testing, and deployment.
+A working dump for AI-generated technical notes related to this project.
+It’s updated regularly and focuses on higher-level topics such as architecture, APIs, configuration, testing, deployment, and known gotchas.
+
+The purpose is to capture prior reasoning and decisions (including why they were made) so that AI slop isn’t repeated later.
+
+This is not curated for human consumption.
 
 ## Table of Contents
 

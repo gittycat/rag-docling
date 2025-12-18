@@ -7,15 +7,14 @@ A locally hosted RAG (Retrieval-Augmented Generation) system for intelligent doc
 Create an optimized RAG pipeline for local machines that balances accuracy with performance. Since consumer laptops can't run top-tier models, this project helps you find the best combination of small models and techniques for your documents.
 
 
-## Features
+## Main Features
 
-- **Private & Local**: Runs entirely on your machine—no data leaves your computer
-- **Multiple Document Formats**: PDF, DOCX, TXT, Markdown, HTML, PowerPoint, Excel
-- **Conversational Q&A**: Ask follow-up questions and get contextual answers
-- **Source Citations**: Every answer includes references to source documents
+- **Private & Local**: Can run entirely on your computer or on-prem data center. Alternatively can make use of frontier models for inference, embedding or reranking.
+- **Plug and play models**: Supports multiple local (through Ollama) or online LLM models.
+- **Evaluation page**: Multiple evals can be run to evaluate the RAG for accuracy and speed. __This is ongoing work__.
 - **ChatGPT-like Interface**: Clean, familiar web interface
-- **Smart Search**: Combines keyword and semantic search for better accuracy
-- **Real-time Progress**: See document processing status as it happens
+- **Multiple Document Formats**: PDF, DOCX, TXT, Markdown, HTML, PowerPoint, Excel
+- **Source Citations**: Every answer includes references to source documents
 
 ## What You Need
 
@@ -23,6 +22,7 @@ Create an optimized RAG pipeline for local machines that balances accuracy with 
 - **Ollama** for running AI models locally
 - **~4GB RAM** for the AI models
 - **~2GB disk space** for models and data
+- **just** Task runner. `brew install just`
 
 ## Installation
 
@@ -60,18 +60,13 @@ That's it! Open your browser to **http://localhost:8000**
 
 ### 1. Upload Your Documents
 
-1. Click the **Admin** button
-2. Click **Upload Documents**
-3. Select your files (PDF, DOCX, TXT, etc.)
-4. Wait for processing to complete
+1. Use the "Documents" section. The processing (embeddings creation) is what takes more of the time. A progress bar is shown.
 
 ### 2. Ask Questions
 
-1. Type your question in the main chat interface
-2. Get AI-generated answers with source citations
-3. Ask follow-up questions to dig deeper
+1. In the /chat page. Use it like any AI chat interface.
 
-### 3. Manage Your Data
+### 3. Manage Your Data (/documents)
 
 - **View all documents** in the Admin section
 - **Delete documents** you no longer need
@@ -79,11 +74,11 @@ That's it! Open your browser to **http://localhost:8000**
 
 ## Configuration
 
-The system works out-of-the-box with sensible defaults. Advanced users can modify settings in `docker-compose.yml` to change models, adjust retrieval parameters, or enable/disable features. See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
+The system works out-of-the-box with sensible defaults. Advanced users can modify settings in `docker-compose.yml` to change models, adjust retrieval parameters, or enable/disable features.
 
 ## Testing
 
-This project uses [mise](https://mise.jdx.dev/) for task management. Install with `brew install mise` or see [installation guide](https://mise.jdx.dev/getting-started.html).
+This project uses [just](https://just.systems/man/en/) as a task runner.
 
 ```bash
 # Install dev dependencies
@@ -103,20 +98,8 @@ TODO: complete
 TODO: complete
 ```
 
-
-## Need Help?
-
-- **Troubleshooting**: See [DEVELOPMENT.md](DEVELOPMENT.md) for common issues
-- **API Reference**: Full endpoint documentation in [DEVELOPMENT.md](DEVELOPMENT.md)
-- **Technical Details**: Architecture and implementation in [docs/](docs/)
-
 ## What's Next
 
-- **Better Evaluation**: Easier testing of different models and features (in progress with DeepEval)
-- **Cloud Deployment**: Option to run online with proper security and privacy
-- **More Formats**: Additional document types and export options
+TODO: roadmap
 
-## License
-
-MIT License
 
