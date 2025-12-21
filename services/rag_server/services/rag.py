@@ -12,7 +12,7 @@ import json
 
 logger = logging.getLogger(__name__)
 
-def reranker_config() -> Dict:
+def get_reranker_config() -> Dict:
     """Get reranker configuration from environment variables"""
     return {
         'enabled': get_optional_env('ENABLE_RERANKER', 'true').lower() == 'true',
@@ -22,7 +22,7 @@ def reranker_config() -> Dict:
 
 def create_reranker_postprocessors() -> Optional[List]:
     """Create reranker with top-n selection"""
-    config = reranker_config()
+    config = get_reranker_config()
 
     if not config['enabled']:
         logger.info("[RERANKER] Reranking disabled")
@@ -45,7 +45,7 @@ def create_reranker_postprocessors() -> Optional[List]:
 
 def query_rag(query_text: str, session_id: str, n_results: int = 3) -> Dict:
     index = get_or_create_collection()
-    config = reranker_config()
+    config = get_reranker_config()
     hybrid_config = get_hybrid_retriever_config()
 
     # Get LlamaIndex native prompts
@@ -148,7 +148,7 @@ def _extract_sources(source_nodes) -> List[Dict]:
 
 def _create_chat_engine(index, session_id: str):
     """Create chat engine with hybrid search and reranking."""
-    config = reranker_config()
+    config = get_reranker_config()
     hybrid_config = get_hybrid_retriever_config()
 
     system_prompt = get_system_prompt()
