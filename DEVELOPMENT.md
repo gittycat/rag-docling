@@ -983,6 +983,18 @@ OLLAMA_KEEP_ALIVE=10m
 
 ## Implementation Details
 
+### Code Organization
+
+The RAG server codebase is organized around two main pipeline files in `/pipelines`:
+
+- **`pipelines/ingestion.py`** (~585 lines): Complete document ingestion flow from upload to indexing. Read top-to-bottom to understand the full pipeline: metadata extraction → document chunking (Docling for complex docs, SentenceSplitter for text) → optional contextual prefixes via LLM → embedding generation → ChromaDB indexing → BM25 refresh. Each step is clearly separated with dedicated functions and inline documentation.
+
+- **`pipelines/inference.py`** (~550 lines): Complete RAG query flow from user input to response. Read top-to-bottom to see the full inference pipeline: chat memory initialization → hybrid retriever creation (BM25 + Vector with RRF) → reranker configuration → chat engine assembly → query execution with streaming support. All state management (BM25 cache, Redis chat store) is clearly documented.
+
+**Design Philosophy**: Large, readable files organized by high-level features (ingestion, inference) rather than small, fragmented modules. Each pipeline file shows the complete flow in a linear, step-by-step manner that mirrors how humans think about the process.
+
+The `/routes` directory contains API entry points that delegate to these pipelines, while `/infrastructure` provides low-level services (ChromaDB, LLM clients, embeddings).
+
 ### Document Processing Pipeline
 
 1. **Upload**: Documents uploaded via `/upload` endpoint

@@ -44,7 +44,7 @@ class TestPDFFullPipeline:
         document processing pipeline works end-to-end without mocking.
         """
         # Import after env is set
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
         from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
@@ -116,7 +116,7 @@ class TestPDFFullPipeline:
 
         This verifies the fallback path for .txt/.md files works correctly.
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
         from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
@@ -162,7 +162,7 @@ class TestPDFFullPipeline:
         ChromaDB only supports flat types (str, int, float, bool, None).
         This tests the metadata cleaning works correctly.
         """
-        from services.document import (
+        from pipelines.ingestion import (
             chunk_document_from_file,
             extract_metadata,
         )
@@ -211,7 +211,7 @@ class TestPDFFullPipeline:
         - All chunks have reasonable size
         - Content is distributed across chunks
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
         from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
@@ -248,7 +248,7 @@ class TestUnsupportedFormats:
 
     def test_unsupported_format_rejected(self, integration_env, tmp_path):
         """Unsupported file types should raise clear error."""
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
 
         # Create fake executable file
         exe_path = tmp_path / "program.exe"
@@ -259,7 +259,7 @@ class TestUnsupportedFormats:
 
     def test_missing_file_error(self, integration_env):
         """Non-existent file should raise clear error."""
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
 
         with pytest.raises((FileNotFoundError, ValueError, Exception)):
             chunk_document_from_file("/nonexistent/path/file.pdf")

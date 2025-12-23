@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def test_unsupported_file_type():
     """Raise error for unsupported file types"""
-    from services.document import chunk_document_from_file
+    from pipelines.ingestion import chunk_document_from_file
 
     with tempfile.NamedTemporaryFile(suffix='.xyz', delete=False) as f:
         temp_path = f.name
@@ -25,12 +25,12 @@ def test_unsupported_file_type():
         os.unlink(temp_path)
 
 
-@patch('services.document.get_contextual_retrieval_config')
-@patch('services.document.SentenceSplitter')
-@patch('services.document.SimpleDirectoryReader')
+@patch('pipelines.ingestion.get_contextual_retrieval_config')
+@patch('pipelines.ingestion.SentenceSplitter')
+@patch('pipelines.ingestion.SimpleDirectoryReader')
 def test_chunk_document_with_txt_file(mock_reader_class, mock_splitter_class, mock_contextual_config):
     """Split text file into nodes using SimpleDirectoryReader + SentenceSplitter for txt files"""
-    from services.document import chunk_document_from_file
+    from pipelines.ingestion import chunk_document_from_file
 
     # Disable contextual retrieval for this test
     mock_contextual_config.return_value = {'enabled': False}
@@ -64,7 +64,7 @@ def test_chunk_document_with_txt_file(mock_reader_class, mock_splitter_class, mo
 
 def test_extract_metadata():
     """Extract metadata from document path"""
-    from services.document import extract_metadata
+    from pipelines.ingestion import extract_metadata
 
     # Create a real temp file so stat() works
     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
@@ -82,11 +82,11 @@ def test_extract_metadata():
         os.unlink(temp_path)
 
 
-@patch('services.document.DoclingNodeParser')
-@patch('services.document.DoclingReader')
+@patch('pipelines.ingestion.DoclingNodeParser')
+@patch('pipelines.ingestion.DoclingReader')
 def test_chunk_document_from_file(mock_reader_class, mock_parser_class):
     """Test efficient file chunking with chunk_document_from_file"""
-    from services.document import chunk_document_from_file
+    from pipelines.ingestion import chunk_document_from_file
 
     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
         temp_path = f.name

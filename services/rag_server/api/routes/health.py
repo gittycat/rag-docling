@@ -2,7 +2,7 @@ import os
 from fastapi import APIRouter
 
 from schemas.health import ModelsInfoResponse, ConfigResponse
-from services.rag import get_reranker_config
+from pipelines.inference import get_inference_config
 
 router = APIRouter()
 
@@ -18,9 +18,9 @@ async def get_models_info():
     llm_model = os.getenv("LLM_MODEL", "unknown")
     embedding_model = os.getenv("EMBEDDING_MODEL", "unknown")
 
-    reranker_config = get_reranker_config()
-    reranker_enabled = reranker_config['enabled']
-    reranker_model = reranker_config['model'] if reranker_enabled else None
+    inference_config = get_inference_config()
+    reranker_enabled = inference_config['reranker_enabled']
+    reranker_model = inference_config['reranker_model'] if reranker_enabled else None
 
     return ModelsInfoResponse(
         llm_model=llm_model,

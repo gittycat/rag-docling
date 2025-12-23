@@ -32,9 +32,8 @@ from schemas.metrics import (
     SystemMetrics,
 )
 from core.config import get_optional_env
-from services.hybrid_retriever import get_hybrid_retriever_config
-from services.rag import get_reranker_config
-from services.document import get_contextual_retrieval_config
+from pipelines.inference import get_inference_config
+from pipelines.ingestion import get_ingestion_config
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +175,7 @@ async def get_models_config() -> ModelsConfig:
     embedding_model = config.embedding.model
     eval_model = config.eval.model
 
-    reranker_config = get_reranker_config()
+    inference_config = get_inference_config()
 
     # Get LLM info
     llm_ref = get_model_reference(llm_model)
@@ -223,8 +222,8 @@ async def get_models_config() -> ModelsConfig:
 
     # Get reranker info (if enabled)
     reranker_info = None
-    if reranker_config["enabled"]:
-        reranker_model = reranker_config["model"]
+    if inference_config["reranker_enabled"]:
+        reranker_model = inference_config["reranker_model"]
         reranker_ref = get_model_reference(reranker_model)
 
         reranker_size = ModelSize(
@@ -271,9 +270,8 @@ async def get_models_config() -> ModelsConfig:
 
 def get_retrieval_config() -> RetrievalConfig:
     """Get complete retrieval pipeline configuration."""
-    hybrid_config = get_hybrid_retriever_config()
-    reranker_config = get_reranker_config()
-    contextual_config = get_contextual_retrieval_config()
+    inference_config = get_inference_config()
+    ingestion_config = get_ingestion_config()
 
     # Vector search config
     vector_config = VectorSearchConfig(
@@ -286,31 +284,31 @@ def get_retrieval_config() -> RetrievalConfig:
 
     # BM25 config
     bm25_config = BM25Config(
-        enabled=hybrid_config["enabled"],
+        enabled=inference_config["hybrid_search_enabled"],
     )
 
     # Hybrid search config
     hybrid_search_config = HybridSearchConfig(
-        enabled=hybrid_config["enabled"],
+        enabled=inference_config["hybrid_search_enabled"],
         bm25=bm25_config,
         vector=vector_config,
         fusion_method="reciprocal_rank_fusion",
-        rrf_k=hybrid_config["rrf_k"],
+        rrf_k=inference_config["rrf_k"],
     )
 
     # Contextual retrieval config
     contextual_retrieval_config = ContextualRetrievalConfig(
-        enabled=contextual_config["enabled"],
+        enabled=ingestion_config["contextual_retrieval_enabled"],
     )
 
     # Reranker config
-    top_k = reranker_config["retrieval_top_k"]
-    top_n = max(5, top_k // 2) if reranker_config["enabled"] else top_k
+    top_k = inference_config["retrieval_top_k"]
+    top_n = max(5, top_k // 2) if inference_config["reranker_enabled"] else top_k
 
     reranker_cfg = RerankerConfig(
-        enabled=reranker_config["enabled"],
-        model=reranker_config["model"] if reranker_config["enabled"] else None,
-        top_n=top_n if reranker_config["enabled"] else None,
+        enabled=inference_config["reranker_enabled"],
+        model=inference_config["reranker_model"] if inference_config["reranker_enabled"] else None,
+        top_n=top_n if inference_config["reranker_enabled"] else None,
     )
 
     return RetrievalConfig(

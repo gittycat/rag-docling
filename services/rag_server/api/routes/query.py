@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from schemas.query import QueryRequest, QueryResponse
-from services.rag import query_rag, query_rag_stream
+from pipelines.inference import query_rag, query_rag_stream
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

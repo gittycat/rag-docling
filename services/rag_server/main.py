@@ -22,11 +22,12 @@ async def startup_event():
 
     # Pre-initialize reranker to download model during startup (if enabled)
     # This prevents timeout on first query when model downloads from HuggingFace
-    from services.rag import create_reranker_postprocessors, get_reranker_config
-    reranker_config = get_reranker_config()
-    if reranker_config['enabled']:
+    from pipelines.inference import create_reranker_postprocessor
+    from infrastructure.config.models_config import get_models_config
+    config = get_models_config()
+    if config.reranker.enabled:
         logger.info("[STARTUP] Pre-initializing reranker model...")
-        create_reranker_postprocessors()
+        create_reranker_postprocessor()
         logger.info("[STARTUP] Reranker model ready")
     else:
         logger.info("[STARTUP] Reranker disabled, skipping initialization")
@@ -42,13 +43,12 @@ async def startup_event():
             logger.warning("[STARTUP] ChromaDB collection is empty - may need document upload or restore from backup")
 
         # Pre-initialize BM25 retriever for hybrid search (if enabled)
-        from services.hybrid_retriever import initialize_bm25_retriever, get_hybrid_retriever_config
-        hybrid_config = get_hybrid_retriever_config()
-        if hybrid_config['enabled'] and count > 0:
+        from pipelines.inference import initialize_bm25_retriever
+        if config.retrieval.enable_hybrid_search and count > 0:
             logger.info("[STARTUP] Pre-initializing BM25 retriever for hybrid search...")
-            initialize_bm25_retriever(index, hybrid_config['similarity_top_k'])
+            initialize_bm25_retriever(index, config.retrieval.top_k)
             logger.info("[STARTUP] BM25 retriever ready")
-        elif hybrid_config['enabled']:
+        elif config.retrieval.enable_hybrid_search:
             logger.warning("[STARTUP] Hybrid search enabled but no documents in ChromaDB - BM25 will initialize after first upload")
         else:
             logger.info("[STARTUP] Hybrid search disabled")

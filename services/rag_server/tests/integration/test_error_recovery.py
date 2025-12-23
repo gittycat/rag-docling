@@ -33,7 +33,7 @@ class TestCorruptedFileHandling:
         Verifies the system doesn't crash on malformed files and
         reports clear error messages.
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
 
         # Corrupted PDF should raise an exception, not crash
         with pytest.raises(Exception) as exc_info:
@@ -120,7 +120,7 @@ class TestCorruptedFileHandling:
         """
         Empty file -> handled gracefully (error or empty result).
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
 
         # Create empty file
         empty_file = tmp_path / "empty.txt"
@@ -153,7 +153,7 @@ class TestGracefulDegradation:
 
         Tests graceful degradation when hybrid search isn't possible.
         """
-        from services.hybrid_retriever import (
+        from pipelines.inference import (
             create_hybrid_retriever,
             get_hybrid_retriever_config,
         )
@@ -164,8 +164,8 @@ class TestGracefulDegradation:
         assert config['enabled'], "Hybrid search should be enabled"
 
         # Mock BM25 to fail
-        with patch('services.hybrid_retriever.get_bm25_retriever', return_value=None):
-            with patch('services.hybrid_retriever.initialize_bm25_retriever', return_value=None):
+        with patch('pipelines.inference.get_bm25_retriever', return_value=None):
+            with patch('pipelines.inference.initialize_bm25_retriever', return_value=None):
                 index = get_or_create_collection()
                 retriever = create_hybrid_retriever(index, similarity_top_k=10)
 
@@ -184,7 +184,7 @@ class TestGracefulDegradation:
 
         Tests that contextual retrieval failure doesn't block document processing.
         """
-        from services.document import (
+        from pipelines.ingestion import (
             chunk_document_from_file,
             add_contextual_prefix,
         )
@@ -201,7 +201,7 @@ class TestGracefulDegradation:
         original_text = test_node.text
 
         # Mock LLM to timeout
-        with patch('services.document.get_llm_client') as mock_llm:
+        with patch('pipelines.ingestion.get_llm_client') as mock_llm:
             mock_llm.return_value.complete.side_effect = TimeoutError("LLM timeout")
 
             result_node = add_contextual_prefix(

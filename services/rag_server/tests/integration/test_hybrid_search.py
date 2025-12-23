@@ -35,13 +35,13 @@ class TestBM25RefreshAfterUpload:
         This is a critical test that catches index desync bugs where
         BM25 returns stale results after new documents are added.
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
         from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             delete_document,
         )
-        from services.hybrid_retriever import (
+        from pipelines.inference import (
             create_hybrid_retriever,
             refresh_bm25_retriever,
             get_bm25_retriever,
@@ -121,13 +121,13 @@ class TestBM25RefreshAfterUpload:
 
         Tests that stale data is properly removed from BM25 index.
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
         from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             delete_document,
         )
-        from services.hybrid_retriever import (
+        from pipelines.inference import (
             create_hybrid_retriever,
             refresh_bm25_retriever,
         )
@@ -192,7 +192,7 @@ class TestBM25RefreshAfterUpload:
 
         Tests graceful degradation when hybrid search isn't possible.
         """
-        from services.hybrid_retriever import (
+        from pipelines.inference import (
             get_hybrid_retriever_config,
             initialize_bm25_retriever,
         )
@@ -204,7 +204,7 @@ class TestBM25RefreshAfterUpload:
 
         # Create a mock index with no nodes
         mock_index = MagicMock()
-        with patch('services.hybrid_retriever.get_all_nodes', return_value=[]):
+        with patch('pipelines.inference.get_all_nodes', return_value=[]):
             result = initialize_bm25_retriever(mock_index, similarity_top_k=10)
 
         # Should return None when no nodes available
@@ -226,14 +226,14 @@ class TestHybridSearchBehavior:
 
         BM25 excels at: exact keywords, IDs, names, abbreviations.
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
         from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             delete_document,
             query_documents,
         )
-        from services.hybrid_retriever import (
+        from pipelines.inference import (
             create_hybrid_retriever,
             refresh_bm25_retriever,
         )
@@ -292,13 +292,13 @@ class TestHybridSearchBehavior:
 
         Creates two documents: one optimized for keyword match, one for semantic.
         """
-        from services.document import chunk_document_from_file
+        from pipelines.ingestion import chunk_document_from_file
         from infrastructure.database.chroma import (
             get_or_create_collection,
             add_documents,
             delete_document,
         )
-        from services.hybrid_retriever import (
+        from pipelines.inference import (
             create_hybrid_retriever,
             refresh_bm25_retriever,
         )

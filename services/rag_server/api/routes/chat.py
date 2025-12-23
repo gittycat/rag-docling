@@ -2,7 +2,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from schemas.chat import ChatHistoryResponse, ClearSessionRequest, ClearSessionResponse
-from services.chat import get_chat_history, clear_session_memory
+from pipelines.inference import get_chat_history, clear_session_memory
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

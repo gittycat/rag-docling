@@ -17,7 +17,7 @@ from schemas.document import (
     TaskInfo,
     BatchProgressResponse,
 )
-from services.document import SUPPORTED_EXTENSIONS
+from pipelines.ingestion import SUPPORTED_EXTENSIONS
 from infrastructure.database.chroma import get_or_create_collection, list_documents, delete_document, check_documents_exist
 from infrastructure.tasks.progress import create_batch, get_batch_progress
 from infrastructure.tasks.worker import process_document_task
@@ -164,7 +164,7 @@ async def delete_document_by_id(document_id: str):
 
         # Refresh BM25 retriever after deleting documents (for hybrid search)
         try:
-            from services.hybrid_retriever import refresh_bm25_retriever
+            from pipelines.inference import refresh_bm25_retriever
             refresh_bm25_retriever(index)
             logger.info(f"[DELETE] BM25 retriever refreshed after deleting document {document_id}")
         except Exception as e:
