@@ -1,12 +1,13 @@
 from llama_index.embeddings.ollama import OllamaEmbedding
 import logging
-from core.config import get_required_env
+from infrastructure.config.models_config import get_models_config
 
 logger = logging.getLogger(__name__)
 
 def get_embedding_function():
-    ollama_url = get_required_env("OLLAMA_URL")
-    model_name = get_required_env("EMBEDDING_MODEL")
+    config = get_models_config()
+    ollama_url = config.embedding.base_url
+    model_name = config.embedding.model
 
     logger.info(f"[EMBEDDINGS] Initializing OllamaEmbedding")
     logger.info(f"[EMBEDDINGS] Ollama URL: {ollama_url}")

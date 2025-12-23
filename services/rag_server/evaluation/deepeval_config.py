@@ -4,38 +4,40 @@ This module provides configuration for using Anthropic's Claude models
 as the LLM-as-a-judge for DeepEval metrics evaluation.
 """
 
-import os
 from deepeval.models import AnthropicModel
+from infrastructure.config.models_config import get_models_config
 
 
 def get_evaluator_model(
-    model: str = "claude-sonnet-4-20250514",
+    model: str | None = None,
     temperature: float = 0.0
 ) -> AnthropicModel:
     """Get configured Anthropic model for DeepEval metrics.
 
     Args:
-        model: Anthropic model name (default: claude-sonnet-4-20250514 for cost-effectiveness)
+        model: Optional model name override (uses config/models.yml if not provided)
         temperature: Model temperature (default: 0.0 for deterministic evaluation)
 
     Returns:
         Configured AnthropicModel instance
 
     Raises:
-        ValueError: If ANTHROPIC_API_KEY environment variable is not set
+        ValueError: If ANTHROPIC_API_KEY is not set in environment
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    config = get_models_config()
+
+    # Validate API key is set
+    if not config.eval.api_key:
         raise ValueError(
             "ANTHROPIC_API_KEY environment variable is required for evaluation. "
-            "Set it in your .env file or environment."
+            "Set it in secrets/.env file."
         )
 
-    # Override with env var if set
-    model = os.getenv("EVAL_MODEL", model)
+    # Use provided model or get from config
+    model_name = model or config.eval.model
 
     return AnthropicModel(
-        model=model,
+        model=model_name,
         temperature=temperature
     )
 

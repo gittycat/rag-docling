@@ -196,32 +196,69 @@ docker compose -f docker-compose.ci.yml down
 
 **Build Tools:** Includes gcc, g++, make for pystemmer compilation (required by BM25)
 
-### Environment Variables
+### Configuration Files
 
-**LLM Provider (multi-provider support):**
-- `LLM_PROVIDER`: Provider name - `ollama` (default), `openai`, `anthropic`, `google`, `deepseek`, `moonshot`
-- `LLM_MODEL`: Model name (required)
-- `LLM_API_KEY`: API key (required for cloud providers, optional for Ollama)
-- `LLM_BASE_URL`: Custom endpoint URL (optional, auto-set for Moonshot)
-- `LLM_TIMEOUT`: Request timeout in seconds (default: 120)
+**YAML-based Configuration (config/models.yml):**
 
-**Ollama-specific (when LLM_PROVIDER=ollama):**
-- `OLLAMA_URL`: Ollama server URL (default: `http://host.docker.internal:11434`)
-- `OLLAMA_KEEP_ALIVE`: Keep model loaded (default: `10m`, use `-1` indefinite, `0` unload immediately)
+The system uses YAML configuration for all model settings. Copy `config/models.yml.example` to `config/models.yml`:
 
-**Required:**
-- `CHROMADB_URL`, `EMBEDDING_MODEL`, `REDIS_URL`
+```yaml
+llm:
+  provider: ollama  # ollama, openai, anthropic, google, deepseek, moonshot
+  model: gemma3:4b
+  base_url: http://host.docker.internal:11434
+  timeout: 120
+  keep_alive: 10m  # Ollama-only: -1=forever, 0=unload, 10m=10 minutes
 
-**Retrieval:**
-- `ENABLE_RERANKER=true`, `RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2`, `RETRIEVAL_TOP_K=10`
-- `ENABLE_HYBRID_SEARCH=true`, `RRF_K=60`
-- `ENABLE_CONTEXTUAL_RETRIEVAL=false` (default: off for speed)
+embedding:
+  provider: ollama
+  model: nomic-embed-text:latest
+  base_url: http://host.docker.internal:11434
 
-**Other:**
-- `MAX_UPLOAD_SIZE=80` (max upload size in MB)
-- `LOG_LEVEL=INFO` (DEBUG for development)
+eval:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
 
-**Note:** Celery worker shares all RAG Server env vars
+reranker:
+  enabled: true
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 5
+
+retrieval:
+  top_k: 10
+  enable_hybrid_search: true
+  rrf_k: 60
+  enable_contextual_retrieval: false  # Default: off for speed
+```
+
+**API Keys (secrets/.env):**
+
+Secrets are stored in `secrets/.env` (copy from `secrets/.env.example`):
+
+```bash
+LLM_API_KEY=         # For cloud providers (openai, anthropic, google, deepseek, moonshot)
+ANTHROPIC_API_KEY=   # For DeepEval evaluations (required)
+```
+
+**Ollama Config (secrets/ollama_config.env):**
+
+Ollama-specific settings (copy from `secrets/ollama_config.env.example`):
+
+```bash
+OLLAMA_URL=http://host.docker.internal:11434
+OLLAMA_KEEP_ALIVE=10m
+```
+
+**Environment Variables (docker-compose.yml only):**
+
+Minimal environment variables - most config moved to YAML:
+- `CHROMADB_URL`: ChromaDB endpoint (default: `http://chromadb:8000`)
+- `REDIS_URL`: Redis endpoint (default: `redis://redis:6379/0`)
+- `LLM_API_KEY`, `ANTHROPIC_API_KEY`: API keys from secrets/.env
+- `MAX_UPLOAD_SIZE=80`: Max upload size in MB
+- `LOG_LEVEL=WARNING`: Logging level (INFO or DEBUG for development)
+
+**Note:** Celery worker shares all RAG Server configuration (config/models.yml and secrets/.env)
 
 ## API Endpoints
 

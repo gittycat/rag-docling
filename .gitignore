@@ -53,7 +53,9 @@ docker-compose.override.yml
 /indexed_documents/
 
 # Secrets and configuration
-/secrets/
+/secrets/*
+!/secrets/*.example
+!/secrets/README.md
 *.env
 .env.*
 !.env.example
@@ -61,6 +63,11 @@ ollama_config.env
 *.key
 *.pem
 *.crt
+
+# Config files (keep examples)
+/config/models.yml
+!/config/models.yml.example
+!/config/README.md
 
 # RAG system specific
 /services/*/logs/

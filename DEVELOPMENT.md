@@ -898,36 +898,83 @@ Evaluation summary with trends across runs.
 
 ## Configuration
 
-All settings are defined in the [docker-compose.yml](docker-compose.yml).
-Again, this application is run locally. No authentication is used for ChromaDB.
+The system uses a **YAML-based configuration** approach for better maintainability and type safety.
 
-### Environment Variables
+### Configuration Files
 
-**RAG Server (docker-compose.yml):**
+**1. Model Configuration (`config/models.yml`)**
+
+Defines all model settings for LLM, embeddings, evaluation, reranker, and retrieval:
+
+```yaml
+llm:
+  provider: ollama  # ollama, openai, anthropic, google, deepseek, moonshot
+  model: gemma3:4b
+  base_url: http://host.docker.internal:11434
+  timeout: 120
+  keep_alive: 10m
+
+embedding:
+  provider: ollama
+  model: nomic-embed-text:latest
+  base_url: http://host.docker.internal:11434
+
+eval:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+
+reranker:
+  enabled: true
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 5
+
+retrieval:
+  top_k: 10
+  enable_hybrid_search: true
+  rrf_k: 60
+  enable_contextual_retrieval: false
+```
+
+**Setup:** Copy `config/models.yml.example` to `config/models.yml` and adjust as needed.
+
+**2. API Keys (`secrets/.env`)**
+
+Stores sensitive API keys loaded by docker-compose.yml:
+
+```bash
+# For cloud LLM providers (not needed for Ollama)
+LLM_API_KEY=sk-...
+
+# For DeepEval evaluations (required)
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**Setup:** Copy `secrets/.env.example` to `secrets/.env` and add your API keys.
+
+**3. Ollama Configuration (`secrets/ollama_config.env`)**
+
+Ollama-specific settings (used as Docker secret):
+
+```bash
+OLLAMA_URL=http://host.docker.internal:11434
+OLLAMA_KEEP_ALIVE=10m
+```
+
+**Setup:** Copy `secrets/ollama_config.env.example` to `secrets/ollama_config.env`.
+
+### Environment Variables (docker-compose.yml)
+
+**Minimal environment variables** - most config moved to YAML:
 
 **Core Settings:**
 - `CHROMADB_URL`: ChromaDB endpoint (default: `http://chromadb:8000`)
-- `OLLAMA_URL`: Ollama endpoint (default: `http://host.docker.internal:11434`)
-- `EMBEDDING_MODEL`: Embedding model (default: `nomic-embed-text:latest`)
-- `LLM_MODEL`: LLM model (default: `gemma3:4b`)
 - `REDIS_URL`: Redis endpoint (default: `redis://redis:6379/0`)
+- `LLM_API_KEY`: API key for cloud LLM providers (from secrets/.env)
+- `ANTHROPIC_API_KEY`: Anthropic API key for evaluations (from secrets/.env)
 
-**Retrieval Configuration:**
-- `RETRIEVAL_TOP_K`: Number of nodes to retrieve before reranking (default: `10`)
-- `ENABLE_RERANKER`: Enable cross-encoder reranking (default: `true`)
-- `RERANKER_MODEL`: Reranker model (default: `cross-encoder/ms-marco-MiniLM-L-6-v2`)
-
-**Phase 2 Features:**
-- `ENABLE_HYBRID_SEARCH`: Enable BM25 + Vector search (default: `true`)
-- `RRF_K`: Reciprocal Rank Fusion k parameter (default: `60`)
-- `ENABLE_CONTEXTUAL_RETRIEVAL`: Enable Anthropic contextual retrieval (default: `true`)
-
-**Logging:**
-- `LOG_LEVEL`: Logging level (default: `DEBUG` for rag-server, `INFO` for celery-worker)
-
-**Evaluation (DeepEval with Anthropic):**
-- `ANTHROPIC_API_KEY`: Anthropic API key for LLM-as-judge evaluation (required for eval)
-- `EVAL_MODEL`: Claude model for evaluation (default: `claude-sonnet-4-20250514` - cost-effective)
+**Application Settings:**
+- `LOG_LEVEL`: Logging level (default: `WARNING`)
+- `MAX_UPLOAD_SIZE`: Max file upload size in MB (default: `80`)
 
 ### Docker Compose Networks
 

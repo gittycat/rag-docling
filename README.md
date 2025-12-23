@@ -48,7 +48,19 @@ git clone https://github.com/gittycat/rag-docling.git
 cd rag-docling
 ```
 
-### 3. Start the Application
+### 3. Configure the System
+
+```bash
+# Copy configuration files
+cp config/models.yml.example config/models.yml
+cp secrets/.env.example secrets/.env
+cp secrets/ollama_config.env.example secrets/ollama_config.env
+
+# (Optional) Edit config/models.yml to change models or settings
+# (Optional) Add API keys to secrets/.env for cloud providers
+```
+
+### 4. Start the Application
 
 ```bash
 docker compose up
@@ -74,7 +86,35 @@ That's it! Open your browser to **http://localhost:8000**
 
 ## Configuration
 
-The system works out-of-the-box with sensible defaults. Advanced users can modify settings in `docker-compose.yml` to change models, adjust retrieval parameters, or enable/disable features.
+The system uses **YAML-based configuration** for easy customization:
+
+### Quick Start (Using Defaults)
+The example configuration files work out-of-the-box with Ollama. Just copy them:
+
+```bash
+cp config/models.yml.example config/models.yml
+cp secrets/.env.example secrets/.env
+cp secrets/ollama_config.env.example secrets/ollama_config.env
+```
+
+### Configuration Files
+
+**`config/models.yml`** - Main configuration:
+- LLM provider and model (Ollama, OpenAI, Anthropic, Google, DeepSeek, Moonshot)
+- Embedding model
+- Evaluation model
+- Reranker settings
+- Retrieval parameters (hybrid search, contextual retrieval)
+
+**`secrets/.env`** - API keys:
+- `LLM_API_KEY` - For cloud providers (not needed for Ollama)
+- `ANTHROPIC_API_KEY` - For evaluations (required)
+
+**`secrets/ollama_config.env`** - Ollama settings:
+- `OLLAMA_URL` - Ollama server URL
+- `OLLAMA_KEEP_ALIVE` - Model memory management
+
+See `config/README.md` and `secrets/README.md` for detailed documentation.
 
 ## Testing
 

@@ -169,9 +169,12 @@ def get_model_reference(model_name: str) -> dict:
 
 async def get_models_config() -> ModelsConfig:
     """Get complete models configuration with details."""
-    llm_model = get_optional_env("LLM_MODEL", "gemma3:4b")
-    embedding_model = get_optional_env("EMBEDDING_MODEL", "nomic-embed-text:latest")
-    eval_model = get_optional_env("EVAL_MODEL", "claude-sonnet-4-20250514")
+    from infrastructure.config.models_config import get_models_config as get_config
+
+    config = get_config()
+    llm_model = config.llm.model
+    embedding_model = config.embedding.model
+    eval_model = config.eval.model
 
     reranker_config = get_reranker_config()
 

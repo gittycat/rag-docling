@@ -4,7 +4,7 @@ from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from llama_index.core.query_engine import RetrieverQueryEngine
 from infrastructure.database.chroma import get_or_create_collection
 from infrastructure.llm.prompts import get_system_prompt, get_context_prompt, get_condense_prompt
-from core.config import get_optional_env
+from infrastructure.config.models_config import get_models_config
 from services.chat import get_or_create_chat_memory
 from services.hybrid_retriever import create_hybrid_retriever, get_hybrid_retriever_config
 import logging
@@ -13,11 +13,12 @@ import json
 logger = logging.getLogger(__name__)
 
 def get_reranker_config() -> Dict:
-    """Get reranker configuration from environment variables"""
+    """Get reranker configuration from models config file"""
+    config = get_models_config()
     return {
-        'enabled': get_optional_env('ENABLE_RERANKER', 'true').lower() == 'true',
-        'model': get_optional_env('RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2'),
-        'retrieval_top_k': int(get_optional_env('RETRIEVAL_TOP_K', '10'))
+        'enabled': config.reranker.enabled,
+        'model': config.reranker.model,
+        'retrieval_top_k': config.retrieval.top_k
     }
 
 def create_reranker_postprocessors() -> Optional[List]:

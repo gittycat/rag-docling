@@ -3,7 +3,7 @@ from llama_index.core import VectorStoreIndex
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.retrievers.bm25 import BM25Retriever
 from infrastructure.database.chroma import get_all_nodes
-from core.config import get_optional_env
+from infrastructure.config.models_config import get_models_config
 import logging
 
 logger = logging.getLogger(__name__)
@@ -12,11 +12,12 @@ _bm25_retriever = None
 
 
 def get_hybrid_retriever_config():
-    """Get hybrid retriever configuration from environment variables"""
+    """Get hybrid retriever configuration from models config file"""
+    config = get_models_config()
     return {
-        'enabled': get_optional_env('ENABLE_HYBRID_SEARCH', 'true').lower() == 'true',
-        'similarity_top_k': int(get_optional_env('RETRIEVAL_TOP_K', '10')),
-        'rrf_k': int(get_optional_env('RRF_K', '60'))  # Optimal k=60 per research
+        'enabled': config.retrieval.enable_hybrid_search,
+        'similarity_top_k': config.retrieval.top_k,
+        'rrf_k': config.retrieval.rrf_k
     }
 
 

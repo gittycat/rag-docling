@@ -2,11 +2,16 @@
 LLM Configuration for multi-provider support.
 
 Supports: Ollama, OpenAI, Anthropic, Google Gemini, DeepSeek, Moonshot (Kimi K2)
+
+DEPRECATED: This module is deprecated. Use infrastructure.config.models_config instead.
+Kept for backward compatibility during migration.
 """
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
-from core.config import get_required_env, get_optional_env
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(str, Enum):
@@ -22,16 +27,10 @@ class LLMProvider(str, Enum):
 @dataclass
 class LLMConfig:
     """
-    LLM configuration loaded from environment variables.
+    LLM configuration loaded from config file.
 
-    Environment Variables:
-        LLM_PROVIDER: Provider name (default: ollama)
-        LLM_MODEL: Model name (required)
-        LLM_API_KEY: API key (required for cloud providers)
-        LLM_BASE_URL: Custom endpoint URL (optional)
-        LLM_TIMEOUT: Request timeout in seconds (default: 120)
-        OLLAMA_URL: Ollama server URL (legacy, for backward compat)
-        OLLAMA_KEEP_ALIVE: Keep model loaded (Ollama-only, default: 10m)
+    Configuration is now loaded from config/models.yml instead of environment variables.
+    API keys are still loaded from environment (secrets/.env).
     """
     provider: LLMProvider
     model: str
@@ -42,43 +41,38 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
-        """Load configuration from environment variables."""
-        provider_str = get_optional_env("LLM_PROVIDER", "ollama").lower()
+        """
+        Load configuration from config file (config/models.yml).
+
+        This method is kept for backward compatibility but now loads from
+        the new config file instead of environment variables.
+        """
+        from infrastructure.config.models_config import get_models_config
 
         try:
-            provider = LLMProvider(provider_str)
-        except ValueError:
-            valid_providers = ", ".join(p.value for p in LLMProvider)
-            raise ValueError(
-                f"Invalid LLM_PROVIDER: '{provider_str}'. "
-                f"Valid options: {valid_providers}"
+            models_config = get_models_config()
+            llm_config = models_config.llm
+
+            try:
+                provider = LLMProvider(llm_config.provider)
+            except ValueError:
+                valid_providers = ", ".join(p.value for p in LLMProvider)
+                raise ValueError(
+                    f"Invalid LLM provider in config: '{llm_config.provider}'. "
+                    f"Valid options: {valid_providers}"
+                )
+
+            return cls(
+                provider=provider,
+                model=llm_config.model,
+                api_key=llm_config.api_key,
+                base_url=llm_config.base_url,
+                timeout=llm_config.timeout,
+                keep_alive=llm_config.keep_alive,
             )
-
-        # Default base_url by provider
-        default_urls = {
-            LLMProvider.OLLAMA: get_optional_env("OLLAMA_URL", "http://localhost:11434"),
-            LLMProvider.MOONSHOT: "https://api.moonshot.cn/v1",
-        }
-
-        # Get base_url: explicit LLM_BASE_URL takes precedence
-        base_url = get_optional_env("LLM_BASE_URL") or default_urls.get(provider)
-
-        # Validate API key for cloud providers
-        api_key = get_optional_env("LLM_API_KEY")
-        if provider != LLMProvider.OLLAMA and not api_key:
-            raise ValueError(
-                f"LLM_API_KEY is required for provider '{provider.value}'. "
-                f"Please set it in docker-compose.yml or environment."
-            )
-
-        return cls(
-            provider=provider,
-            model=get_required_env("LLM_MODEL"),
-            api_key=api_key if api_key else None,
-            base_url=base_url,
-            timeout=float(get_optional_env("LLM_TIMEOUT", "120")),
-            keep_alive=get_optional_env("OLLAMA_KEEP_ALIVE", "10m") if provider == LLMProvider.OLLAMA else None,
-        )
+        except Exception as e:
+            logger.error(f"Failed to load LLM config from file: {e}")
+            raise
 
     def __repr__(self) -> str:
         """Safe repr that doesn't expose API key."""

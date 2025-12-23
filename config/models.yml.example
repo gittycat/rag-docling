@@ -1,0 +1,40 @@
+# Model Configuration Example
+# This file defines all model settings for the RAG system.
+# Copy this to config/models.yml and adjust as needed.
+# API keys are stored separately in secrets/.env
+
+llm:
+  # Main LLM for RAG query generation
+  # Supported providers: ollama, openai, anthropic, google, deepseek, moonshot
+  provider: ollama
+  model: gemma3:4b
+  base_url: http://host.docker.internal:11434  # For Ollama
+  # base_url: https://api.openai.com/v1        # For OpenAI
+  # base_url: https://api.anthropic.com        # For Anthropic
+  timeout: 120
+  keep_alive: 10m  # Ollama-only: keep model in memory (10m, -1=forever, 0=unload immediately)
+
+embedding:
+  # Embedding model for vector representations
+  provider: ollama
+  model: nomic-embed-text:latest
+  base_url: http://host.docker.internal:11434
+
+eval:
+  # Evaluation model for DeepEval metrics
+  # Requires ANTHROPIC_API_KEY in secrets/.env
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+
+reranker:
+  # Reranker for improving retrieval quality
+  enabled: true
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 5
+
+retrieval:
+  # Retrieval settings
+  top_k: 10
+  enable_hybrid_search: true    # BM25 + Vector search with RRF fusion
+  rrf_k: 60                      # Reciprocal Rank Fusion parameter
+  enable_contextual_retrieval: false  # Anthropic contextual retrieval (slower)

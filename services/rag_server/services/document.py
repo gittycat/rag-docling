@@ -5,7 +5,7 @@ from llama_index.node_parser.docling import DoclingNodeParser
 from llama_index.core import SimpleDirectoryReader
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import Document, TextNode
-from core.config import get_optional_env
+from infrastructure.config.models_config import get_models_config
 import logging
 import time
 import hashlib
@@ -44,9 +44,10 @@ SIMPLE_TEXT_EXTENSIONS = {'.txt', '.md'}
 
 
 def get_contextual_retrieval_config():
-    """Get contextual retrieval configuration from environment variables"""
+    """Get contextual retrieval configuration from models config file"""
+    config = get_models_config()
     return {
-        'enabled': get_optional_env('ENABLE_CONTEXTUAL_RETRIEVAL', 'true').lower() == 'true',
+        'enabled': config.retrieval.enable_contextual_retrieval,
     }
 
 
