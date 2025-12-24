@@ -172,6 +172,23 @@ export interface EvaluationRun {
 	notes?: string;
 }
 
+export interface MetricTrend {
+	metric_name: string;
+	values: number[];
+	timestamps: string[];
+	trend_direction: 'improving' | 'declining' | 'stable';
+	latest_value: number;
+	average_value: number;
+}
+
+export interface EvaluationSummary {
+	latest_run: EvaluationRun | null;
+	total_runs: number;
+	metric_trends: MetricTrend[];
+	best_run: EvaluationRun | null;
+	configuration_impact?: Record<string, unknown>;
+}
+
 export interface MetricDefinition {
 	name: string;
 	category: string;
@@ -298,6 +315,14 @@ export async function fetchHealth(): Promise<{ status: string }> {
 	const response = await fetch(`${API_BASE}/health`);
 	if (!response.ok) {
 		throw new Error(`Failed to fetch health: ${response.statusText}`);
+	}
+	return response.json();
+}
+
+export async function fetchEvaluationSummary(): Promise<EvaluationSummary> {
+	const response = await fetch(`${API_BASE}/metrics/evaluation/summary`);
+	if (!response.ok) {
+		throw new Error(`Failed to fetch evaluation summary: ${response.statusText}`);
 	}
 	return response.json();
 }
