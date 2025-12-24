@@ -45,6 +45,9 @@ _memory_cache: Dict[str, ChatMemoryBuffer] = {}
 # BM25 retriever cache (refreshed when documents added/deleted)
 _bm25_retriever: Optional[BM25Retriever] = None
 
+# Temporary session cache (in-memory only, cleared on restart)
+_temporary_sessions: Dict[str, ChatMemoryBuffer] = {}
+
 
 # ============================================================================
 # CONFIGURATION
@@ -73,9 +76,9 @@ def _get_chat_store() -> RedisChatStore:
     if _chat_store is None:
         _chat_store = RedisChatStore(
             redis_url=get_required_env("REDIS_URL"),
-            ttl=3600  # 1 hour TTL for chat sessions
+            ttl=None  # No TTL - persist indefinitely
         )
-        logger.info("[CHAT] Initialized RedisChatStore with 1-hour TTL")
+        logger.info("[CHAT] Initialized RedisChatStore with no TTL (persistent)")
     return _chat_store
 
 
@@ -115,17 +118,49 @@ def _get_token_limit_for_chat_history() -> int:
     return default_limit
 
 
-def get_or_create_chat_memory(session_id: str) -> ChatMemoryBuffer:
+def get_or_create_chat_memory(session_id: str, is_temporary: bool = False) -> ChatMemoryBuffer:
     """
     Get or create chat memory for a session.
 
-    Uses Redis-backed storage with 1-hour TTL.
-    Each session has isolated conversation history that persists across container restarts.
+    If is_temporary=True:
+    - Use in-memory dict (not Redis)
+    - Lost on server restart
+    - No metadata tracking
+
+    Otherwise:
+    - Uses Redis-backed storage (persistent)
+    - Session metadata tracked
     """
+    from services.session import get_session_metadata, create_session_metadata
+
+    # Handle temporary sessions
+    if is_temporary:
+        if session_id in _temporary_sessions:
+            logger.debug(f"[CHAT] Using temporary memory for session: {session_id}")
+            return _temporary_sessions[session_id]
+
+        # Create new temporary memory (no Redis backing)
+        token_limit = _get_token_limit_for_chat_history()
+        memory = ChatMemoryBuffer.from_defaults(
+            token_limit=token_limit,
+            chat_store=None,  # No persistence
+            chat_store_key=session_id
+        )
+
+        _temporary_sessions[session_id] = memory
+        logger.info(f"[CHAT] Created temporary memory for session: {session_id} (in-memory only)")
+        return memory
+
     # Check cache first
     if session_id in _memory_cache:
         logger.debug(f"[CHAT] Using cached memory for session: {session_id}")
         return _memory_cache[session_id]
+
+    # Lazy-create metadata if missing (for existing sessions)
+    metadata = get_session_metadata(session_id)
+    if not metadata:
+        logger.info(f"[CHAT] Lazy-creating metadata for existing session: {session_id}")
+        create_session_metadata(session_id)
 
     # Create new memory buffer
     token_limit = _get_token_limit_for_chat_history()
@@ -318,7 +353,8 @@ def create_reranker_postprocessor() -> Optional[List]:
 def create_chat_engine(
     index: VectorStoreIndex,
     session_id: str,
-    retrieval_top_k: int = 10
+    retrieval_top_k: int = 10,
+    is_temporary: bool = False
 ) -> CondensePlusContextChatEngine:
     """
     Create chat engine with hybrid search, reranking, and conversational memory.
@@ -347,8 +383,8 @@ def create_chat_engine(
     context_prompt = get_context_prompt()
     condense_prompt = get_condense_prompt()  # None = use LlamaIndex default
 
-    # Get chat memory
-    memory = get_or_create_chat_memory(session_id)
+    # Get chat memory (with temporary support)
+    memory = get_or_create_chat_memory(session_id, is_temporary=is_temporary)
 
     # Create retriever (hybrid or vector-only)
     retriever = create_hybrid_retriever(index, similarity_top_k=retrieval_top_k)
@@ -423,7 +459,7 @@ def extract_sources(source_nodes: List) -> List[Dict]:
     return sources
 
 
-def query_rag(query_text: str, session_id: str) -> Dict:
+def query_rag(query_text: str, session_id: str, is_temporary: bool = False) -> Dict:
     """
     Execute RAG query pipeline (synchronous, non-streaming).
 
@@ -433,7 +469,8 @@ def query_rag(query_text: str, session_id: str) -> Dict:
     3. Create chat engine (with hybrid search, reranking, memory)
     4. Execute query (retrieval → reranking → LLM generation)
     5. Extract sources from retrieved nodes
-    6. Return response with answer, sources, session_id
+    6. Update session metadata (touch timestamp, auto-generate title)
+    7. Return response with answer, sources, session_id
 
     Returns:
         {
@@ -444,8 +481,9 @@ def query_rag(query_text: str, session_id: str) -> Dict:
         }
     """
     from infrastructure.database.chroma import get_or_create_collection
+    from services.session import touch_session, get_session_metadata, update_session_title, generate_session_title
 
-    logger.info(f"[QUERY] Processing query for session: {session_id}")
+    logger.info(f"[QUERY] Processing query for session: {session_id} (temporary={is_temporary})")
     query_start = time.time()
 
     # Get index and config
@@ -455,7 +493,7 @@ def query_rag(query_text: str, session_id: str) -> Dict:
     logger.info(f"[QUERY] Config: top_k={config['retrieval_top_k']}, reranker={config['reranker_enabled']}, hybrid={config['hybrid_search_enabled']}")
 
     # Create chat engine
-    chat_engine = create_chat_engine(index, session_id, retrieval_top_k=config['retrieval_top_k'])
+    chat_engine = create_chat_engine(index, session_id, retrieval_top_k=config['retrieval_top_k'], is_temporary=is_temporary)
 
     # Execute query
     logger.info(f"[QUERY] Executing RAG query...")
@@ -479,6 +517,16 @@ def query_rag(query_text: str, session_id: str) -> Dict:
     # Extract sources
     sources = extract_sources(response.source_nodes)
 
+    # Update session metadata (non-temporary sessions only)
+    if not is_temporary:
+        touch_session(session_id)
+
+        # Auto-generate title from first user message if needed
+        metadata = get_session_metadata(session_id)
+        if metadata and metadata.title == "New Chat":
+            title = generate_session_title(query_text)
+            update_session_title(session_id, title)
+
     query_duration = time.time() - query_start
     logger.info(f"[QUERY] Query complete ({query_duration:.2f}s) - {len(sources)} sources returned")
 
@@ -490,7 +538,7 @@ def query_rag(query_text: str, session_id: str) -> Dict:
     }
 
 
-def query_rag_stream(query_text: str, session_id: str) -> Generator[str, None, None]:
+def query_rag_stream(query_text: str, session_id: str, is_temporary: bool = False) -> Generator[str, None, None]:
     """
     Execute RAG query pipeline with streaming response (Server-Sent Events).
 
@@ -502,18 +550,20 @@ def query_rag_stream(query_text: str, session_id: str) -> Generator[str, None, N
        - event: sources, data: {"sources": [...], "session_id": "..."}  (after streaming completes)
        - event: done, data: {}  (completion signal)
        - event: error, data: {"error": "..."}  (on error)
+    4. Update session metadata after streaming completes
 
     Yields SSE-formatted strings for client consumption.
     """
     from infrastructure.database.chroma import get_or_create_collection
+    from services.session import touch_session, get_session_metadata, update_session_title, generate_session_title
 
     try:
-        logger.info(f"[QUERY_STREAM] Starting streaming query for session: {session_id}")
+        logger.info(f"[QUERY_STREAM] Starting streaming query for session: {session_id} (temporary={is_temporary})")
 
         # Get index and create chat engine
         index = get_or_create_collection()
         config = get_inference_config()
-        chat_engine = create_chat_engine(index, session_id, retrieval_top_k=config['retrieval_top_k'])
+        chat_engine = create_chat_engine(index, session_id, retrieval_top_k=config['retrieval_top_k'], is_temporary=is_temporary)
 
         # Stream response tokens
         logger.info(f"[QUERY_STREAM] Executing streaming RAG query...")
@@ -525,6 +575,16 @@ def query_rag_stream(query_text: str, session_id: str) -> Generator[str, None, N
         # After streaming completes, send sources
         sources = extract_sources(streaming_response.source_nodes)
         logger.info(f"[QUERY_STREAM] Streaming complete - {len(sources)} sources")
+
+        # Update session metadata (non-temporary sessions only)
+        if not is_temporary:
+            touch_session(session_id)
+
+            # Auto-generate title from first user message if needed
+            metadata = get_session_metadata(session_id)
+            if metadata and metadata.title == "New Chat":
+                title = generate_session_title(query_text)
+                update_session_title(session_id, title)
 
         yield f"event: sources\ndata: {json.dumps({'sources': sources, 'session_id': session_id})}\n\n"
 

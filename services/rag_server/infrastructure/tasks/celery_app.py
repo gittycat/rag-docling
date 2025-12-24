@@ -32,6 +32,16 @@ celery_app.conf.update(
     worker_task_log_format='[%(levelname)s/%(processName)s] [%(task_name)s] %(message)s',
 )
 
+# Periodic task schedule (Celery Beat)
+from celery.schedules import crontab
+
+celery_app.conf.beat_schedule = {
+    'auto-archive-inactive-sessions': {
+        'task': 'auto_archive_sessions',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight UTC
+    }
+}
+
 @worker_process_init.connect
 def init_worker(**kwargs):
     from core.config import initialize_settings

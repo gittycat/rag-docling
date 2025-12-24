@@ -34,6 +34,9 @@ docker-down:
 docker-logs: docker-up
     docker compose logs -f
 
+migrate-sessions: docker-up
+    docker compose exec rag-server python scripts/migrate_sessions.py
+
 @clean:
     # These fd commands run in parallel
     # -H includes hidden dirs (.pytest_cache)

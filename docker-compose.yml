@@ -79,7 +79,9 @@ services:
   # Redis - Message broker and result backend for Celery
   redis:
     image: redis:8-alpine
-    command: redis-server --loglevel warning --save "" --appendonly no
+    command: redis-server --loglevel warning --save 60 1000 --appendonly yes --appendfsync everysec
+    volumes:
+      - redis_data:/data
     networks:
       - private
     restart: unless-stopped
@@ -134,6 +136,8 @@ networks:
 # Persistent volumes
 volumes:
   chromadb_data:
+    driver: local
+  redis_data:
     driver: local
   docs_repo:
     driver: local

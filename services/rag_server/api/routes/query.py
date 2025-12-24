@@ -15,9 +15,16 @@ async def query(request: QueryRequest):
     try:
         # Generate session_id if not provided
         session_id = request.session_id or str(uuid.uuid4())
-        logger.info(f"[QUERY] Processing query with session_id: {session_id}")
+        logger.info(f"[QUERY] Processing query with session_id: {session_id} (temporary={request.is_temporary})")
 
-        result = query_rag(request.query, session_id=session_id)
+        # Create session metadata if needed (non-temporary sessions only)
+        if not request.is_temporary:
+            from services.session import get_session_metadata, create_session_metadata
+            metadata = get_session_metadata(session_id)
+            if not metadata:
+                create_session_metadata(session_id, is_temporary=False)
+
+        result = query_rag(request.query, session_id=session_id, is_temporary=request.is_temporary)
         return QueryResponse(
             answer=result['answer'],
             sources=result['sources'],
@@ -42,10 +49,17 @@ async def query_stream(request: QueryRequest):
     - event: error, data: {"error": "..."}  (on error)
     """
     session_id = request.session_id or str(uuid.uuid4())
-    logger.info(f"[QUERY_STREAM] Starting streaming query with session_id: {session_id}")
+    logger.info(f"[QUERY_STREAM] Starting streaming query with session_id: {session_id} (temporary={request.is_temporary})")
+
+    # Create session metadata if needed (non-temporary sessions only)
+    if not request.is_temporary:
+        from services.session import get_session_metadata, create_session_metadata
+        metadata = get_session_metadata(session_id)
+        if not metadata:
+            create_session_metadata(session_id, is_temporary=False)
 
     return StreamingResponse(
-        query_rag_stream(request.query, session_id),
+        query_rag_stream(request.query, session_id, is_temporary=request.is_temporary),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

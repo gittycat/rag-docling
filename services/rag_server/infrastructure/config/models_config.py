@@ -153,8 +153,8 @@ class ModelsConfig(BaseModel):
         config = cls(**data)
 
         # Run provider-specific validations
+        # Only validate LLM requirements (eval is only validated when used)
         config.llm.validate_provider_requirements()
-        config.eval.validate_provider_requirements()
 
         return config
 

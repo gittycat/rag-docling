@@ -372,14 +372,15 @@ export type SSEEvent = SSETokenEvent | SSESourcesEvent | SSEDoneEvent | SSEError
  */
 export async function* streamQuery(
 	query: string,
-	sessionId: string
+	sessionId: string,
+	isTemporary: boolean = false
 ): AsyncGenerator<SSEEvent, void, undefined> {
 	const response = await fetch(`${API_BASE}/query/stream`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json'
 		},
-		body: JSON.stringify({ query, session_id: sessionId })
+		body: JSON.stringify({ query, session_id: sessionId, is_temporary: isTemporary })
 	});
 
 	if (!response.ok) {
@@ -484,4 +485,111 @@ export async function clearChatSession(sessionId: string): Promise<void> {
  */
 export function getDocumentDownloadUrl(documentId: string): string {
 	return `${API_BASE}/documents/${documentId}/download`;
+}
+
+// ============================================================================
+// Types - Session Management
+// ============================================================================
+
+export interface SessionMetadata {
+	session_id: string;
+	title: string;
+	created_at: string;
+	updated_at: string;
+	is_archived: boolean;
+	is_temporary: boolean;
+}
+
+export interface SessionListResponse {
+	sessions: SessionMetadata[];
+	total: number;
+}
+
+export interface CreateSessionRequest {
+	is_temporary?: boolean;
+	title?: string;
+}
+
+export interface CreateSessionResponse {
+	session_id: string;
+	title: string;
+	created_at: string;
+	is_temporary: boolean;
+}
+
+// ============================================================================
+// API Functions - Session Management
+// ============================================================================
+
+/**
+ * List all chat sessions (excluding temporary)
+ */
+export async function fetchChatSessions(includeArchived: boolean = false): Promise<SessionMetadata[]> {
+	const params = new URLSearchParams();
+	params.set('include_archived', includeArchived.toString());
+
+	const response = await fetch(`${API_BASE}/chat/sessions?${params}`);
+	if (!response.ok) {
+		throw new Error(`Failed to fetch sessions: ${response.statusText}`);
+	}
+	const data: SessionListResponse = await response.json();
+	return data.sessions;
+}
+
+/**
+ * Create new chat session
+ */
+export async function createNewSession(isTemporary: boolean = false): Promise<CreateSessionResponse> {
+	const response = await fetch(`${API_BASE}/chat/sessions/new`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ is_temporary: isTemporary })
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to create session: ${response.statusText}`);
+	}
+
+	return response.json();
+}
+
+/**
+ * Delete chat session (metadata + messages)
+ */
+export async function deleteSession(sessionId: string): Promise<void> {
+	const response = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
+		method: 'DELETE'
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to delete session: ${response.statusText}`);
+	}
+}
+
+/**
+ * Archive chat session
+ */
+export async function archiveSession(sessionId: string): Promise<void> {
+	const response = await fetch(`${API_BASE}/chat/sessions/${sessionId}/archive`, {
+		method: 'POST'
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to archive session: ${response.statusText}`);
+	}
+}
+
+/**
+ * Restore chat session from archive
+ */
+export async function unarchiveSession(sessionId: string): Promise<void> {
+	const response = await fetch(`${API_BASE}/chat/sessions/${sessionId}/unarchive`, {
+		method: 'POST'
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to unarchive session: ${response.statusText}`);
+	}
 }

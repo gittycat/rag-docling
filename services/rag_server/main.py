@@ -59,10 +59,11 @@ async def startup_event():
 
 
 # Include routers
-from api.routes import health, query, documents, chat, metrics
+from api.routes import health, query, documents, chat, metrics, sessions
 
 app.include_router(health.router, tags=["health"])
 app.include_router(query.router, tags=["query"])
 app.include_router(documents.router, tags=["documents"])
 app.include_router(chat.router, tags=["chat"])
+app.include_router(sessions.router, tags=["sessions"])
 app.include_router(metrics.router, tags=["metrics"])

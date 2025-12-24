@@ -121,3 +121,43 @@ def process_document_task(self, file_path: str, filename: str, batch_id: str):
                 logger.warning(f"[TASK {task_id}] Could not delete temp file {file_path}: {e}")
         else:
             logger.info(f"[TASK {task_id}] Keeping temp file for retry (attempt {self.request.retries + 1}/{self.max_retries + 1})")
+
+
+@celery_app.task(name="auto_archive_sessions")
+def auto_archive_sessions_task():
+    """
+    Auto-archive inactive sessions.
+
+    Runs daily at midnight (configured via Celery beat).
+    Archives sessions with updated_at > 7 days ago.
+    """
+    from services.session import list_sessions, archive_session
+    from datetime import datetime, timezone, timedelta
+
+    logger.info("[AUTO_ARCHIVE] Starting auto-archive task")
+
+    # Get all active sessions
+    sessions = list_sessions(include_archived=False, limit=1000)
+
+    # Calculate cutoff date (7 days ago)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=7)
+
+    archived_count = 0
+
+    for session in sessions:
+        # Parse updated_at timestamp
+        try:
+            updated_at = datetime.fromisoformat(session.updated_at)
+
+            # Archive if older than 7 days
+            if updated_at < cutoff_date:
+                archive_session(session.session_id)
+                archived_count += 1
+                logger.info(f"[AUTO_ARCHIVE] Archived session {session.session_id} (last updated: {session.updated_at})")
+
+        except Exception as e:
+            logger.error(f"[AUTO_ARCHIVE] Error processing session {session.session_id}: {str(e)}")
+            continue
+
+    logger.info(f"[AUTO_ARCHIVE] Task complete - archived {archived_count} sessions")
+    return {"archived_count": archived_count}

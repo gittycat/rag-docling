@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import {
 		streamQuery,
 		clearChatSession,
+		getChatHistory,
 		getDocumentDownloadUrl,
 		type ChatMessage,
 		type ChatSource
@@ -11,12 +14,25 @@
 
 	// State
 	let messages = $state<ChatMessage[]>([]);
-	let sessionId = $state<string>(crypto.randomUUID());
+	let sessionId = $state<string | null>(null);
+	let sessionTitle = $state<string | null>(null);
 	let inputText = $state('');
 	let isStreaming = $state(false);
+	let isLoadingHistory = $state(false);
 	let currentStreamingContent = $state('');
 	let error = $state<string | null>(null);
 	let messagesContainer: HTMLDivElement | undefined = $state();
+
+	// Track current session from URL
+	let urlSessionId = $derived($page.url.searchParams.get('session_id'));
+	let isTemporaryChat = $derived(!urlSessionId);
+
+	// Load session when URL changes
+	$effect(() => {
+		if (browser) {
+			loadSession(urlSessionId);
+		}
+	});
 
 	// Scroll to bottom when messages change
 	$effect(() => {
@@ -25,20 +41,29 @@
 		}
 	});
 
-	// Persist session ID in localStorage
-	$effect(() => {
-		if (browser && sessionId) {
-			localStorage.setItem('chat_session_id', sessionId);
-		}
-	});
+	async function loadSession(newSessionId: string | null) {
+		// Reset state
+		messages = [];
+		currentStreamingContent = '';
+		error = null;
+		sessionTitle = null;
+		sessionId = newSessionId;
 
-	// Restore session on mount
-	onMount(() => {
-		const stored = localStorage.getItem('chat_session_id');
-		if (stored) {
-			sessionId = stored;
+		// Load history if we have a session ID
+		if (newSessionId) {
+			isLoadingHistory = true;
+			try {
+				const history = await getChatHistory(newSessionId);
+				messages = history.messages;
+				sessionTitle = history.metadata?.title || null;
+			} catch (err) {
+				console.error('Failed to load session history:', err);
+				error = err instanceof Error ? err.message : 'Failed to load session history';
+			} finally {
+				isLoadingHistory = false;
+			}
 		}
-	});
+	}
 
 	async function sendMessage() {
 		if (!inputText.trim() || isStreaming) return;
@@ -51,7 +76,7 @@
 		error = null;
 
 		try {
-			for await (const event of streamQuery(userMessage, sessionId)) {
+			for await (const event of streamQuery(userMessage, sessionId, isTemporaryChat)) {
 				if (event.event === 'token') {
 					currentStreamingContent += event.data.token;
 				} else if (event.event === 'sources') {
@@ -65,7 +90,16 @@
 							timestamp: new Date().toISOString()
 						}
 					];
-					sessionId = event.data.session_id;
+
+					// Update session ID and redirect if we just created a new session
+					const newSessionId = event.data.session_id;
+					if (sessionId !== newSessionId) {
+						sessionId = newSessionId;
+						// If this was a temporary chat that got saved, redirect to the session URL
+						if (isTemporaryChat && newSessionId) {
+							await goto(`/chat?session_id=${newSessionId}`, { replaceState: true });
+						}
+					}
 				} else if (event.event === 'error') {
 					error = event.data.error;
 				}
@@ -96,18 +130,8 @@
 	}
 
 	async function newChat() {
-		// Clear server-side session
-		try {
-			await clearChatSession(sessionId);
-		} catch {
-			// Ignore errors - session might not exist
-		}
-
-		// Reset local state
-		messages = [];
-		sessionId = crypto.randomUUID();
-		inputText = '';
-		error = null;
+		// Navigate to temporary chat (no session_id)
+		await goto('/chat');
 	}
 
 	function saveChat() {
@@ -151,9 +175,24 @@
 <div class="flex h-[calc(100vh-140px)] flex-col">
 	<!-- Header with actions -->
 	<div class="flex items-center justify-between border-b border-base-300 p-4">
-		<div>
-			<h2 class="text-lg font-semibold">Chat</h2>
-			<p class="text-xs text-base-content/60">Session: {sessionId.slice(0, 8)}...</p>
+		<div class="flex-1 min-w-0">
+			{#if isLoadingHistory}
+				<div class="flex items-center gap-2">
+					<span class="loading loading-spinner loading-sm"></span>
+					<span class="text-sm text-base-content/60">Loading session...</span>
+				</div>
+			{:else}
+				<h2 class="text-lg font-semibold truncate">
+					{sessionTitle || (isTemporaryChat ? 'Temporary Chat' : 'Chat')}
+				</h2>
+				<p class="text-xs text-base-content/60">
+					{#if isTemporaryChat}
+						Not saved · Messages will be lost when you leave
+					{:else if sessionId}
+						Session: {sessionId.slice(0, 8)}...
+					{/if}
+				</p>
+			{/if}
 		</div>
 		<div class="flex gap-2">
 			<button class="btn btn-outline btn-sm" onclick={newChat} disabled={isStreaming}>
@@ -192,7 +231,7 @@
 						d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
 					/>
 				</svg>
-				Save Chat
+				Export
 			</button>
 		</div>
 	</div>

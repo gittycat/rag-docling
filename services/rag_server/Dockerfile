@@ -48,11 +48,13 @@ RUN --mount=type=cache,target=/home/appuser/.cache/uv,uid=1000,gid=1000 \
 COPY --chown=appuser:appuser services/rag_server/api ./api
 COPY --chown=appuser:appuser services/rag_server/schemas ./schemas
 COPY --chown=appuser:appuser services/rag_server/services ./services
+COPY --chown=appuser:appuser services/rag_server/pipelines ./pipelines
 COPY --chown=appuser:appuser services/rag_server/infrastructure ./infrastructure
 COPY --chown=appuser:appuser services/rag_server/core ./core
 COPY --chown=appuser:appuser services/rag_server/evaluation ./evaluation
 COPY --chown=appuser:appuser services/rag_server/eval_data ./eval_data
 COPY --chown=appuser:appuser services/rag_server/tests ./tests
+COPY --chown=appuser:appuser services/rag_server/scripts ./scripts
 COPY --chown=appuser:appuser services/rag_server/main.py ./
 
 # Expose port
