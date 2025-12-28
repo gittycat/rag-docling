@@ -33,6 +33,10 @@
 	let isTemporaryMode = $derived($page.url.searchParams.get('temporary') === 'true');
 	let isTemporaryChat = $state(false);
 
+	// Track if session has been initialized (first message sent)
+	// Chat only appears in sidebar after initialization
+	let isInitialized = $state(false);
+
 	// Load or create session when URL changes
 	$effect(() => {
 		if (browser) {
@@ -42,26 +46,27 @@
 
 	async function handleUrlChange(newSessionId: string | null, temporary: boolean) {
 		if (newSessionId) {
-			// Load existing session
+			// Skip reload if we already have this session (e.g., just created it in sendMessage)
+			if (newSessionId === sessionId) {
+				isTemporaryChat = false;
+				isInitialized = true;
+				return;
+			}
+			// Load existing session (already initialized)
 			isTemporaryChat = false;
+			isInitialized = true;
 			await loadSession(newSessionId);
 		} else if (temporary) {
-			// Explicit temporary mode requested
+			// Explicit temporary mode requested - wait for first message
 			isTemporaryChat = true;
+			isInitialized = false;
 			resetState();
 		} else {
-			// No session_id and not temporary → create new persisted session
-			try {
-				const newSession = await createNewSession();
-				triggerSessionRefresh();
-				await goto(`/chat?session_id=${newSession.session_id}`, { replaceState: true });
-			} catch (err) {
-				console.error('Failed to create session:', err);
-				error = err instanceof Error ? err.message : 'Failed to create session';
-				// Fall back to temporary mode on error
-				isTemporaryChat = true;
-				resetState();
-			}
+			// New chat - don't create session until first message
+			// Session will be created in sendMessage() with title from first query
+			isTemporaryChat = false;
+			isInitialized = false;
+			resetState();
 		}
 	}
 
@@ -132,17 +137,18 @@
 		// Create new AbortController for this request
 		abortController = new AbortController();
 
-		// If this is a temporary chat, create session immediately before streaming
+		// If not initialized and not temporary, create session with first message
 		// This ensures the chat appears in "Recent" right when user presses Enter
 		let currentSessionId = sessionId;
-		if (isTemporaryChat) {
+		if (!isInitialized && !isTemporaryChat) {
 			try {
 				const newSession = await createNewSession(userMessage);
 				currentSessionId = newSession.session_id;
 				sessionId = newSession.session_id;
 				sessionTitle = newSession.title;
+				isInitialized = true;
 
-				// Update URL and refresh sidebar immediately
+				// Update URL and refresh sidebar so chat appears in Recent
 				await goto(`/chat?session_id=${newSession.session_id}`, { replaceState: true });
 				triggerSessionRefresh();
 			} catch (e) {
@@ -150,11 +156,16 @@
 				isStreaming = false;
 				return;
 			}
+		} else if (!isInitialized && isTemporaryChat) {
+			// Temporary chat: mark as initialized but don't create session
+			// Messages are not persisted - will be lost when user leaves
+			isInitialized = true;
 		}
 
 		try {
 			// Now stream the query with the established session
-			for await (const event of streamQuery(userMessage, currentSessionId, false, abortController.signal)) {
+			// For temporary chats, pass isTemporary=true so messages aren't persisted
+			for await (const event of streamQuery(userMessage, currentSessionId, isTemporaryChat, abortController.signal)) {
 				if (event.event === 'token') {
 					currentStreamingContent += event.data.token;
 				} else if (event.event === 'sources') {
@@ -280,13 +291,13 @@
 			{/if}
 		</div>
 
-		<!-- Toggle to temporary chat (only before first message, one-way) -->
+		<!-- Toggle temporary mode (only before first message, locked after initialization) -->
 		<button
 			class="btn btn-ghost btn-sm btn-square"
 			class:btn-active={isTemporaryChat}
-			onclick={() => goto('/chat?temporary=true')}
-			disabled={isTemporaryChat || messages.length > 0}
-			title="Temporary chat"
+			onclick={() => goto(isTemporaryChat ? '/chat' : '/chat?temporary=true')}
+			disabled={isInitialized}
+			title={isTemporaryChat ? 'Switch to persistent chat' : 'Switch to temporary chat'}
 		>
 			<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />

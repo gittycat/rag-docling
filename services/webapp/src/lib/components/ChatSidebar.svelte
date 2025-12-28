@@ -16,8 +16,7 @@
     deleteSession,
     archiveSession,
     unarchiveSession,
-    getChatHistory,
-    createNewSession
+    getChatHistory
   } from '$lib/api';
   import type { SessionMetadata } from '$lib/api';
   import { onMount } from 'svelte';
@@ -96,16 +95,9 @@
     }
   }
 
-  async function handleNewSession() {
-    // Always create a persisted session from sidebar
-    try {
-      const newSession = await createNewSession();
-      await loadSessions();
-      goto(`/chat?session_id=${newSession.session_id}`);
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to create session';
-      console.error('Failed to create session:', err);
-    }
+  function handleNewSession() {
+    // Navigate to chat page - session will be created when user sends first message
+    goto('/chat');
   }
 
   async function handleDeleteSession(sessionId: string) {
@@ -171,22 +163,6 @@
 
   function handleSessionClick(sessionId: string) {
     goto(`/chat?session_id=${sessionId}`);
-  }
-
-  function formatTimestamp(timestamp: string): string {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   function isCurrentSession(sessionId: string): boolean {
@@ -331,7 +307,7 @@
                       role="button"
                       tabindex="0"
                     >
-                      <p class="session-title has-tooltip text-sm truncate pr-1" data-tooltip={formatTimestamp(session.updated_at)}>
+                      <p class="session-title text-sm truncate pr-1">
                         {session.title || 'Untitled Chat'}
                       </p>
 
@@ -409,7 +385,7 @@
                       role="button"
                       tabindex="0"
                     >
-                      <p class="session-title has-tooltip text-sm truncate opacity-70 pr-1" data-tooltip={formatTimestamp(session.updated_at)}>
+                      <p class="session-title text-sm truncate opacity-70 pr-1">
                         {session.title || 'Untitled Chat'}
                       </p>
 
@@ -498,12 +474,6 @@
   .menu-item {
     overflow: hidden;
     min-width: 0;
-  }
-
-  /* Hide tooltip when session item is hovered (action buttons visible) */
-  .session-item:hover .session-title::before,
-  .session-item:hover .session-title::after {
-    display: none !important;
   }
 
   @keyframes fadeIn {
