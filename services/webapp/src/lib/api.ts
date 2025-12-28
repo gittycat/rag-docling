@@ -361,6 +361,7 @@ export interface ChatHistoryMessage {
 export interface ChatHistoryResponse {
 	session_id: string;
 	messages: ChatHistoryMessage[];
+	metadata?: SessionMetadata;
 }
 
 export type SSEEventType = 'token' | 'sources' | 'done' | 'error';
@@ -526,6 +527,8 @@ export interface SessionMetadata {
 	updated_at: string;
 	is_archived: boolean;
 	is_temporary: boolean;
+	llm_model?: string;
+	search_type?: string; // "vector" | "hybrid"
 }
 
 export interface SessionListResponse {
@@ -544,6 +547,8 @@ export interface CreateSessionResponse {
 	title: string;
 	created_at: string;
 	is_temporary: boolean;
+	llm_model?: string;
+	search_type?: string; // "vector" | "hybrid"
 }
 
 // ============================================================================

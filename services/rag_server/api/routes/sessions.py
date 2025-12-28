@@ -63,7 +63,9 @@ async def get_sessions(
                     created_at=s.created_at,
                     updated_at=s.updated_at,
                     is_archived=s.is_archived,
-                    is_temporary=s.is_temporary
+                    is_temporary=s.is_temporary,
+                    llm_model=s.llm_model,
+                    search_type=s.search_type
                 )
                 for s in sessions
             ],
@@ -89,7 +91,9 @@ async def get_session(session_id: str):
             created_at=metadata.created_at,
             updated_at=metadata.updated_at,
             is_archived=metadata.is_archived,
-            is_temporary=metadata.is_temporary
+            is_temporary=metadata.is_temporary,
+            llm_model=metadata.llm_model,
+            search_type=metadata.search_type
         )
     except HTTPException:
         raise
@@ -127,7 +131,9 @@ async def create_new_session(request: CreateSessionRequest):
             session_id=metadata.session_id,
             title=metadata.title,
             created_at=metadata.created_at,
-            is_temporary=metadata.is_temporary
+            is_temporary=metadata.is_temporary,
+            llm_model=metadata.llm_model,
+            search_type=metadata.search_type
         )
     except Exception as e:
         logger.error(f"[SESSIONS_API] Error creating session: {str(e)}")

@@ -1,8 +1,9 @@
 import logging
 from fastapi import APIRouter, HTTPException
 
-from schemas.chat import ChatHistoryResponse, ClearSessionRequest, ClearSessionResponse
+from schemas.chat import ChatHistoryResponse, ClearSessionRequest, ClearSessionResponse, SessionMetadataResponse
 from pipelines.inference import get_chat_history, clear_session_memory
+from services.session import get_session_metadata
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -10,7 +11,7 @@ router = APIRouter()
 
 @router.get("/chat/history/{session_id}", response_model=ChatHistoryResponse)
 async def get_session_history(session_id: str):
-    """Get the full chat history for a session"""
+    """Get the full chat history for a session, including metadata"""
     try:
         messages = get_chat_history(session_id)
 
@@ -22,9 +23,25 @@ async def get_session_history(session_id: str):
                 "content": msg.content
             })
 
+        # Get session metadata
+        session_meta = get_session_metadata(session_id)
+        metadata = None
+        if session_meta:
+            metadata = SessionMetadataResponse(
+                session_id=session_meta.session_id,
+                title=session_meta.title,
+                created_at=session_meta.created_at,
+                updated_at=session_meta.updated_at,
+                is_archived=session_meta.is_archived,
+                is_temporary=session_meta.is_temporary,
+                llm_model=session_meta.llm_model,
+                search_type=session_meta.search_type
+            )
+
         return ChatHistoryResponse(
             session_id=session_id,
-            messages=formatted_messages
+            messages=formatted_messages,
+            metadata=metadata
         )
     except Exception as e:
         logger.error(f"[CHAT_HISTORY] Error retrieving history: {str(e)}")

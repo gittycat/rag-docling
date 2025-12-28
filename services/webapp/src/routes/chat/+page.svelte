@@ -19,6 +19,9 @@
 	let messages = $state<ChatMessage[]>([]);
 	let sessionId = $state<string | null>(null);
 	let sessionTitle = $state<string | null>(null);
+	let sessionCreatedAt = $state<string | null>(null);
+	let sessionLlmModel = $state<string | null>(null);
+	let sessionSearchType = $state<string | null>(null);
 	let inputText = $state('');
 	let isStreaming = $state(false);
 	let isLoadingHistory = $state(false);
@@ -27,6 +30,31 @@
 	let messagesContainer: HTMLDivElement | undefined = $state();
 	let abortController: AbortController | null = $state(null);
 	let textareaElement: HTMLTextAreaElement | undefined = $state();
+
+	// Format UTC date to local date/time string
+	function formatLocalDateTime(isoString: string): string {
+		const date = new Date(isoString);
+		return date.toLocaleString(undefined, {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
+	// Format search type for display
+	function formatSearchType(searchType: string | null): string {
+		if (!searchType) return '';
+		switch (searchType) {
+			case 'hybrid':
+				return 'Hybrid (BM25+Vector)';
+			case 'vector':
+				return 'Vector';
+			default:
+				return searchType;
+		}
+	}
 
 	// Track current session from URL
 	let urlSessionId = $derived($page.url.searchParams.get('session_id'));
@@ -76,6 +104,9 @@
 		error = null;
 		sessionTitle = null;
 		sessionId = null;
+		sessionCreatedAt = null;
+		sessionLlmModel = null;
+		sessionSearchType = null;
 	}
 
 	// Scroll to bottom when messages change
@@ -106,6 +137,9 @@
 		currentStreamingContent = '';
 		error = null;
 		sessionTitle = null;
+		sessionCreatedAt = null;
+		sessionLlmModel = null;
+		sessionSearchType = null;
 		sessionId = newSessionId;
 
 		// Load history if we have a session ID
@@ -114,7 +148,13 @@
 			try {
 				const history = await getChatHistory(newSessionId);
 				messages = history.messages;
-				sessionTitle = history.metadata?.title || null;
+				// Extract all metadata fields
+				if (history.metadata) {
+					sessionTitle = history.metadata.title || null;
+					sessionCreatedAt = history.metadata.created_at || null;
+					sessionLlmModel = history.metadata.llm_model || null;
+					sessionSearchType = history.metadata.search_type || null;
+				}
 			} catch (err) {
 				console.error('Failed to load session history:', err);
 				error = err instanceof Error ? err.message : 'Failed to load session history';
@@ -146,6 +186,9 @@
 				currentSessionId = newSession.session_id;
 				sessionId = newSession.session_id;
 				sessionTitle = newSession.title;
+				sessionCreatedAt = newSession.created_at;
+				sessionLlmModel = newSession.llm_model || null;
+				sessionSearchType = newSession.search_type || null;
 				isInitialized = true;
 
 				// Update URL and refresh sidebar so chat appears in Recent
@@ -281,13 +324,27 @@
 				<h2 class="text-lg font-semibold truncate">
 					{sessionTitle || (isTemporaryChat ? 'Temporary Chat' : 'New Chat')}
 				</h2>
-				<p class="text-xs text-base-content/60">
+				<div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
 					{#if isTemporaryChat}
-						Not saved · Messages will be lost when you leave
+						<span class="text-xs text-warning">Not saved · Messages will be lost when you leave</span>
 					{:else if sessionId}
-						Session: {sessionId.slice(0, 8)}...
+						{#if sessionCreatedAt}
+							<span class="text-xs text-base-content/60" title="Created at">
+								{formatLocalDateTime(sessionCreatedAt)}
+							</span>
+						{/if}
+						{#if sessionLlmModel}
+							<span class="badge badge-ghost badge-xs" title="LLM Model">
+								{sessionLlmModel}
+							</span>
+						{/if}
+						{#if sessionSearchType}
+							<span class="badge badge-ghost badge-xs" title="Search Type">
+								{formatSearchType(sessionSearchType)}
+							</span>
+						{/if}
 					{/if}
-				</p>
+				</div>
 			{/if}
 		</div>
 

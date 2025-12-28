@@ -28,6 +28,8 @@ class SessionMetadata:
     updated_at: str  # ISO 8601 timestamp
     is_archived: bool = False
     is_temporary: bool = False
+    llm_model: str | None = None      # e.g., "gemma3:4b"
+    search_type: str | None = None    # "vector" | "hybrid"
 
 
 def _get_redis_client():
@@ -41,6 +43,19 @@ def _metadata_key(session_id: str) -> str:
     return f"session:metadata:{session_id}"
 
 
+def _get_inference_settings() -> tuple[str | None, str | None]:
+    """Get current LLM model and search type from config."""
+    try:
+        from infrastructure.config.models_config import get_models_config
+        config = get_models_config()
+        llm_model = config.llm.model
+        search_type = "hybrid" if config.retrieval.enable_hybrid_search else "vector"
+        return llm_model, search_type
+    except Exception as e:
+        logger.warning(f"[SESSION] Could not get inference settings: {e}")
+        return None, None
+
+
 def create_session_metadata(
     session_id: str,
     is_temporary: bool = False,
@@ -50,15 +65,20 @@ def create_session_metadata(
     Create new session metadata.
 
     If is_temporary=True, metadata is not persisted to Redis.
+    Captures current inference settings (LLM model, search type) at creation time.
     """
     now = datetime.now(timezone.utc).isoformat()
+    llm_model, search_type = _get_inference_settings()
+
     metadata = SessionMetadata(
         session_id=session_id,
         title=title,
         created_at=now,
         updated_at=now,
         is_archived=False,
-        is_temporary=is_temporary
+        is_temporary=is_temporary,
+        llm_model=llm_model,
+        search_type=search_type
     )
 
     if not is_temporary:

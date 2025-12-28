@@ -9,6 +9,7 @@ from typing import Optional
 class ChatHistoryResponse(BaseModel):
     session_id: str
     messages: list[dict]
+    metadata: Optional["SessionMetadataResponse"] = None
 
 
 class ClearSessionRequest(BaseModel):
@@ -32,6 +33,8 @@ class SessionMetadataResponse(BaseModel):
     updated_at: str
     is_archived: bool
     is_temporary: bool
+    llm_model: Optional[str] = None
+    search_type: Optional[str] = None  # "vector" | "hybrid"
 
 
 class SessionListResponse(BaseModel):
@@ -53,6 +56,8 @@ class CreateSessionResponse(BaseModel):
     title: str
     created_at: str
     is_temporary: bool
+    llm_model: Optional[str] = None
+    search_type: Optional[str] = None  # "vector" | "hybrid"
 
 
 class DeleteSessionResponse(BaseModel):
