@@ -2,7 +2,7 @@
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import {
 		streamQuery,
 		clearChatSession,
@@ -11,6 +11,7 @@
 		type ChatMessage,
 		type ChatSource
 	} from '$lib/api';
+	import { exportChatFn, canExportChat } from '$lib/stores/chat';
 
 	// State
 	let messages = $state<ChatMessage[]>([]);
@@ -22,6 +23,8 @@
 	let currentStreamingContent = $state('');
 	let error = $state<string | null>(null);
 	let messagesContainer: HTMLDivElement | undefined = $state();
+	let abortController: AbortController | null = $state(null);
+	let textareaElement: HTMLTextAreaElement | undefined = $state();
 
 	// Track current session from URL
 	let urlSessionId = $derived($page.url.searchParams.get('session_id'));
@@ -39,6 +42,21 @@
 		if (messagesContainer && (messages.length > 0 || currentStreamingContent)) {
 			messagesContainer.scrollTop = messagesContainer.scrollHeight;
 		}
+	});
+
+	// Update export store when messages change
+	$effect(() => {
+		canExportChat.set(messages.length > 0 && !isStreaming);
+	});
+
+	// Set export function for sidebar
+	onMount(() => {
+		exportChatFn.set(saveChat);
+	});
+
+	onDestroy(() => {
+		exportChatFn.set(null);
+		canExportChat.set(false);
 	});
 
 	async function loadSession(newSessionId: string | null) {
@@ -75,8 +93,11 @@
 		currentStreamingContent = '';
 		error = null;
 
+		// Create new AbortController for this request
+		abortController = new AbortController();
+
 		try {
-			for await (const event of streamQuery(userMessage, sessionId, isTemporaryChat)) {
+			for await (const event of streamQuery(userMessage, sessionId, isTemporaryChat, abortController.signal)) {
 				if (event.event === 'token') {
 					currentStreamingContent += event.data.token;
 				} else if (event.event === 'sources') {
@@ -105,20 +126,42 @@
 				}
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'An error occurred';
-			// Add error message to chat
-			if (currentStreamingContent) {
-				messages = [
-					...messages,
-					{
-						role: 'assistant',
-						content: currentStreamingContent + '\n\n[Error: Connection interrupted]'
-					}
-				];
+			// Check if this was a user-initiated cancellation
+			if (e instanceof Error && e.name === 'AbortError') {
+				// Add partial response if any content was streamed
+				if (currentStreamingContent) {
+					messages = [
+						...messages,
+						{
+							role: 'assistant',
+							content: currentStreamingContent + '\n\n[Cancelled]',
+							timestamp: new Date().toISOString()
+						}
+					];
+				}
+			} else {
+				error = e instanceof Error ? e.message : 'An error occurred';
+				// Add error message to chat
+				if (currentStreamingContent) {
+					messages = [
+						...messages,
+						{
+							role: 'assistant',
+							content: currentStreamingContent + '\n\n[Error: Connection interrupted]'
+						}
+					];
+				}
 			}
 		} finally {
 			isStreaming = false;
 			currentStreamingContent = '';
+			abortController = null;
+		}
+	}
+
+	function cancelStream() {
+		if (abortController) {
+			abortController.abort();
 		}
 	}
 
@@ -127,11 +170,6 @@
 			event.preventDefault();
 			sendMessage();
 		}
-	}
-
-	async function newChat() {
-		// Navigate to temporary chat (no session_id)
-		await goto('/chat');
 	}
 
 	function saveChat() {
@@ -172,9 +210,9 @@
 	}
 </script>
 
-<div class="flex h-[calc(100vh-140px)] flex-col">
+<div class="relative flex h-[calc(100vh-68px)] flex-col">
 	<!-- Header with actions -->
-	<div class="flex items-center justify-between border-b border-base-300 p-4">
+	<div class="flex items-center justify-between border-b border-base-300 px-6 py-4">
 		<div class="flex-1 min-w-0">
 			{#if isLoadingHistory}
 				<div class="flex items-center gap-2">
@@ -193,46 +231,6 @@
 					{/if}
 				</p>
 			{/if}
-		</div>
-		<div class="flex gap-2">
-			<button class="btn btn-outline btn-sm" onclick={newChat} disabled={isStreaming}>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					class="h-4 w-4"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke="currentColor"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M12 4v16m8-8H4"
-					/>
-				</svg>
-				New Chat
-			</button>
-			<button
-				class="btn btn-outline btn-sm"
-				onclick={saveChat}
-				disabled={isStreaming || messages.length === 0}
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					class="h-4 w-4"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke="currentColor"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-					/>
-				</svg>
-				Export
-			</button>
 		</div>
 	</div>
 
@@ -258,27 +256,7 @@
 	{/if}
 
 	<!-- Messages area -->
-	<div bind:this={messagesContainer} class="flex-1 space-y-4 overflow-y-auto p-4">
-		{#if messages.length === 0 && !isStreaming}
-			<div class="flex h-full flex-col items-center justify-center text-base-content/50">
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					class="mb-4 h-16 w-16"
-					fill="none"
-					viewBox="0 0 24 24"
-					stroke="currentColor"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="1"
-						d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-					/>
-				</svg>
-				<p class="text-lg">Start a conversation</p>
-				<p class="text-sm">Ask questions about your documents</p>
-			</div>
-		{/if}
+	<div bind:this={messagesContainer} class="flex-1 space-y-4 overflow-y-auto px-6 py-4">
 
 		{#each messages as message, index (index)}
 			<div class="chat {message.role === 'user' ? 'chat-end' : 'chat-start'}">
@@ -355,36 +333,52 @@
 	</div>
 
 	<!-- Input area -->
-	<div class="bg-base-200 p-4">
-		<div class="join w-full">
-			<input
-				type="text"
+	<div class="px-6 py-4 {messages.length === 0 && !isStreaming ? 'absolute bottom-1/3 left-0 right-0' : ''}">
+		<div class="relative w-full max-w-4xl mx-auto">
+			<textarea
+				bind:this={textareaElement}
 				placeholder="Type your message..."
-				class="input join-item input-bordered flex-1"
+				class="textarea w-full bg-base-200 rounded-3xl py-4 px-5 pr-16 min-h-[60px] max-h-[200px] resize-none border-base-300 focus:border-primary focus:outline-none"
 				bind:value={inputText}
 				onkeydown={handleKeydown}
 				disabled={isStreaming}
-			/>
+				rows="1"
+				oninput={(e) => {
+					const target = e.currentTarget;
+					target.style.height = 'auto';
+					target.style.height = Math.min(target.scrollHeight, 200) + 'px';
+				}}
+			></textarea>
+			<!-- Submit/Stop button inside the box -->
 			<button
-				class="btn btn-primary join-item"
-				onclick={sendMessage}
-				disabled={isStreaming || !inputText.trim()}
+				class="absolute right-3 bottom-3 btn btn-circle btn-sm {isStreaming ? 'btn-neutral' : inputText.trim() ? 'btn-primary' : 'bg-base-300 text-base-content/40 border-none'}"
+				onclick={isStreaming ? cancelStream : sendMessage}
+				disabled={!isStreaming && !inputText.trim()}
 			>
 				{#if isStreaming}
-					<span class="loading loading-spinner loading-sm"></span>
-				{:else}
+					<!-- Stop icon (square) -->
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
-						class="h-5 w-5"
+						class="h-4 w-4"
+						fill="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<rect x="6" y="6" width="12" height="12" rx="2" />
+					</svg>
+				{:else}
+					<!-- Arrow up icon -->
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						class="h-4 w-4"
 						fill="none"
 						viewBox="0 0 24 24"
 						stroke="currentColor"
+						stroke-width="2"
 					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
-							stroke-width="2"
-							d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+							d="M5 10l7-7m0 0l7 7m-7-7v18"
 						/>
 					</svg>
 				{/if}

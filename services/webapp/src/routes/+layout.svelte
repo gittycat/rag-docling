@@ -35,7 +35,7 @@
 			</div>
 		</div>
 
-		<main class="flex-1 container mx-auto p-4">
+		<main class="flex-1 {isChatPage ? '' : 'container mx-auto p-4'}">
 			{@render children()}
 		</main>
 	</div>

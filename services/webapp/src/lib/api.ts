@@ -394,18 +394,21 @@ export type SSEEvent = SSETokenEvent | SSESourcesEvent | SSEDoneEvent | SSEError
 /**
  * Stream a RAG query response using Server-Sent Events.
  * Yields SSE events as they arrive from the server.
+ * @param signal - Optional AbortSignal to cancel the request
  */
 export async function* streamQuery(
 	query: string,
-	sessionId: string,
-	isTemporary: boolean = false
+	sessionId: string | null,
+	isTemporary: boolean = false,
+	signal?: AbortSignal
 ): AsyncGenerator<SSEEvent, void, undefined> {
 	const response = await fetch(`${API_BASE}/query/stream`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json'
 		},
-		body: JSON.stringify({ query, session_id: sessionId, is_temporary: isTemporary })
+		body: JSON.stringify({ query, session_id: sessionId, is_temporary: isTemporary }),
+		signal
 	});
 
 	if (!response.ok) {

@@ -11,6 +11,7 @@
   } from '$lib/api';
   import type { ChatSessionMetadata } from '$lib/api';
   import { onMount } from 'svelte';
+  import { exportChatFn, canExportChat } from '$lib/stores/chat';
 
   let activeSessions: ChatSessionMetadata[] = $state([]);
   let archivedSessions: ChatSessionMetadata[] = $state([]);
@@ -134,7 +135,7 @@
   {#if $sidebarOpen}
     <div class="flex-1 flex flex-col overflow-hidden sidebar-content">
       <!-- New Chat Button -->
-      <div class="px-3 pb-3">
+      <div class="px-3 pb-1">
         <button
           class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
           onclick={handleNewSession}
@@ -144,6 +145,20 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
           </svg>
           <span class="text-sm">New chat</span>
+        </button>
+      </div>
+
+      <!-- Export Chat Button -->
+      <div class="px-3 pb-3">
+        <button
+          class="flex items-center gap-3 w-full p-2 rounded-lg transition-colors {$canExportChat ? 'hover:bg-base-300 text-base-content' : 'text-base-content/30 cursor-not-allowed'}"
+          onclick={() => $exportChatFn?.()}
+          disabled={!$canExportChat}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          <span class="text-sm">Export chat</span>
         </button>
       </div>
 
