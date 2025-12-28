@@ -1,7 +1,16 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { sidebarOpen, toggleSidebar, sessionRefreshTrigger, showRecentExpanded, showArchivedExpanded } from '$lib/stores/sidebar';
+  import {
+    sidebarOpen,
+    toggleSidebar,
+    sessionRefreshTrigger,
+    showRecentExpanded,
+    showArchivedExpanded,
+    sidebarWidth,
+    SIDEBAR_MIN_WIDTH,
+    SIDEBAR_COLLAPSED_WIDTH
+  } from '$lib/stores/sidebar';
   import {
     fetchChatSessions,
     deleteSession,
@@ -17,9 +26,50 @@
   let loading = $state(true);
   let error: string | null = $state(null);
 
+  // Resize state
+  let isResizing = $state(false);
+  let maxWidth = $state(400);
+
+  // Calculate max width as 1/3 of window
+  function updateMaxWidth() {
+    if (typeof window !== 'undefined') {
+      maxWidth = Math.floor(window.innerWidth / 3);
+    }
+  }
+
   onMount(() => {
     loadSessions();
+    updateMaxWidth();
+    window.addEventListener('resize', updateMaxWidth);
+    return () => window.removeEventListener('resize', updateMaxWidth);
   });
+
+  // Handle resize drag
+  function handleResizeStart(e: MouseEvent) {
+    e.preventDefault();
+    isResizing = true;
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+  }
+
+  function handleResizeMove(e: MouseEvent) {
+    if (!isResizing) return;
+    const newWidth = Math.min(Math.max(e.clientX, SIDEBAR_MIN_WIDTH), maxWidth);
+    sidebarWidth.set(newWidth);
+  }
+
+  function handleResizeEnd() {
+    isResizing = false;
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+  }
+
+  // Computed width style
+  const sidebarStyle = $derived(
+    $sidebarOpen
+      ? `width: ${$sidebarWidth}px; min-width: ${$sidebarWidth}px;`
+      : `width: ${SIDEBAR_COLLAPSED_WIDTH}px; min-width: ${SIDEBAR_COLLAPSED_WIDTH}px;`
+  );
 
   // Watch for session refresh trigger (e.g., after first message creates a session)
   $effect(() => {
@@ -137,8 +187,9 @@
 </script>
 
 <aside
-  class="sidebar-container bg-base-200 border-r border-base-300 flex flex-col h-screen"
-  class:expanded={$sidebarOpen}
+  class="sidebar-container bg-base-200 border-r border-base-300 flex flex-col h-screen relative"
+  class:resizing={isResizing}
+  style={sidebarStyle}
 >
   <!-- Toggle button - always visible -->
   <div class="p-3 flex" class:justify-end={$sidebarOpen} class:justify-center={!$sidebarOpen}>
@@ -160,62 +211,62 @@
     <div class="flex-1 flex flex-col overflow-hidden sidebar-content">
       <!-- Menu Items -->
       <div class="px-3 pb-2">
-        <!-- New Chat -->
-        <button
-          class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
-          onclick={handleNewSession}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
-          </svg>
-          <span class="text-sm">New chat</span>
-        </button>
+          <!-- New Chat -->
+          <button
+            class="menu-item flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
+            onclick={handleNewSession}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
+            </svg>
+            <span class="text-sm truncate">New chat</span>
+          </button>
 
-        <!-- Upload -->
-        <a
-          href="/upload"
-          class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-          </svg>
-          <span class="text-sm">Upload</span>
-        </a>
+          <!-- Upload -->
+          <a
+            href="/upload"
+            class="menu-item flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+            </svg>
+            <span class="text-sm truncate">Upload</span>
+          </a>
 
-        <!-- Documents -->
-        <a
-          href="/documents"
-          class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-          </svg>
-          <span class="text-sm">Documents</span>
-        </a>
+          <!-- Documents -->
+          <a
+            href="/documents"
+            class="menu-item flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+            </svg>
+            <span class="text-sm truncate">Documents</span>
+          </a>
 
-        <!-- Dashboard -->
-        <a
-          href="/dashboard"
-          class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-          </svg>
-          <span class="text-sm">Dashboard</span>
-        </a>
+          <!-- Dashboard -->
+          <a
+            href="/dashboard"
+            class="menu-item flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+            </svg>
+            <span class="text-sm truncate">Dashboard</span>
+          </a>
 
-        <!-- Settings -->
-        <a
-          href="/settings"
-          class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-          </svg>
-          <span class="text-sm">Settings</span>
-        </a>
+          <!-- Settings -->
+          <a
+            href="/settings"
+            class="menu-item flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+            </svg>
+            <span class="text-sm truncate">Settings</span>
+          </a>
 
         <!-- Divider between menu and sessions -->
         <div class="h-4"></div>
@@ -228,7 +279,7 @@
         </div>
       {/if}
 
-      <!-- Sessions List -->
+      <!-- Sessions List - resizes with panel -->
       <div class="flex-1 overflow-y-auto px-3">
         {#if loading}
           <div class="flex items-center justify-center py-8">
@@ -398,24 +449,40 @@
       </div>
     </div>
   {/if}
+
+  <!-- Resize handle - only when expanded -->
+  {#if $sidebarOpen}
+    <div
+      class="resize-handle"
+      onmousedown={handleResizeStart}
+      role="separator"
+      aria-label="Resize sidebar"
+      tabindex="0"
+    ></div>
+  {/if}
 </aside>
 
 <style>
   .sidebar-container {
-    width: 48px;
-    min-width: 48px;
-    transition: width 0.3s ease, min-width 0.3s ease;
+    transition: width 0.2s ease, min-width 0.2s ease;
     overflow: hidden;
   }
 
-  .sidebar-container.expanded {
-    width: 280px;
-    min-width: 280px;
+  .sidebar-container.resizing {
+    transition: none;
+    user-select: none;
   }
 
   .sidebar-content {
     opacity: 0;
     animation: fadeIn 0.2s ease 0.1s forwards;
+    overflow: hidden;
+  }
+
+  /* Menu items truncate text with ellipsis at panel edge */
+  .menu-item {
+    overflow: hidden;
+    min-width: 0;
   }
 
   @keyframes fadeIn {
@@ -425,5 +492,21 @@
     to {
       opacity: 1;
     }
+  }
+
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 4px;
+    height: 100%;
+    cursor: ew-resize;
+    background: transparent;
+    transition: background 0.2s ease;
+  }
+
+  .resize-handle:hover,
+  .sidebar-container.resizing .resize-handle {
+    background: oklch(var(--p) / 0.3);
   }
 </style>

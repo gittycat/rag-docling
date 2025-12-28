@@ -1,59 +1,46 @@
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
+import { getCookieBool, getCookieNumber, setCookie } from '$lib/utils/cookies';
 
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
-
-/**
- * Read a cookie value by name
- */
-function getCookie(name: string): string | null {
-	if (!browser) return null;
-	const match = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
-	return match ? match[2] : null;
-}
-
-/**
- * Set a cookie with the given name and value
- */
-function setCookie(name: string, value: string): void {
-	if (!browser) return;
-	document.cookie = `${name}=${value}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`;
-}
-
-/**
- * Initialize sidebar section states from cookies
- */
-function getInitialSectionState(cookieName: string, defaultValue: boolean): boolean {
-	const cookieValue = getCookie(cookieName);
-	if (cookieValue === null) return defaultValue;
-	return cookieValue === 'true';
-}
+// Sidebar width constraints
+export const SIDEBAR_MIN_WIDTH = 100; // Shows truncated menu items like "Up...", "Doc..."
+export const SIDEBAR_DEFAULT_WIDTH = 280;
+export const SIDEBAR_COLLAPSED_WIDTH = 48;
 
 /**
  * Global sidebar state (open/closed) - persisted to cookie
  */
-export const sidebarOpen = writable(
-	browser ? getInitialSectionState('sidebarOpen', false) : false
+export const sidebarOpen = writable(browser ? getCookieBool('sidebarOpen', false) : false);
+
+/**
+ * Sidebar width when expanded - persisted to cookie
+ */
+export const sidebarWidth = writable(
+	browser ? getCookieNumber('sidebarWidth', SIDEBAR_DEFAULT_WIDTH) : SIDEBAR_DEFAULT_WIDTH
 );
 
 /**
  * Recent section expanded/collapsed state (persisted to cookie)
  */
 export const showRecentExpanded = writable(
-	browser ? getInitialSectionState('sidebarRecentExpanded', true) : true
+	browser ? getCookieBool('sidebarRecentExpanded', true) : true
 );
 
 /**
  * Archived section expanded/collapsed state (persisted to cookie)
  */
 export const showArchivedExpanded = writable(
-	browser ? getInitialSectionState('sidebarArchivedExpanded', true) : true
+	browser ? getCookieBool('sidebarArchivedExpanded', true) : true
 );
 
 // Persist all states to cookies
 if (browser) {
 	sidebarOpen.subscribe((value) => {
 		setCookie('sidebarOpen', String(value));
+	});
+
+	sidebarWidth.subscribe((value) => {
+		setCookie('sidebarWidth', String(value));
 	});
 
 	showRecentExpanded.subscribe((value) => {
