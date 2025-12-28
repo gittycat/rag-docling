@@ -95,11 +95,6 @@
     }
   }
 
-  function handleNewSession() {
-    // Navigate to chat page - session will be created when user sends first message
-    goto('/chat');
-  }
-
   async function handleDeleteSession(sessionId: string) {
     try {
       await deleteSession(sessionId);
@@ -198,17 +193,16 @@
     <div class="flex-1 flex flex-col overflow-hidden sidebar-content">
       <!-- Menu Items -->
       <div class="px-3 pb-2">
-          <!-- New Chat -->
-          <button
+          <!-- Chat -->
+          <a
+            href="/chat"
             class="menu-item flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
-            onclick={handleNewSession}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
             </svg>
-            <span class="text-sm truncate">New chat</span>
-          </button>
+            <span class="text-sm truncate">Chat</span>
+          </a>
 
           <!-- Upload -->
           <a
