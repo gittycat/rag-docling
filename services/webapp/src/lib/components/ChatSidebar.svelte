@@ -21,6 +21,7 @@
   } from '$lib/api';
   import type { SessionMetadata } from '$lib/api';
   import { onMount } from 'svelte';
+  import ThemeToggle from './ThemeToggle.svelte';
 
   let activeSessions: SessionMetadata[] = $state([]);
   let archivedSessions: SessionMetadata[] = $state([]);
@@ -198,8 +199,11 @@
   class:resizing={isResizing}
   style={sidebarStyle}
 >
-  <!-- Toggle button - always visible -->
-  <div class="p-3 flex" class:justify-end={$sidebarOpen} class:justify-center={!$sidebarOpen}>
+  <!-- Header with title and toggle -->
+  <div class="p-3 flex items-center" class:justify-between={$sidebarOpen} class:justify-center={!$sidebarOpen}>
+    {#if $sidebarOpen}
+      <a href="/" class="text-lg font-semibold text-base-content hover:text-primary transition-colors">RAG Lab</a>
+    {/if}
     <button
       class="btn btn-ghost btn-square btn-sm"
       onclick={toggleSidebar}
@@ -449,6 +453,14 @@
             {/if}
           </div>
         {/if}
+      </div>
+
+      <!-- Theme toggle at bottom -->
+      <div class="p-3 border-t border-base-300">
+        <div class="flex items-center gap-2">
+          <ThemeToggle />
+          <span class="text-sm text-base-content/70">Theme</span>
+        </div>
       </div>
     </div>
   {/if}
