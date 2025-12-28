@@ -592,7 +592,7 @@ curl -O http://localhost:8001/documents/abc-123/download
 - `500`: Server error
 
 #### GET /chat/history/{session_id}
-Get conversation history for a session.
+Get conversation history for a session, including session metadata.
 
 **Response:**
 ```json
@@ -607,7 +607,17 @@ Get conversation history for a session.
       "role": "assistant",
       "content": "Based on the documents..."
     }
-  ]
+  ],
+  "metadata": {
+    "session_id": "user-123",
+    "title": "Main Topic Discussion",
+    "created_at": "2025-12-29T10:30:00Z",
+    "updated_at": "2025-12-29T10:35:00Z",
+    "is_archived": false,
+    "is_temporary": false,
+    "llm_model": "gemma3:4b",
+    "search_type": "hybrid"
+  }
 }
 ```
 
@@ -1081,10 +1091,22 @@ The SvelteKit webapp provides a ChatGPT-like interface for interacting with the 
 
 ### Session Management
 
-- **Client**: Session ID generated with `crypto.randomUUID()`
-- **Persistence**: Stored in `localStorage.chat_session_id`
-- **Server**: Redis stores conversation history with 1-hour TTL
+- **Session Creation**: Delayed until first message is sent (avoids empty sessions)
+- **Session ID**: UUID generated server-side, embedded in URL as `?session_id={id}`
+- **Temporary Mode**: `?temporary=true` - messages not persisted, lost on navigation
 - **Clear**: `POST /chat/clear` resets server-side history
+
+### Data Persistence (Redis)
+
+All chat data is stored in Redis:
+
+| Data | Key Pattern | TTL | Contents |
+|------|-------------|-----|----------|
+| **Session Metadata** | `session:metadata:{session_id}` | None | title, created_at, is_archived, llm_model, search_type |
+| **Chat Messages** | Internal (LlamaIndex RedisChatStore) | None | Conversation history |
+| **Upload Progress** | `batch:{batch_id}` | 1 hour | Task status, chunk progress |
+
+**Note:** `llm_model` and `search_type` are captured at session creation time (static per session).
 
 ## Phase 2 Implementation
 
