@@ -61,4 +61,5 @@ COPY --chown=appuser:appuser services/rag_server/main.py ./
 EXPOSE 8001
 
 # Run using the pre-built virtual environment directly
-CMD [".venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Use shell form to interpolate LOG_LEVEL env var (converted to lowercase for uvicorn)
+CMD .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001 --log-level $(echo ${LOG_LEVEL:-warning} | tr '[:upper:]' '[:lower:]')

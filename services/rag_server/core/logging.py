@@ -71,3 +71,6 @@ def configure_logging(log_level: str = None):
     # Reduce noise from HuggingFace model downloads (filelock and urllib3)
     logging.getLogger("filelock").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    # Suppress verbose bm25s library logs
+    logging.getLogger("bm25s").setLevel(logging.WARNING)
