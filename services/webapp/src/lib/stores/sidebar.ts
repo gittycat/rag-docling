@@ -30,9 +30,11 @@ function getInitialSectionState(cookieName: string, defaultValue: boolean): bool
 }
 
 /**
- * Global sidebar state (open/closed)
+ * Global sidebar state (open/closed) - persisted to cookie
  */
-export const sidebarOpen = writable(false);
+export const sidebarOpen = writable(
+	browser ? getInitialSectionState('sidebarOpen', false) : false
+);
 
 /**
  * Recent section expanded/collapsed state (persisted to cookie)
@@ -48,8 +50,12 @@ export const showArchivedExpanded = writable(
 	browser ? getInitialSectionState('sidebarArchivedExpanded', true) : true
 );
 
-// Subscribe to store changes and persist to cookies
+// Persist all states to cookies
 if (browser) {
+	sidebarOpen.subscribe((value) => {
+		setCookie('sidebarOpen', String(value));
+	});
+
 	showRecentExpanded.subscribe((value) => {
 		setCookie('sidebarRecentExpanded', String(value));
 	});
