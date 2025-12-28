@@ -3,3 +3,69 @@
 @plugin "daisyui" {
   themes: nord --default, dim --prefersdark;
 }
+
+/* =============================================================================
+   Custom Tooltip Utility
+   Usage: Add class "has-tooltip" and data-tooltip="Your text" to any element
+   ============================================================================= */
+
+.has-tooltip {
+  position: relative;
+}
+
+.has-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  padding: 5px 8px;
+  background: oklch(0.2 0.01 260);
+  color: oklch(0.95 0 0);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  border-radius: 4px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  /* Instant hide on mouse leave */
+  transition: none;
+}
+
+.has-tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
+  /* Short delay before showing */
+  transition: opacity 0.1s ease 0.15s, visibility 0.1s ease 0.15s;
+}
+
+/* Tooltip positioned to the right */
+.has-tooltip-right::after {
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-top: 0;
+  margin-left: 4px;
+}
+
+/* Tooltip positioned to the left */
+.has-tooltip-left::after {
+  left: auto;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-top: 0;
+  margin-right: 4px;
+}
+
+/* Tooltip positioned above */
+.has-tooltip-top::after {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}

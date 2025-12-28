@@ -7,17 +7,17 @@
     createNewSession,
     deleteSession,
     archiveSession,
-    unarchiveSession
+    unarchiveSession,
+    getChatHistory
   } from '$lib/api';
-  import type { ChatSessionMetadata } from '$lib/api';
+  import type { SessionMetadata } from '$lib/api';
   import { onMount } from 'svelte';
-  import { exportChatFn, canExportChat } from '$lib/stores/chat';
 
-  let activeSessions: ChatSessionMetadata[] = $state([]);
-  let archivedSessions: ChatSessionMetadata[] = $state([]);
+  let activeSessions: SessionMetadata[] = $state([]);
+  let archivedSessions: SessionMetadata[] = $state([]);
   let loading = $state(true);
   let error: string | null = $state(null);
-  let showArchived = $state(false);
+  let showArchived = $state(true);
 
   onMount(() => {
     loadSessions();
@@ -27,9 +27,9 @@
     loading = true;
     error = null;
     try {
-      const sessions = await fetchChatSessions();
-      activeSessions = sessions.filter(s => !s.archived);
-      archivedSessions = sessions.filter(s => s.archived);
+      const sessions = await fetchChatSessions(true);
+      activeSessions = sessions.filter(s => !s.is_archived);
+      archivedSessions = sessions.filter(s => s.is_archived);
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load sessions';
       console.error('Failed to load sessions:', err);
@@ -87,6 +87,33 @@
     }
   }
 
+  async function handleExportSession(sessionId: string, title: string) {
+    try {
+      const history = await getChatHistory(sessionId);
+      if (history.messages.length === 0) {
+        error = 'No messages to export';
+        return;
+      }
+
+      const text = history.messages
+        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}:\n${m.content}`)
+        .join('\n\n---\n\n');
+
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title || 'chat'}-${sessionId.slice(0, 8)}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to export session';
+      console.error('Failed to export session:', err);
+    }
+  }
+
   function handleSessionClick(sessionId: string) {
     goto(`/chat?session_id=${sessionId}`);
   }
@@ -135,7 +162,7 @@
   {#if $sidebarOpen}
     <div class="flex-1 flex flex-col overflow-hidden sidebar-content">
       <!-- New Chat Button -->
-      <div class="px-3 pb-1">
+      <div class="px-3 pb-4">
         <button
           class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
           onclick={handleNewSession}
@@ -145,20 +172,6 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
           </svg>
           <span class="text-sm">New chat</span>
-        </button>
-      </div>
-
-      <!-- Export Chat Button -->
-      <div class="px-3 pb-3">
-        <button
-          class="flex items-center gap-3 w-full p-2 rounded-lg transition-colors {$canExportChat ? 'hover:bg-base-300 text-base-content' : 'text-base-content/30 cursor-not-allowed'}"
-          onclick={() => $exportChatFn?.()}
-          disabled={!$canExportChat}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-          <span class="text-sm">Export chat</span>
         </button>
       </div>
 
@@ -186,44 +199,50 @@
             {#if activeSessions.length === 0}
               <p class="text-xs text-base-content/50 text-center py-3">No active chats</p>
             {:else}
-              <div class="space-y-1">
+              <div class="space-y-0.5">
                 {#each activeSessions as session (session.session_id)}
                   <div
-                    class="group relative p-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary/30' : ''}"
+                    class="has-tooltip group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary/30' : ''}"
                     onclick={() => handleSessionClick(session.session_id)}
                     onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
                     role="button"
                     tabindex="0"
+                    data-tooltip={formatTimestamp(session.updated_at)}
                   >
-                    <div class="flex items-start justify-between gap-1">
-                      <div class="flex-1 min-w-0">
-                        <p class="text-sm truncate">
-                          {session.title || 'Untitled Chat'}
-                        </p>
-                        <p class="text-xs text-base-content/50">
-                          {formatTimestamp(session.last_updated)}
-                        </p>
-                      </div>
+                    <div class="flex items-center justify-between gap-1">
+                      <p class="flex-1 min-w-0 text-sm truncate">
+                        {session.title || 'Untitled Chat'}
+                      </p>
 
                       <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          class="btn btn-ghost btn-xs btn-square"
+                          class="has-tooltip btn btn-ghost btn-xs btn-square"
                           onclick={(e) => { e.stopPropagation(); handleArchiveSession(session.session_id); }}
                           aria-label="Archive session"
-                          title="Archive"
+                          data-tooltip="Archive"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
                           </svg>
                         </button>
                         <button
-                          class="btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
+                          class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
                           onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
                           aria-label="Delete session"
-                          title="Delete"
+                          data-tooltip="Delete"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                        <button
+                          class="has-tooltip btn btn-ghost btn-xs btn-square"
+                          onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
+                          aria-label="Export chat"
+                          data-tooltip="Export"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                           </svg>
                         </button>
                       </div>
@@ -259,44 +278,50 @@
               {#if archivedSessions.length === 0}
                 <p class="text-xs text-base-content/50 text-center py-3">No archived chats</p>
               {:else}
-                <div class="space-y-1">
+                <div class="space-y-0.5">
                   {#each archivedSessions as session (session.session_id)}
                     <div
-                      class="group relative p-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors"
+                      class="has-tooltip group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors"
                       onclick={() => handleSessionClick(session.session_id)}
                       onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
                       role="button"
                       tabindex="0"
+                      data-tooltip={formatTimestamp(session.updated_at)}
                     >
-                      <div class="flex items-start justify-between gap-1">
-                        <div class="flex-1 min-w-0">
-                          <p class="text-sm truncate opacity-70">
-                            {session.title || 'Untitled Chat'}
-                          </p>
-                          <p class="text-xs text-base-content/50">
-                            {formatTimestamp(session.last_updated)}
-                          </p>
-                        </div>
+                      <div class="flex items-center justify-between gap-1">
+                        <p class="flex-1 min-w-0 text-sm truncate opacity-70">
+                          {session.title || 'Untitled Chat'}
+                        </p>
 
                         <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            class="btn btn-ghost btn-xs btn-square"
+                            class="has-tooltip btn btn-ghost btn-xs btn-square"
                             onclick={(e) => { e.stopPropagation(); handleUnarchiveSession(session.session_id); }}
                             aria-label="Unarchive session"
-                            title="Unarchive"
+                            data-tooltip="Unarchive"
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
                             </svg>
                           </button>
                           <button
-                            class="btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
+                            class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
                             onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
                             aria-label="Delete session"
-                            title="Delete"
+                            data-tooltip="Delete"
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                          <button
+                            class="has-tooltip btn btn-ghost btn-xs btn-square"
+                            onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
+                            aria-label="Export chat"
+                            data-tooltip="Export"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                             </svg>
                           </button>
                         </div>
