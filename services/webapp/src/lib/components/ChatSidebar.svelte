@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { sidebarOpen, toggleSidebar, sessionRefreshTrigger } from '$lib/stores/sidebar';
+  import { sidebarOpen, toggleSidebar, sessionRefreshTrigger, showRecentExpanded, showArchivedExpanded } from '$lib/stores/sidebar';
   import {
     fetchChatSessions,
     deleteSession,
@@ -16,7 +16,6 @@
   let archivedSessions: SessionMetadata[] = $state([]);
   let loading = $state(true);
   let error: string | null = $state(null);
-  let showArchived = $state(true);
 
   onMount(() => {
     loadSessions();
@@ -189,80 +188,16 @@
         {:else}
           <!-- Recent (Active) Sessions -->
           <div class="mb-4">
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider">Recent</h3>
-              <span class="text-xs text-base-content/40">{activeSessions.length}</span>
-            </div>
-
-            {#if activeSessions.length === 0}
-              <p class="text-xs text-base-content/50 text-center py-3">No active chats</p>
-            {:else}
-              <div class="space-y-0.5">
-                {#each activeSessions as session (session.session_id)}
-                  <div
-                    class="has-tooltip group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary/30' : ''}"
-                    onclick={() => handleSessionClick(session.session_id)}
-                    onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
-                    role="button"
-                    tabindex="0"
-                    data-tooltip={formatTimestamp(session.updated_at)}
-                  >
-                    <div class="flex items-center justify-between gap-1">
-                      <p class="flex-1 min-w-0 text-sm truncate">
-                        {session.title || 'Untitled Chat'}
-                      </p>
-
-                      <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          class="has-tooltip btn btn-ghost btn-xs btn-square"
-                          onclick={(e) => { e.stopPropagation(); handleArchiveSession(session.session_id); }}
-                          aria-label="Archive session"
-                          data-tooltip="Archive"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-                          </svg>
-                        </button>
-                        <button
-                          class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
-                          onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
-                          aria-label="Delete session"
-                          data-tooltip="Delete"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                        <button
-                          class="has-tooltip btn btn-ghost btn-xs btn-square"
-                          onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
-                          aria-label="Export chat"
-                          data-tooltip="Export"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-
-          <!-- Archived Sessions -->
-          <div class="border-t border-base-300 pt-3">
             <button
               class="w-full flex items-center justify-between text-xs font-semibold text-base-content/60 uppercase tracking-wider hover:text-base-content mb-2"
-              onclick={() => showArchived = !showArchived}
+              onclick={() => showRecentExpanded.update(v => !v)}
             >
-              <span>Archived</span>
+              <span>Recent</span>
               <div class="flex items-center gap-1">
-                <span class="text-xs text-base-content/40 normal-case">{archivedSessions.length}</span>
+                <span class="text-xs text-base-content/40 normal-case">{activeSessions.length}</span>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  class="h-3 w-3 transition-transform {showArchived ? 'rotate-180' : ''}"
+                  class="h-3 w-3 transition-transform {$showRecentExpanded ? 'rotate-180' : ''}"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -272,7 +207,87 @@
               </div>
             </button>
 
-            {#if showArchived}
+            {#if $showRecentExpanded}
+              {#if activeSessions.length === 0}
+                <p class="text-xs text-base-content/50 text-center py-3">No active chats</p>
+              {:else}
+                <div class="space-y-0.5">
+                  {#each activeSessions as session (session.session_id)}
+                    <div
+                      class="has-tooltip group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary/30' : ''}"
+                      onclick={() => handleSessionClick(session.session_id)}
+                      onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
+                      role="button"
+                      tabindex="0"
+                      data-tooltip={formatTimestamp(session.updated_at)}
+                    >
+                      <div class="flex items-center justify-between gap-1">
+                        <p class="flex-1 min-w-0 text-sm truncate">
+                          {session.title || 'Untitled Chat'}
+                        </p>
+
+                        <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            class="has-tooltip btn btn-ghost btn-xs btn-square"
+                            onclick={(e) => { e.stopPropagation(); handleArchiveSession(session.session_id); }}
+                            aria-label="Archive session"
+                            data-tooltip="Archive"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                            </svg>
+                          </button>
+                          <button
+                            class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
+                            onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
+                            aria-label="Delete session"
+                            data-tooltip="Delete"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                          <button
+                            class="has-tooltip btn btn-ghost btn-xs btn-square"
+                            onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
+                            aria-label="Export chat"
+                            data-tooltip="Export"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            {/if}
+          </div>
+
+          <!-- Archived Sessions -->
+          <div class="border-t border-base-300 pt-3">
+            <button
+              class="w-full flex items-center justify-between text-xs font-semibold text-base-content/60 uppercase tracking-wider hover:text-base-content mb-2"
+              onclick={() => showArchivedExpanded.update(v => !v)}
+            >
+              <span>Archived</span>
+              <div class="flex items-center gap-1">
+                <span class="text-xs text-base-content/40 normal-case">{archivedSessions.length}</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-3 w-3 transition-transform {$showArchivedExpanded ? 'rotate-180' : ''}"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </button>
+
+            {#if $showArchivedExpanded}
               {#if archivedSessions.length === 0}
                 <p class="text-xs text-base-content/50 text-center py-3">No archived chats</p>
               {:else}
