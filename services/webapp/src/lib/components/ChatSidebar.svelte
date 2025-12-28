@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { sidebarOpen, closeSidebar } from '$lib/stores/sidebar';
+  import { sidebarOpen, toggleSidebar } from '$lib/stores/sidebar';
   import {
     fetchChatSessions,
     createNewSession,
@@ -12,11 +12,11 @@
   import type { ChatSessionMetadata } from '$lib/api';
   import { onMount } from 'svelte';
 
-  let activeSessions: ChatSessionMetadata[] = [];
-  let archivedSessions: ChatSessionMetadata[] = [];
-  let loading = true;
-  let error: string | null = null;
-  let showArchived = false;
+  let activeSessions: ChatSessionMetadata[] = $state([]);
+  let archivedSessions: ChatSessionMetadata[] = $state([]);
+  let loading = $state(true);
+  let error: string | null = $state(null);
+  let showArchived = $state(false);
 
   onMount(() => {
     loadSessions();
@@ -40,7 +40,6 @@
   async function handleNewSession() {
     try {
       const newSession = await createNewSession();
-      closeSidebar();
       await goto(`/chat?session_id=${newSession.session_id}`);
       await loadSessions();
     } catch (err) {
@@ -58,9 +57,7 @@
       await deleteSession(sessionId);
       await loadSessions();
 
-      // If we deleted the current session, redirect to temporary chat
       if ($page.url.searchParams.get('session_id') === sessionId) {
-        closeSidebar();
         await goto('/chat');
       }
     } catch (err) {
@@ -90,7 +87,6 @@
   }
 
   function handleSessionClick(sessionId: string) {
-    closeSidebar();
     goto(`/chat?session_id=${sessionId}`);
   }
 
@@ -113,116 +109,105 @@
   function isCurrentSession(sessionId: string): boolean {
     return $page.url.searchParams.get('session_id') === sessionId;
   }
-
-  function handleOverlayClick() {
-    closeSidebar();
-  }
 </script>
 
-{#if $sidebarOpen}
-  <div class="fixed inset-0 z-50">
-    <!-- Overlay -->
-    <div
-      class="absolute inset-0 bg-black bg-opacity-50 transition-opacity"
-      on:click={handleOverlayClick}
-      on:keydown={(e) => e.key === 'Escape' && closeSidebar()}
-      role="button"
-      tabindex="0"
-    ></div>
+<aside
+  class="sidebar-container bg-base-200 border-r border-base-300 flex flex-col h-screen"
+  class:expanded={$sidebarOpen}
+>
+  <!-- Toggle button - always visible -->
+  <div class="p-3 flex" class:justify-end={$sidebarOpen} class:justify-center={!$sidebarOpen}>
+    <button
+      class="btn btn-ghost btn-square btn-sm"
+      onclick={toggleSidebar}
+      aria-label={$sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+      title={$sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="7" height="18" rx="1" />
+        <rect x="14" y="3" width="7" height="18" rx="1" />
+      </svg>
+    </button>
+  </div>
 
-    <!-- Sidebar -->
-    <div class="absolute inset-y-0 left-0 w-80 bg-base-200 shadow-xl flex flex-col animate-slide-in">
-      <!-- Header -->
-      <div class="p-4 border-b border-base-300 flex items-center justify-between">
-        <h2 class="text-lg font-semibold">Chat Sessions</h2>
+  <!-- Expanded content -->
+  {#if $sidebarOpen}
+    <div class="flex-1 flex flex-col overflow-hidden sidebar-content">
+      <!-- New Chat Button -->
+      <div class="px-3 pb-3">
         <button
-          class="btn btn-ghost btn-sm btn-circle"
-          on:click={closeSidebar}
-          aria-label="Close sidebar"
+          class="flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
+          onclick={handleNewSession}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
           </svg>
-        </button>
-      </div>
-
-      <!-- New Session Button -->
-      <div class="p-4 border-b border-base-300">
-        <button
-          class="btn btn-primary btn-block"
-          on:click={handleNewSession}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          New Chat
+          <span class="text-sm">New chat</span>
         </button>
       </div>
 
       <!-- Error Display -->
       {#if error}
-        <div class="alert alert-error m-4">
-          <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+        <div class="alert alert-error mx-3 mb-3 text-sm py-2">
           <span>{error}</span>
         </div>
       {/if}
 
       <!-- Sessions List -->
-      <div class="flex-1 overflow-y-auto">
+      <div class="flex-1 overflow-y-auto px-3">
         {#if loading}
-          <div class="flex items-center justify-center p-8">
-            <span class="loading loading-spinner loading-lg"></span>
+          <div class="flex items-center justify-center py-8">
+            <span class="loading loading-spinner loading-md"></span>
           </div>
         {:else}
-          <!-- Active Sessions -->
-          <div class="p-4">
+          <!-- Recent (Active) Sessions -->
+          <div class="mb-4">
             <div class="flex items-center justify-between mb-2">
-              <h3 class="text-sm font-semibold text-base-content/70">Active</h3>
-              <span class="text-xs text-base-content/50">{activeSessions.length}</span>
+              <h3 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider">Recent</h3>
+              <span class="text-xs text-base-content/40">{activeSessions.length}</span>
             </div>
 
             {#if activeSessions.length === 0}
-              <p class="text-sm text-base-content/50 text-center py-4">No active sessions</p>
+              <p class="text-xs text-base-content/50 text-center py-3">No active chats</p>
             {:else}
-              <div class="space-y-2">
-                {#each activeSessions as session}
+              <div class="space-y-1">
+                {#each activeSessions as session (session.session_id)}
                   <div
-                    class="group relative p-3 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary' : 'border border-transparent'}"
-                    on:click={() => handleSessionClick(session.session_id)}
-                    on:keydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
+                    class="group relative p-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary/30' : ''}"
+                    onclick={() => handleSessionClick(session.session_id)}
+                    onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
                     role="button"
                     tabindex="0"
                   >
-                    <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-start justify-between gap-1">
                       <div class="flex-1 min-w-0">
-                        <p class="text-sm font-medium truncate">
+                        <p class="text-sm truncate">
                           {session.title || 'Untitled Chat'}
                         </p>
-                        <p class="text-xs text-base-content/50 mt-1">
+                        <p class="text-xs text-base-content/50">
                           {formatTimestamp(session.last_updated)}
                         </p>
                       </div>
 
-                      <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           class="btn btn-ghost btn-xs btn-square"
-                          on:click|stopPropagation={() => handleArchiveSession(session.session_id)}
+                          onclick={(e) => { e.stopPropagation(); handleArchiveSession(session.session_id); }}
                           aria-label="Archive session"
                           title="Archive"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
                           </svg>
                         </button>
                         <button
                           class="btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
-                          on:click|stopPropagation={() => handleDeleteSession(session.session_id)}
+                          onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
                           aria-label="Delete session"
                           title="Delete"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         </button>
@@ -235,17 +220,17 @@
           </div>
 
           <!-- Archived Sessions -->
-          <div class="p-4 border-t border-base-300">
+          <div class="border-t border-base-300 pt-3">
             <button
-              class="w-full flex items-center justify-between text-sm font-semibold text-base-content/70 hover:text-base-content mb-2"
-              on:click={() => showArchived = !showArchived}
+              class="w-full flex items-center justify-between text-xs font-semibold text-base-content/60 uppercase tracking-wider hover:text-base-content mb-2"
+              onclick={() => showArchived = !showArchived}
             >
               <span>Archived</span>
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-base-content/50">{archivedSessions.length}</span>
+              <div class="flex items-center gap-1">
+                <span class="text-xs text-base-content/40 normal-case">{archivedSessions.length}</span>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  class="h-4 w-4 transition-transform {showArchived ? 'rotate-180' : ''}"
+                  class="h-3 w-3 transition-transform {showArchived ? 'rotate-180' : ''}"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -257,45 +242,45 @@
 
             {#if showArchived}
               {#if archivedSessions.length === 0}
-                <p class="text-sm text-base-content/50 text-center py-4">No archived sessions</p>
+                <p class="text-xs text-base-content/50 text-center py-3">No archived chats</p>
               {:else}
-                <div class="space-y-2">
-                  {#each archivedSessions as session}
+                <div class="space-y-1">
+                  {#each archivedSessions as session (session.session_id)}
                     <div
-                      class="group relative p-3 rounded-lg hover:bg-base-300 cursor-pointer transition-colors border border-transparent"
-                      on:click={() => handleSessionClick(session.session_id)}
-                      on:keydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
+                      class="group relative p-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors"
+                      onclick={() => handleSessionClick(session.session_id)}
+                      onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
                       role="button"
                       tabindex="0"
                     >
-                      <div class="flex items-start justify-between gap-2">
+                      <div class="flex items-start justify-between gap-1">
                         <div class="flex-1 min-w-0">
-                          <p class="text-sm font-medium truncate opacity-70">
+                          <p class="text-sm truncate opacity-70">
                             {session.title || 'Untitled Chat'}
                           </p>
-                          <p class="text-xs text-base-content/50 mt-1">
+                          <p class="text-xs text-base-content/50">
                             {formatTimestamp(session.last_updated)}
                           </p>
                         </div>
 
-                        <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             class="btn btn-ghost btn-xs btn-square"
-                            on:click|stopPropagation={() => handleUnarchiveSession(session.session_id)}
+                            onclick={(e) => { e.stopPropagation(); handleUnarchiveSession(session.session_id); }}
                             aria-label="Unarchive session"
                             title="Unarchive"
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
                             </svg>
                           </button>
                           <button
                             class="btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
-                            on:click|stopPropagation={() => handleDeleteSession(session.session_id)}
+                            onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
                             aria-label="Delete session"
                             title="Delete"
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
                           </button>
@@ -310,20 +295,33 @@
         {/if}
       </div>
     </div>
-  </div>
-{/if}
+  {/if}
+</aside>
 
 <style>
-  @keyframes slide-in {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(0);
-    }
+  .sidebar-container {
+    width: 48px;
+    min-width: 48px;
+    transition: width 0.3s ease, min-width 0.3s ease;
+    overflow: hidden;
   }
 
-  .animate-slide-in {
-    animation: slide-in 0.3s ease-out;
+  .sidebar-container.expanded {
+    width: 280px;
+    min-width: 280px;
+  }
+
+  .sidebar-content {
+    opacity: 0;
+    animation: fadeIn 0.2s ease 0.1s forwards;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 </style>

@@ -97,22 +97,51 @@ cp secrets/.env.example secrets/.env
 cp secrets/ollama_config.env.example secrets/ollama_config.env
 ```
 
-### Configuration Files
+### Configuration Files (Not in Source Control)
+
+These files must be created from their `.example` templates before running the application:
 
 **`config/models.yml`** - Main configuration:
-- LLM provider and model (Ollama, OpenAI, Anthropic, Google, DeepSeek, Moonshot)
-- Embedding model
-- Evaluation model
-- Reranker settings
-- Retrieval parameters (hybrid search, contextual retrieval)
+```yaml
+llm:
+  provider: ollama                              # ollama, openai, anthropic, google, deepseek, moonshot
+  model: gemma3:4b
+  base_url: http://host.docker.internal:11434
+  timeout: 120
+  keep_alive: 10m
+
+embedding:
+  provider: ollama
+  model: nomic-embed-text:latest
+  base_url: http://host.docker.internal:11434
+
+eval:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+
+reranker:
+  enabled: true
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 5
+
+retrieval:
+  top_k: 10
+  enable_hybrid_search: true
+  rrf_k: 60
+  enable_contextual_retrieval: false
+```
 
 **`secrets/.env`** - API keys:
-- `LLM_API_KEY` - For cloud providers (not needed for Ollama)
-- `ANTHROPIC_API_KEY` - For evaluations (required)
+```bash
+LLM_API_KEY=                  # For cloud providers (not needed for Ollama)
+ANTHROPIC_API_KEY=sk-ant-... # For evaluations (required)
+```
 
 **`secrets/ollama_config.env`** - Ollama settings:
-- `OLLAMA_URL` - Ollama server URL
-- `OLLAMA_KEEP_ALIVE` - Model memory management
+```bash
+OLLAMA_URL=http://host.docker.internal:11434
+OLLAMA_KEEP_ALIVE=10m         # -1=forever, 0=unload, 10m=10 minutes
+```
 
 See `config/README.md` and `secrets/README.md` for detailed documentation.
 
