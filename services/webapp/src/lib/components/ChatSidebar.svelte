@@ -314,50 +314,48 @@
                 <div class="space-y-0.5">
                   {#each activeSessions as session (session.session_id)}
                     <div
-                      class="has-tooltip group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary/30' : ''}"
+                      class="session-item group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors {isCurrentSession(session.session_id) ? 'bg-primary/10 border border-primary/30' : ''}"
                       onclick={() => handleSessionClick(session.session_id)}
                       onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
                       role="button"
                       tabindex="0"
-                      data-tooltip={formatTimestamp(session.updated_at)}
                     >
-                      <div class="flex items-center justify-between gap-1">
-                        <p class="flex-1 min-w-0 text-sm truncate">
-                          {session.title || 'Untitled Chat'}
-                        </p>
+                      <p class="session-title has-tooltip text-sm truncate pr-1" data-tooltip={formatTimestamp(session.updated_at)}>
+                        {session.title || 'Untitled Chat'}
+                      </p>
 
-                        <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            class="has-tooltip btn btn-ghost btn-xs btn-square"
-                            onclick={(e) => { e.stopPropagation(); handleArchiveSession(session.session_id); }}
-                            aria-label="Archive session"
-                            data-tooltip="Archive"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-                            </svg>
-                          </button>
-                          <button
-                            class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
-                            onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
-                            aria-label="Delete session"
-                            data-tooltip="Delete"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                          <button
-                            class="has-tooltip btn btn-ghost btn-xs btn-square"
-                            onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
-                            aria-label="Export chat"
-                            data-tooltip="Export"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                          </button>
-                        </div>
+                      <!-- Action buttons - overlay on hover -->
+                      <div class="session-actions absolute right-1 top-1/2 -translate-y-1/2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-base-300 rounded-lg px-1 py-0.5">
+                        <button
+                          class="has-tooltip btn btn-ghost btn-xs btn-square"
+                          onclick={(e) => { e.stopPropagation(); handleArchiveSession(session.session_id); }}
+                          aria-label="Archive session"
+                          data-tooltip="Archive"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                          </svg>
+                        </button>
+                        <button
+                          class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
+                          onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
+                          aria-label="Delete session"
+                          data-tooltip="Delete"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                        <button
+                          class="has-tooltip btn btn-ghost btn-xs btn-square"
+                          onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
+                          aria-label="Export chat"
+                          data-tooltip="Export"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
                   {/each}
@@ -394,50 +392,48 @@
                 <div class="space-y-0.5">
                   {#each archivedSessions as session (session.session_id)}
                     <div
-                      class="has-tooltip group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors"
+                      class="session-item group relative py-1.5 px-2 rounded-lg hover:bg-base-300 cursor-pointer transition-colors"
                       onclick={() => handleSessionClick(session.session_id)}
                       onkeydown={(e) => e.key === 'Enter' && handleSessionClick(session.session_id)}
                       role="button"
                       tabindex="0"
-                      data-tooltip={formatTimestamp(session.updated_at)}
                     >
-                      <div class="flex items-center justify-between gap-1">
-                        <p class="flex-1 min-w-0 text-sm truncate opacity-70">
-                          {session.title || 'Untitled Chat'}
-                        </p>
+                      <p class="session-title has-tooltip text-sm truncate opacity-70 pr-1" data-tooltip={formatTimestamp(session.updated_at)}>
+                        {session.title || 'Untitled Chat'}
+                      </p>
 
-                        <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            class="has-tooltip btn btn-ghost btn-xs btn-square"
-                            onclick={(e) => { e.stopPropagation(); handleUnarchiveSession(session.session_id); }}
-                            aria-label="Unarchive session"
-                            data-tooltip="Unarchive"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                            </svg>
-                          </button>
-                          <button
-                            class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
-                            onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
-                            aria-label="Delete session"
-                            data-tooltip="Delete"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                          <button
-                            class="has-tooltip btn btn-ghost btn-xs btn-square"
-                            onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
-                            aria-label="Export chat"
-                            data-tooltip="Export"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                          </button>
-                        </div>
+                      <!-- Action buttons - overlay on hover -->
+                      <div class="session-actions absolute right-1 top-1/2 -translate-y-1/2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-base-300 rounded-lg px-1 py-0.5">
+                        <button
+                          class="has-tooltip btn btn-ghost btn-xs btn-square"
+                          onclick={(e) => { e.stopPropagation(); handleUnarchiveSession(session.session_id); }}
+                          aria-label="Unarchive session"
+                          data-tooltip="Unarchive"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                          </svg>
+                        </button>
+                        <button
+                          class="has-tooltip btn btn-ghost btn-xs btn-square text-error hover:bg-error/20"
+                          onclick={(e) => { e.stopPropagation(); handleDeleteSession(session.session_id); }}
+                          aria-label="Delete session"
+                          data-tooltip="Delete"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                        <button
+                          class="has-tooltip btn btn-ghost btn-xs btn-square"
+                          onclick={(e) => { e.stopPropagation(); handleExportSession(session.session_id, session.title); }}
+                          aria-label="Export chat"
+                          data-tooltip="Export"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
                   {/each}
@@ -483,6 +479,12 @@
   .menu-item {
     overflow: hidden;
     min-width: 0;
+  }
+
+  /* Hide tooltip when session item is hovered (action buttons visible) */
+  .session-item:hover .session-title::before,
+  .session-item:hover .session-title::after {
+    display: none !important;
   }
 
   @keyframes fadeIn {
