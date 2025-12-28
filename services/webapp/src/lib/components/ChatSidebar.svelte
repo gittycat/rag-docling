@@ -16,7 +16,8 @@
     deleteSession,
     archiveSession,
     unarchiveSession,
-    getChatHistory
+    getChatHistory,
+    createNewSession
   } from '$lib/api';
   import type { SessionMetadata } from '$lib/api';
   import { onMount } from 'svelte';
@@ -94,10 +95,16 @@
     }
   }
 
-  function handleNewSession() {
-    // Navigate to /chat without session_id (temporary chat)
-    // Session will be created when user sends the first message
-    goto('/chat');
+  async function handleNewSession() {
+    // Always create a persisted session from sidebar
+    try {
+      const newSession = await createNewSession();
+      await loadSessions();
+      goto(`/chat?session_id=${newSession.session_id}`);
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to create session';
+      console.error('Failed to create session:', err);
+    }
   }
 
   async function handleDeleteSession(sessionId: string) {

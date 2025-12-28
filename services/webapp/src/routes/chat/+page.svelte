@@ -30,14 +30,48 @@
 
 	// Track current session from URL
 	let urlSessionId = $derived($page.url.searchParams.get('session_id'));
-	let isTemporaryChat = $derived(!urlSessionId);
+	let isTemporaryMode = $derived($page.url.searchParams.get('temporary') === 'true');
+	let isTemporaryChat = $state(false);
 
-	// Load session when URL changes
+	// Load or create session when URL changes
 	$effect(() => {
 		if (browser) {
-			loadSession(urlSessionId);
+			handleUrlChange(urlSessionId, isTemporaryMode);
 		}
 	});
+
+	async function handleUrlChange(newSessionId: string | null, temporary: boolean) {
+		if (newSessionId) {
+			// Load existing session
+			isTemporaryChat = false;
+			await loadSession(newSessionId);
+		} else if (temporary) {
+			// Explicit temporary mode requested
+			isTemporaryChat = true;
+			resetState();
+		} else {
+			// No session_id and not temporary → create new persisted session
+			try {
+				const newSession = await createNewSession();
+				triggerSessionRefresh();
+				await goto(`/chat?session_id=${newSession.session_id}`, { replaceState: true });
+			} catch (err) {
+				console.error('Failed to create session:', err);
+				error = err instanceof Error ? err.message : 'Failed to create session';
+				// Fall back to temporary mode on error
+				isTemporaryChat = true;
+				resetState();
+			}
+		}
+	}
+
+	function resetState() {
+		messages = [];
+		currentStreamingContent = '';
+		error = null;
+		sessionTitle = null;
+		sessionId = null;
+	}
 
 	// Scroll to bottom when messages change
 	$effect(() => {
@@ -234,7 +268,7 @@
 				</div>
 			{:else}
 				<h2 class="text-lg font-semibold truncate">
-					{sessionTitle || (isTemporaryChat ? 'Temporary Chat' : 'Chat')}
+					{sessionTitle || (isTemporaryChat ? 'Temporary Chat' : 'New Chat')}
 				</h2>
 				<p class="text-xs text-base-content/60">
 					{#if isTemporaryChat}
@@ -245,6 +279,19 @@
 				</p>
 			{/if}
 		</div>
+
+		<!-- Toggle to temporary chat (only before first message, one-way) -->
+		<button
+			class="btn btn-ghost btn-sm btn-square"
+			class:btn-active={isTemporaryChat}
+			onclick={() => goto('/chat?temporary=true')}
+			disabled={isTemporaryChat || messages.length > 0}
+			title="Temporary chat"
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+			</svg>
+		</button>
 	</div>
 
 	<!-- Error alert -->
