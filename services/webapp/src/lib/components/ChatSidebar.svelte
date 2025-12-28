@@ -180,6 +180,8 @@
           </svg>
           <span class="text-sm">Settings</span>
         </a>
+        <!-- Spacer (height of one menu item) -->
+        <div class="h-10"></div>
       </div>
 
       <!-- Error Display -->
