@@ -3,16 +3,13 @@
 	import {
 		fetchSystemMetrics,
 		fetchEvaluationSummary,
-		fetchDocuments,
 		type SystemMetrics,
-		type EvaluationSummary,
-		type Document
+		type EvaluationSummary
 	} from '$lib/api';
 	import Sparkline from '$lib/components/Sparkline.svelte';
 
 	let metrics = $state<SystemMetrics | null>(null);
 	let evalSummary = $state<EvaluationSummary | null>(null);
-	let documents = $state<Document[]>([]);
 	let isLoading = $state(true);
 	let error = $state<string | null>(null);
 	let autoRefresh = $state(true);
@@ -50,14 +47,12 @@
 		if (!autoRefresh && !isLoading) isLoading = true;
 		error = null;
 		try {
-			const [m, e, d] = await Promise.all([
+			const [m, e] = await Promise.all([
 				fetchSystemMetrics(),
-				fetchEvaluationSummary().catch(() => null),
-				fetchDocuments().catch(() => [])
+				fetchEvaluationSummary().catch(() => null)
 			]);
 			metrics = m;
 			evalSummary = e;
-			documents = d;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load data';
 		} finally {
@@ -319,34 +314,6 @@
 				<div class="flex items-center gap-3 mt-2 text-xs text-base-content/60">
 					<span>Pass: <strong class="text-base-content">{metrics.latest_evaluation.passed_tests}/{metrics.latest_evaluation.total_tests}</strong> ({formatPercent(metrics.latest_evaluation.pass_rate)})</span>
 					<span>Eval model: <span class="font-mono">{metrics.latest_evaluation.eval_model}</span></span>
-				</div>
-			</div>
-		{/if}
-
-		<!-- Recent Documents -->
-		{#if documents.length > 0}
-			<div class="bg-base-200 rounded p-2">
-				<div class="flex items-center justify-between mb-1">
-					<div class="text-xs font-semibold text-base-content/70">Recent Documents</div>
-					<a href="/documents" class="text-xs link link-primary">View all →</a>
-				</div>
-				<div class="overflow-x-auto">
-					<table class="table table-xs w-full">
-						<thead>
-							<tr class="text-xs">
-								<th class="py-1">Filename</th>
-								<th class="py-1 text-right">Chunks</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each documents.slice(0, 5) as doc}
-								<tr class="hover">
-									<td class="py-1 font-mono text-xs truncate max-w-[300px]" title={doc.file_name}>{doc.file_name}</td>
-									<td class="py-1 text-right">{doc.chunks}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
 				</div>
 			</div>
 		{/if}
