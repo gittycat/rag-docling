@@ -24,12 +24,13 @@ WORKDIR /app
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S sveltekit -u 1001
 
-# Copy built application
+# Copy built application and package files
 COPY --from=builder /app/build build/
 COPY --from=builder /app/package.json .
+COPY --from=builder /app/package-lock.json .
 
-# Install production dependencies only
-RUN npm install --omit=dev
+# Install production dependencies only (npm ci is faster with lock file)
+RUN npm ci --omit=dev
 
 # Set ownership
 RUN chown -R sveltekit:nodejs /app
