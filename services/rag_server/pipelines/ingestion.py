@@ -11,6 +11,7 @@ Complete flow for processing documents from upload to indexing:
 
 from pathlib import Path
 from typing import List, Dict, Any, Callable, Optional
+from datetime import datetime, timezone
 import time
 import hashlib
 import logging
@@ -341,7 +342,8 @@ def add_contextual_retrieval(nodes: List[TextNode], file_path: str) -> List[Text
 def add_document_metadata_to_chunks(
     nodes: List[TextNode],
     document_id: str,
-    file_metadata: Dict[str, Any]
+    file_metadata: Dict[str, Any],
+    uploaded_at: Optional[str] = None
 ) -> List[TextNode]:
     """
     Add document-level metadata and IDs to all chunks.
@@ -350,15 +352,25 @@ def add_document_metadata_to_chunks(
     - All file metadata (name, type, size, hash, path)
     - document_id for tracking and deletion
     - chunk_index for ordering
+    - uploaded_at timestamp (ISO 8601 format)
     - Unique node ID: {document_id}-chunk-{index}
+
+    Args:
+        uploaded_at: ISO 8601 timestamp representing when document processing
+                     completed and the document was ingested into the vector db.
+                     If not provided, uses current UTC time.
     """
+    if uploaded_at is None:
+        uploaded_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     for i, node in enumerate(nodes):
         node.metadata.update(file_metadata)
         node.metadata["chunk_index"] = i
         node.metadata["document_id"] = document_id
+        node.metadata["uploaded_at"] = uploaded_at
         node.id_ = f"{document_id}-chunk-{i}"
 
-    logger.info(f"[METADATA] Added metadata to {len(nodes)} chunks (document_id={document_id})")
+    logger.info(f"[METADATA] Added metadata to {len(nodes)} chunks (document_id={document_id}, uploaded_at={uploaded_at})")
     return nodes
 
 

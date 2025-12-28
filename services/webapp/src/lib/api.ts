@@ -10,7 +10,8 @@ export interface Document {
 	id: string;
 	file_name: string;
 	chunks: number;
-	size?: number;
+	file_size_bytes?: number;
+	uploaded_at?: string; // ISO 8601 timestamp (e.g., "2025-01-15T14:30:00Z")
 }
 
 export interface DocumentListResponse {
@@ -216,8 +217,18 @@ export interface SystemMetrics {
 // API Functions - Documents
 // ============================================================================
 
-export async function fetchDocuments(): Promise<Document[]> {
-	const response = await fetch(`${API_BASE}/documents`);
+export type DocumentSortField = 'name' | 'chunks' | 'uploaded_at';
+export type SortOrder = 'asc' | 'desc';
+
+export async function fetchDocuments(
+	sortBy: DocumentSortField = 'uploaded_at',
+	sortOrder: SortOrder = 'desc'
+): Promise<Document[]> {
+	const params = new URLSearchParams();
+	params.set('sort_by', sortBy);
+	params.set('sort_order', sortOrder);
+
+	const response = await fetch(`${API_BASE}/documents?${params}`);
 	if (!response.ok) {
 		throw new Error(`Failed to fetch documents: ${response.statusText}`);
 	}

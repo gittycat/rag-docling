@@ -153,7 +153,19 @@ def delete_document(index, document_id: str):
         chroma_collection.delete(ids=results['ids'])
 
 
-def list_documents(index) -> List[Dict]:
+def list_documents(index, sort_by: str = 'uploaded_at', sort_order: str = 'desc') -> List[Dict]:
+    """
+    List all documents with their metadata.
+
+    Args:
+        index: VectorStoreIndex to query
+        sort_by: Field to sort by ('name', 'chunks', 'uploaded_at'). Default: 'uploaded_at'
+        sort_order: Sort order ('asc' or 'desc'). Default: 'desc' (newest first)
+
+    Returns:
+        List of document dicts with id, file_name, file_type, path, file_size_bytes,
+        chunks, and uploaded_at fields.
+    """
     chroma_collection = index._vector_store._collection
 
     results = chroma_collection.get()
@@ -170,12 +182,28 @@ def list_documents(index) -> List[Dict]:
                 'file_type': metadata.get('file_type', ''),
                 'path': metadata.get('path', ''),
                 'file_size_bytes': metadata.get('file_size_bytes', 0),
+                'uploaded_at': metadata.get('uploaded_at'),  # ISO 8601 timestamp or None for legacy docs
                 'chunks': 0
             }
 
         doc_map[doc_id]['chunks'] += 1
 
-    return list(doc_map.values())
+    documents = list(doc_map.values())
+
+    # Sort documents
+    reverse = sort_order == 'desc'
+    if sort_by == 'name':
+        documents.sort(key=lambda d: d.get('file_name', '').lower(), reverse=reverse)
+    elif sort_by == 'chunks':
+        documents.sort(key=lambda d: d.get('chunks', 0), reverse=reverse)
+    elif sort_by == 'uploaded_at':
+        # Sort by upload time (None values go to end)
+        documents.sort(
+            key=lambda d: d.get('uploaded_at') or '',
+            reverse=reverse
+        )
+
+    return documents
 
 
 def get_all_nodes(index) -> List[TextNode]:

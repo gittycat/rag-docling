@@ -30,10 +30,30 @@ DOCUMENT_STORAGE_PATH = Path("/data/documents")
 
 
 @router.get("/documents", response_model=DocumentListResponse)
-async def get_documents():
+async def get_documents(
+    sort_by: str = "uploaded_at",
+    sort_order: str = "desc"
+):
+    """
+    Get all documents with sorting support.
+
+    Args:
+        sort_by: Field to sort by ('name', 'chunks', 'uploaded_at'). Default: 'uploaded_at'
+        sort_order: Sort order ('asc' or 'desc'). Default: 'desc' (newest first)
+
+    Returns:
+        DocumentListResponse with sorted documents list
+    """
     try:
+        # Validate sort parameters
+        valid_sort_fields = ['name', 'chunks', 'uploaded_at']
+        if sort_by not in valid_sort_fields:
+            sort_by = 'uploaded_at'
+        if sort_order not in ['asc', 'desc']:
+            sort_order = 'desc'
+
         index = get_or_create_collection()
-        documents = list_documents(index)
+        documents = list_documents(index, sort_by=sort_by, sort_order=sort_order)
         return DocumentListResponse(documents=documents)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
 	import { onMount } from 'svelte';
-	import { fetchDocuments, deleteDocument, type Document } from '$lib/api';
+	import {
+		fetchDocuments,
+		deleteDocument,
+		type Document,
+		type DocumentSortField,
+		type SortOrder
+	} from '$lib/api';
 
 	let documents = $state<Document[]>([]);
 	let selectedIds = new SvelteSet<string>();
@@ -9,8 +15,19 @@
 	let error = $state<string | null>(null);
 	let isDeleting = $state(false);
 
+	// Sorting state
+	let sortBy = $state<DocumentSortField>('uploaded_at');
+	let sortOrder = $state<SortOrder>('desc');
+
+	// Pagination - limit visible rows
+	const MAX_VISIBLE_ROWS = 15;
+
 	const allSelected = $derived(documents.length > 0 && selectedIds.size === documents.length);
 	const someSelected = $derived(selectedIds.size > 0);
+
+	// Calculate visible documents and remaining count
+	const visibleDocuments = $derived(documents.slice(0, MAX_VISIBLE_ROWS));
+	const remainingCount = $derived(Math.max(0, documents.length - MAX_VISIBLE_ROWS));
 
 	onMount(async () => {
 		await loadDocuments();
@@ -20,7 +37,7 @@
 		isLoading = true;
 		error = null;
 		try {
-			documents = await fetchDocuments();
+			documents = await fetchDocuments(sortBy, sortOrder);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load documents';
 		} finally {
@@ -28,11 +45,21 @@
 		}
 	}
 
-	function formatSize(bytes: number | undefined): string {
-		if (bytes === undefined) return '—';
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	function formatUploadTime(isoString: string | undefined): string {
+		if (!isoString) return '—';
+		try {
+			const date = new Date(isoString);
+			// Format: YYYY-MM-DD HH:MM:SS
+			const year = date.getFullYear();
+			const month = String(date.getMonth() + 1).padStart(2, '0');
+			const day = String(date.getDate()).padStart(2, '0');
+			const hours = String(date.getHours()).padStart(2, '0');
+			const minutes = String(date.getMinutes()).padStart(2, '0');
+			const seconds = String(date.getSeconds()).padStart(2, '0');
+			return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+		} catch {
+			return '—';
+		}
 	}
 
 	function toggleSelectAll() {
@@ -82,6 +109,23 @@
 		} finally {
 			isDeleting = false;
 		}
+	}
+
+	async function handleSort(field: DocumentSortField) {
+		if (sortBy === field) {
+			// Toggle order if same field
+			sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+		} else {
+			// New field, default to desc for uploaded_at and chunks, asc for name
+			sortBy = field;
+			sortOrder = field === 'name' ? 'asc' : 'desc';
+		}
+		await loadDocuments();
+	}
+
+	function getSortIcon(field: DocumentSortField): string {
+		if (sortBy !== field) return '⇅';
+		return sortOrder === 'asc' ? '↑' : '↓';
 	}
 </script>
 
@@ -184,13 +228,41 @@
 								/>
 							</label>
 						</th>
-						<th>Name</th>
-						<th class="w-24 text-right">Chunks</th>
+						<th>
+							<button
+								class="flex items-center gap-1 hover:text-primary transition-colors"
+								onclick={() => handleSort('name')}
+								title="Sort by name"
+							>
+								Name
+								<span class="text-xs opacity-60">{getSortIcon('name')}</span>
+							</button>
+						</th>
+						<th class="w-24">
+							<button
+								class="flex items-center gap-1 w-full justify-end hover:text-primary transition-colors"
+								onclick={() => handleSort('chunks')}
+								title="Sort by chunks"
+							>
+								Chunks
+								<span class="text-xs opacity-60">{getSortIcon('chunks')}</span>
+							</button>
+						</th>
+						<th class="w-44">
+							<button
+								class="flex items-center gap-1 w-full justify-end hover:text-primary transition-colors"
+								onclick={() => handleSort('uploaded_at')}
+								title="Sort by upload time"
+							>
+								Uploaded
+								<span class="text-xs opacity-60">{getSortIcon('uploaded_at')}</span>
+							</button>
+						</th>
 						<th class="w-16"></th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each documents as doc (doc.id)}
+					{#each visibleDocuments as doc (doc.id)}
 						<tr class="hover">
 							<th>
 								<label>
@@ -206,6 +278,9 @@
 								{doc.file_name}
 							</td>
 							<td class="text-right text-xs">{doc.chunks}</td>
+							<td class="text-right text-xs font-mono text-base-content/70">
+								{formatUploadTime(doc.uploaded_at)}
+							</td>
 							<td>
 								<button
 									class="btn btn-ghost btn-xs text-error"
@@ -233,7 +308,7 @@
 						</tr>
 					{:else}
 						<tr>
-							<td colspan="4" class="text-center py-8 text-base-content/50">
+							<td colspan="5" class="text-center py-8 text-base-content/50">
 								No documents indexed yet.
 								<a href="/upload" class="link link-primary">Upload documents</a> to get started.
 							</td>
@@ -241,6 +316,13 @@
 					{/each}
 				</tbody>
 			</table>
+
+			<!-- Remaining documents indicator -->
+			{#if remainingCount > 0}
+				<div class="text-center py-3 text-sm text-base-content/60 bg-base-200/50 border-t border-base-300">
+					+{remainingCount} more document{remainingCount === 1 ? '' : 's'} stored
+				</div>
+			{/if}
 		{/if}
 	</div>
 </div>

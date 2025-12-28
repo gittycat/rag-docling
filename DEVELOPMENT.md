@@ -514,7 +514,16 @@ while (true) {
 ```
 
 #### GET /documents
-List all indexed documents (grouped by document_id).
+List all indexed documents (grouped by document_id) with sorting support.
+
+**Query Parameters:**
+- `sort_by`: Field to sort by (`name`, `chunks`, `uploaded_at`). Default: `uploaded_at`
+- `sort_order`: Sort order (`asc`, `desc`). Default: `desc` (newest first)
+
+**Example:**
+```bash
+curl "http://localhost:8001/documents?sort_by=name&sort_order=asc"
+```
 
 **Response:**
 ```json
@@ -526,11 +535,14 @@ List all indexed documents (grouped by document_id).
       "file_type": ".pdf",
       "path": "/docs",
       "chunks": 5,
-      "file_size_bytes": 102400
+      "file_size_bytes": 102400,
+      "uploaded_at": "2025-01-15T14:30:00Z"
     }
   ]
 }
 ```
+
+**Note:** `uploaded_at` may be `null` for documents uploaded before this field was added.
 
 #### POST /documents/check-duplicates
 Check if documents with given file hashes already exist in the system to prevent duplicate uploads.
@@ -1014,8 +1026,26 @@ The `/routes` directory contains API entry points that delegate to these pipelin
 5. **Contextual Enhancement**: LLM adds document context to each chunk
 6. **Structural Chunking**: DoclingNodeParser creates nodes preserving hierarchy
 7. **Embedding**: Each chunk embedded with context (nomic-embed-text)
-8. **Storage**: Nodes stored in ChromaDB with metadata (including file_hash)
+8. **Storage**: Nodes stored in ChromaDB with metadata (including file_hash, uploaded_at)
 9. **BM25 Refresh**: BM25 index updated with new nodes
+
+### Document Metadata
+
+Each document chunk is stored in ChromaDB with the following metadata:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `document_id` | string | UUID identifying the document |
+| `file_name` | string | Original filename |
+| `file_type` | string | File extension (.pdf, .txt, etc.) |
+| `file_size_bytes` | int | File size in bytes |
+| `file_hash` | string | SHA-256 hash for duplicate detection |
+| `path` | string | File directory path |
+| `chunk_index` | int | Position within document (0-based) |
+| `uploaded_at` | string | ISO 8601 timestamp (see below) |
+
+**Upload Time Definition:**
+The `uploaded_at` field represents the timestamp when document processing completed and the document was successfully ingested into the vector database. This is captured right before embedding begins, after all chunking and contextual enhancement is complete. The timestamp is stored in ISO 8601 format (e.g., `"2025-01-15T14:30:00Z"`) in UTC timezone.
 
 ### Document Deduplication
 
