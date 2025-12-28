@@ -536,6 +536,7 @@ export interface SessionListResponse {
 export interface CreateSessionRequest {
 	is_temporary?: boolean;
 	title?: string;
+	first_message?: string;
 }
 
 export interface CreateSessionResponse {
@@ -566,14 +567,21 @@ export async function fetchChatSessions(includeArchived: boolean = false): Promi
 
 /**
  * Create new chat session
+ * @param firstMessage - If provided, generates an AI title from this message
  */
-export async function createNewSession(isTemporary: boolean = false): Promise<CreateSessionResponse> {
+export async function createNewSession(firstMessage?: string): Promise<CreateSessionResponse> {
+	const body: CreateSessionRequest = {};
+
+	if (firstMessage) {
+		body.first_message = firstMessage;
+	}
+
 	const response = await fetch(`${API_BASE}/chat/sessions/new`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json'
 		},
-		body: JSON.stringify({ is_temporary: isTemporary })
+		body: JSON.stringify(body)
 	});
 
 	if (!response.ok) {

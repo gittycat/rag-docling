@@ -1,10 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { sidebarOpen, toggleSidebar } from '$lib/stores/sidebar';
+  import { sidebarOpen, toggleSidebar, sessionRefreshTrigger } from '$lib/stores/sidebar';
   import {
     fetchChatSessions,
-    createNewSession,
     deleteSession,
     archiveSession,
     unarchiveSession,
@@ -23,6 +22,14 @@
     loadSessions();
   });
 
+  // Watch for session refresh trigger (e.g., after first message creates a session)
+  $effect(() => {
+    const _ = $sessionRefreshTrigger;
+    if (_ > 0) {
+      loadSessions();
+    }
+  });
+
   async function loadSessions() {
     loading = true;
     error = null;
@@ -38,15 +45,10 @@
     }
   }
 
-  async function handleNewSession() {
-    try {
-      const newSession = await createNewSession();
-      await goto(`/chat?session_id=${newSession.session_id}`);
-      await loadSessions();
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to create session';
-      console.error('Failed to create session:', err);
-    }
+  function handleNewSession() {
+    // Navigate to /chat without session_id (temporary chat)
+    // Session will be created when user sends the first message
+    goto('/chat');
   }
 
   async function handleDeleteSession(sessionId: string) {

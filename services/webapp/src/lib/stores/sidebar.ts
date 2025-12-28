@@ -5,6 +5,12 @@ import { writable } from 'svelte/store';
  */
 export const sidebarOpen = writable(false);
 
+/**
+ * Counter to trigger session list refresh in sidebar
+ * Increment this value to signal the sidebar to reload sessions
+ */
+export const sessionRefreshTrigger = writable(0);
+
 export function toggleSidebar() {
 	sidebarOpen.update((open) => !open);
 }
@@ -15,4 +21,8 @@ export function closeSidebar() {
 
 export function openSidebar() {
 	sidebarOpen.set(true);
+}
+
+export function triggerSessionRefresh() {
+	sessionRefreshTrigger.update((n) => n + 1);
 }

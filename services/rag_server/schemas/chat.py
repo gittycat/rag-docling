@@ -44,6 +44,7 @@ class CreateSessionRequest(BaseModel):
     """Create new session"""
     is_temporary: bool = False
     title: Optional[str] = None
+    first_message: Optional[str] = None  # Generate AI title from this message
 
 
 class CreateSessionResponse(BaseModel):

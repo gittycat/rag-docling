@@ -29,7 +29,8 @@ from services.session import (
     list_sessions,
     delete_session,
     archive_session,
-    unarchive_session
+    unarchive_session,
+    generate_ai_title
 )
 
 logger = logging.getLogger(__name__)
@@ -103,10 +104,18 @@ async def create_new_session(request: CreateSessionRequest):
     Create a new chat session.
 
     If is_temporary=True, session is not persisted to Redis.
+    If first_message is provided, generates an AI title from the message.
     """
     try:
         session_id = str(uuid.uuid4())
-        title = request.title or "New Chat"
+
+        # Determine title: explicit > AI-generated from first_message > default
+        if request.title:
+            title = request.title
+        elif request.first_message:
+            title = generate_ai_title(request.first_message)
+        else:
+            title = "New Chat"
 
         metadata = create_session_metadata(
             session_id=session_id,

@@ -8,10 +8,12 @@
 		clearChatSession,
 		getChatHistory,
 		getDocumentDownloadUrl,
+		createNewSession,
 		type ChatMessage,
 		type ChatSource
 	} from '$lib/api';
 	import { exportChatFn, canExportChat } from '$lib/stores/chat';
+	import { triggerSessionRefresh } from '$lib/stores/sidebar';
 
 	// State
 	let messages = $state<ChatMessage[]>([]);
@@ -96,8 +98,29 @@
 		// Create new AbortController for this request
 		abortController = new AbortController();
 
+		// If this is a temporary chat, create session immediately before streaming
+		// This ensures the chat appears in "Recent" right when user presses Enter
+		let currentSessionId = sessionId;
+		if (isTemporaryChat) {
+			try {
+				const newSession = await createNewSession(userMessage);
+				currentSessionId = newSession.session_id;
+				sessionId = newSession.session_id;
+				sessionTitle = newSession.title;
+
+				// Update URL and refresh sidebar immediately
+				await goto(`/chat?session_id=${newSession.session_id}`, { replaceState: true });
+				triggerSessionRefresh();
+			} catch (e) {
+				error = e instanceof Error ? e.message : 'Failed to create session';
+				isStreaming = false;
+				return;
+			}
+		}
+
 		try {
-			for await (const event of streamQuery(userMessage, sessionId, isTemporaryChat, abortController.signal)) {
+			// Now stream the query with the established session
+			for await (const event of streamQuery(userMessage, currentSessionId, false, abortController.signal)) {
 				if (event.event === 'token') {
 					currentStreamingContent += event.data.token;
 				} else if (event.event === 'sources') {
@@ -111,16 +134,6 @@
 							timestamp: new Date().toISOString()
 						}
 					];
-
-					// Update session ID and redirect if we just created a new session
-					const newSessionId = event.data.session_id;
-					if (sessionId !== newSessionId) {
-						sessionId = newSessionId;
-						// If this was a temporary chat that got saved, redirect to the session URL
-						if (isTemporaryChat && newSessionId) {
-							await goto(`/chat?session_id=${newSessionId}`, { replaceState: true });
-						}
-					}
 				} else if (event.event === 'error') {
 					error = event.data.error;
 				}
