@@ -52,10 +52,6 @@
   }
 
   async function handleDeleteSession(sessionId: string) {
-    if (!confirm('Are you sure you want to delete this session? This cannot be undone.')) {
-      return;
-    }
-
     try {
       await deleteSession(sessionId);
       await loadSessions();
