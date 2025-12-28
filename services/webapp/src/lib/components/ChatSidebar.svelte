@@ -204,17 +204,6 @@
             <span class="text-sm truncate">Chat</span>
           </a>
 
-          <!-- Upload -->
-          <a
-            href="/upload"
-            class="menu-item flex items-center gap-3 w-full p-2 rounded-lg hover:bg-base-300 transition-colors text-base-content"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-            </svg>
-            <span class="text-sm truncate">Upload</span>
-          </a>
-
           <!-- Documents -->
           <a
             href="/documents"

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { page } from '$app/stores';
+	import { onMount, tick } from 'svelte';
 	import {
 		uploadFiles,
 		fetchBatchProgress,
@@ -29,6 +31,17 @@
 
 	// Active batches being polled
 	let activeBatches = $state<Set<string>>(new Set());
+
+	// Auto-trigger file picker based on query parameter
+	onMount(async () => {
+		await tick();
+		const trigger = $page.url.searchParams.get('trigger');
+		if (trigger === 'files' && fileInput) {
+			fileInput.click();
+		} else if (trigger === 'directory' && dirInput) {
+			dirInput.click();
+		}
+	});
 
 	function formatSize(bytes: number): string {
 		if (bytes < 1024) return `${bytes} B`;
