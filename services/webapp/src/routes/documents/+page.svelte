@@ -49,14 +49,20 @@
 		if (!isoString) return '—';
 		try {
 			const date = new Date(isoString);
-			// Format: YYYY-MM-DD HH:MM:SS
-			const year = date.getFullYear();
-			const month = String(date.getMonth() + 1).padStart(2, '0');
-			const day = String(date.getDate()).padStart(2, '0');
-			const hours = String(date.getHours()).padStart(2, '0');
-			const minutes = String(date.getMinutes()).padStart(2, '0');
-			const seconds = String(date.getSeconds()).padStart(2, '0');
-			return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+			const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+
+			if (seconds < 60) return 'just now';
+
+			const minutes = Math.floor(seconds / 60);
+			if (minutes < 60) return `${minutes} min ago`;
+
+			const hours = Math.floor(minutes / 60);
+			if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+
+			const days = Math.floor(hours / 24);
+			if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+
+			return date.toISOString().split('T')[0]; // YYYY-MM-DD
 		} catch {
 			return '—';
 		}
