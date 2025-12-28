@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount, tick } from 'svelte';
 	import {
@@ -36,9 +37,20 @@
 	onMount(async () => {
 		await tick();
 		const trigger = $page.url.searchParams.get('trigger');
+
+		// Set up cancel handlers to redirect back to Documents if user cancels picker
+		const handleCancel = () => {
+			// Only redirect if no uploads are in progress
+			if (uploads.length === 0) {
+				goto('/documents');
+			}
+		};
+
 		if (trigger === 'files' && fileInput) {
+			fileInput.addEventListener('cancel', handleCancel);
 			fileInput.click();
 		} else if (trigger === 'directory' && dirInput) {
+			dirInput.addEventListener('cancel', handleCancel);
 			dirInput.click();
 		}
 	});
@@ -272,71 +284,29 @@
 </script>
 
 <div class="flex flex-col h-full gap-4">
-	<!-- Upload Section -->
+	<!-- Hidden file inputs (triggered from Documents page) -->
+	<input
+		bind:this={fileInput}
+		type="file"
+		multiple
+		class="hidden"
+		onchange={handleFileUpload}
+		accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.html,.htm,.asciidoc,.adoc"
+	/>
+	<input
+		bind:this={dirInput}
+		type="file"
+		webkitdirectory
+		class="hidden"
+		onchange={handleDirUpload}
+	/>
+
+	<!-- Action Bar -->
 	<div class="flex gap-2 items-center">
-		<input
-			bind:this={fileInput}
-			type="file"
-			multiple
-			class="hidden"
-			onchange={handleFileUpload}
-			accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.html,.htm,.asciidoc,.adoc"
-		/>
-		<input
-			bind:this={dirInput}
-			type="file"
-			webkitdirectory
-			class="hidden"
-			onchange={handleDirUpload}
-		/>
-		<button
-			class="btn btn-primary btn-sm"
-			onclick={() => fileInput.click()}
-			disabled={isUploading}
-		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				class="h-4 w-4"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-				/>
-			</svg>
-			Upload Files
-		</button>
-		<button
-			class="btn btn-secondary btn-sm"
-			onclick={() => dirInput.click()}
-			disabled={isUploading}
-		>
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				class="h-4 w-4"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-				/>
-			</svg>
-			Upload Directory
-		</button>
-
-		<div class="flex-1"></div>
-
 		{#if uploads.some((u) => u.status === 'done' || u.status === 'error' || u.status === 'skipped')}
 			<button class="btn btn-ghost btn-sm" onclick={clearCompleted}>Clear Completed</button>
 		{/if}
+		<div class="flex-1"></div>
 		<span class="text-sm text-base-content/60">{uploads.length} uploads</span>
 	</div>
 

@@ -138,13 +138,13 @@
 <div class="flex flex-col h-full gap-4">
 	<!-- Action Bar -->
 	<div class="flex items-center gap-2 bg-base-200 px-3 py-2 rounded-lg">
-		<button
-			class="btn btn-sm btn-square btn-action has-tooltip text-error"
-			disabled={!someSelected || isDeleting}
-			onclick={handleDeleteSelected}
-			data-tooltip="Delete selected ({selectedIds.size})"
-			aria-label="Delete selected documents"
-		>
+		<div class="tooltip tooltip-bottom" data-tip="Delete selected ({selectedIds.size})">
+			<button
+				class="btn btn-sm btn-square btn-action text-error"
+				disabled={!someSelected || isDeleting}
+				onclick={handleDeleteSelected}
+				aria-label="Delete selected documents"
+			>
 			{#if isDeleting}
 				<span class="loading loading-spinner loading-xs"></span>
 			{:else}
@@ -163,14 +163,15 @@
 					/>
 				</svg>
 			{/if}
-		</button>
-		<button
-			class="btn btn-sm btn-square btn-action has-tooltip"
-			onclick={loadDocuments}
-			disabled={isLoading}
-			data-tooltip="Refresh"
-			aria-label="Refresh document list"
-		>
+			</button>
+		</div>
+		<div class="tooltip tooltip-bottom" data-tip="Refresh">
+			<button
+				class="btn btn-sm btn-square btn-action"
+				onclick={loadDocuments}
+				disabled={isLoading}
+				aria-label="Refresh document list"
+			>
 			{#if isLoading}
 				<span class="loading loading-spinner loading-xs"></span>
 			{:else}
@@ -189,7 +190,8 @@
 					/>
 				</svg>
 			{/if}
-		</button>
+			</button>
+		</div>
 	</div>
 
 	<!-- Error Alert -->
@@ -245,14 +247,15 @@
 							</button>
 						</th>
 						<th class="w-24">
-							<button
-								class="flex items-center gap-1 w-full justify-end hover:text-primary transition-colors"
-								onclick={() => handleSort('chunks')}
-								title="Sort by chunks"
-							>
-								Chunks
-								<span class="text-xs opacity-60">{getSortIcon('chunks')}</span>
-							</button>
+							<div class="tooltip tooltip-bottom" data-tip="Text segments created for search indexing">
+								<button
+									class="flex items-center gap-1 w-full justify-end hover:text-primary transition-colors cursor-help"
+									onclick={() => handleSort('chunks')}
+								>
+									Chunks
+									<span class="text-xs opacity-60">{getSortIcon('chunks')}</span>
+								</button>
+							</div>
 						</th>
 						<th class="w-44">
 							<button

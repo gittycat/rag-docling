@@ -352,34 +352,35 @@
 		<!-- Right side: Action buttons -->
 		<div class="flex items-center gap-1">
 			<!-- New Chat button -->
-			<button
-				class="btn btn-ghost btn-sm btn-square has-tooltip"
-				onclick={() => goto('/chat')}
-				disabled={!isInitialized}
-				data-tooltip="New chat"
-				aria-label="New chat"
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
-					<path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
-				</svg>
-			</button>
+			<div class="tooltip tooltip-left" data-tip="New chat">
+				<button
+					class="btn btn-sm btn-square btn-action"
+					onclick={() => goto('/chat')}
+					disabled={!isInitialized}
+					aria-label="New chat"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+						<path stroke-linecap="round" stroke-linejoin="round" d="M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" />
+					</svg>
+				</button>
+			</div>
 
 			<!-- Toggle temporary mode (only before first message, locked after initialization) -->
-			<button
-				class="btn btn-sm btn-square has-tooltip"
-				class:btn-ghost={!isTemporaryChat}
-				class:btn-warning={isTemporaryChat}
-				class:btn-outline={!isTemporaryChat && !isInitialized}
-				onclick={() => goto(isTemporaryChat ? '/chat' : '/chat?temporary=true')}
-				disabled={isInitialized}
-				data-tooltip={isTemporaryChat ? 'Temporary: messages not saved' : 'Enable temporary mode'}
-				aria-label={isTemporaryChat ? 'Switch to persistent chat' : 'Switch to temporary chat'}
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-				</svg>
-			</button>
+			<div class="tooltip tooltip-left" data-tip={isTemporaryChat ? 'Temporary: messages not saved' : 'Enable temporary mode'}>
+				<button
+					class="btn btn-sm btn-square"
+					class:btn-action={!isTemporaryChat}
+					class:btn-warning={isTemporaryChat}
+					onclick={() => goto(isTemporaryChat ? '/chat' : '/chat?temporary=true')}
+					disabled={isInitialized}
+					aria-label={isTemporaryChat ? 'Switch to persistent chat' : 'Switch to temporary chat'}
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+					</svg>
+				</button>
+			</div>
 		</div>
 	</div>
 
