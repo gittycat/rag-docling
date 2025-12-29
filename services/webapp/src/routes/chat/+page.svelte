@@ -121,9 +121,10 @@
 		canExportChat.set(messages.length > 0 && !isStreaming);
 	});
 
-	// Set export function for sidebar
+	// Set export function for sidebar and focus input
 	onMount(() => {
 		exportChatFn.set(saveChat);
+		textareaElement?.focus();
 	});
 
 	onDestroy(() => {
