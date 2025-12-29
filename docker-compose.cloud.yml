@@ -1,0 +1,41 @@
+# Cloud deployment overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d
+# Or:    just deploy cloud
+#
+# Prerequisites:
+# 1. Set up a container registry (ghcr.io, Docker Hub, etc.)
+# 2. Push images with: just build-push (see DEVELOPMENT.md for registry setup)
+# 3. Configure REGISTRY and VERSION below
+# 4. Ensure cloud server has Docker installed and registry access
+
+# TODO: Configure these for your cloud deployment
+# REGISTRY: ghcr.io/youruser/rag-docling
+# VERSION: Set via environment variable or hardcode
+
+services:
+  webapp:
+    # Pull from registry instead of building locally
+    # image: ${REGISTRY:-ghcr.io/youruser/rag-docling}/webapp:${VERSION:-latest}
+    image: webapp:${VERSION:-latest}
+    build: !reset null  # Disable local build
+    environment:
+      - ORIGIN=${WEBAPP_ORIGIN:-http://localhost:8000}
+
+  rag-server:
+    # image: ${REGISTRY:-ghcr.io/youruser/rag-docling}/rag-server:${VERSION:-latest}
+    image: rag-server:${VERSION:-latest}
+    build: !reset null
+    environment:
+      - LOG_LEVEL=WARNING
+    # Cloud-specific: Ollama runs on same server or separate host
+    extra_hosts:
+      - "host.docker.internal:${OLLAMA_HOST:-host-gateway}"
+
+  celery-worker:
+    # image: ${REGISTRY:-ghcr.io/youruser/rag-docling}/rag-server:${VERSION:-latest}
+    image: rag-server:${VERSION:-latest}
+    build: !reset null
+    environment:
+      - LOG_LEVEL=WARNING
+    extra_hosts:
+      - "host.docker.internal:${OLLAMA_HOST:-host-gateway}"

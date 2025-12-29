@@ -12,6 +12,7 @@ This is not curated for human consumption.
 - [Architecture](#architecture)
 - [Development Setup](#development-setup)
 - [CI/CD](#cicd)
+- [Deployment](#deployment)
 - [API Documentation](#api-documentation)
 - [Configuration](#configuration)
 - [Evaluation & Testing](#evaluation--testing)
@@ -371,6 +372,130 @@ deploy:
 - **[Complete Forgejo Setup Guide](docs/FORGEJO_CI_SETUP.md)** - Detailed setup, troubleshooting, advanced config
 - **[Forgejo Actions Docs](https://forgejo.org/docs/latest/user/actions/)** - Official documentation
 - **[GitHub Actions Reference](https://docs.github.com/en/actions)** - Syntax reference (mostly compatible)
+
+## Deployment
+
+### Version Management
+
+Version is derived from git tags. The `justfile` provides commands for version management:
+
+```bash
+# Show current version (from latest git tag)
+just show-version
+
+# Inject version into all service manifests (pyproject.toml, package.json)
+just inject-version 0.2.0
+
+# Create a full release: tag + inject + commit + push
+just release 0.2.0
+```
+
+### Environment-Based Deployment (Current)
+
+Deploy to different environments using compose file overrides:
+
+```bash
+# Local development (OrbStack/Docker Desktop)
+just deploy local
+# Or: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+
+# Cloud deployment (after configuring docker-compose.cloud.yml)
+just deploy cloud
+
+# Stop deployment
+just deploy-down local
+just deploy-down cloud
+```
+
+**Compose Files:**
+- `docker-compose.yml` - Base configuration (services, networks, volumes)
+- `docker-compose.local.yml` - Local overrides (local images, debug logging)
+- `docker-compose.cloud.yml` - Cloud overrides (registry images, production settings)
+
+### Registry-Based Deployment (Future)
+
+For production deployments, use a container registry to build once and deploy anywhere:
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
+│   Forgejo   │────►│   Registry   │◄────│  Local/Cloud    │
+│   CI Build  │     │ (ghcr/docker)│     │  docker compose │
+└─────────────┘     └──────────────┘     └─────────────────┘
+```
+
+**Setup Steps:**
+
+1. **Add registry commands to justfile:**
+
+```just
+registry := "ghcr.io/youruser/rag-docling"
+
+# Build and push images to registry
+build-push:
+    docker compose build
+    docker tag rag-server:local {{registry}}/rag-server:{{version}}
+    docker tag webapp:local {{registry}}/webapp:{{version}}
+    docker push {{registry}}/rag-server:{{version}}
+    docker push {{registry}}/webapp:{{version}}
+```
+
+2. **Update docker-compose.cloud.yml:**
+
+```yaml
+services:
+  webapp:
+    image: ghcr.io/youruser/rag-docling/webapp:${VERSION:-latest}
+    build: !reset null  # Disable local build
+
+  rag-server:
+    image: ghcr.io/youruser/rag-docling/rag-server:${VERSION:-latest}
+    build: !reset null
+```
+
+3. **Create Forgejo release workflow (`.forgejo/workflows/release.yml`):**
+
+```yaml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Inject version
+        run: just inject-version ${{ steps.version.outputs.VERSION }}
+
+      - name: Build and push
+        run: just build-push
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+```
+
+4. **Deploy to cloud via SSH:**
+
+```bash
+# Add to justfile
+deploy-cloud-ssh HOST:
+    ssh {{HOST}} "cd /opt/rag-docling && docker compose pull && docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d"
+```
+
+**Workflow:**
+1. Developer runs `just release 0.2.0`
+2. Git tag `v0.2.0` triggers Forgejo workflow
+3. CI injects version, builds images, pushes to registry
+4. Cloud server pulls new images and restarts
 
 ## API Documentation
 

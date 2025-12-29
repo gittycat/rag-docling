@@ -2,8 +2,56 @@
 
 alias test := test-unit
 
+# Get version from latest git tag (strips 'v' prefix), falls back to 0.0.0-dev
+version := `git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev"`
+
 default:
-    @just --list --list-heading "Usage: list <recipe>" 
+    @just --list --list-heading "Usage: list <recipe>"
+
+# ============================================================================
+# Version Management
+# ============================================================================
+
+# Show current version from git tags
+show-version:
+    @echo "{{version}}"
+
+# Inject version into all service manifest files
+inject-version VERSION=version:
+    @echo "Injecting version {{VERSION}}..."
+    sed -i '' 's/^version = .*/version = "{{VERSION}}"/' services/rag_server/pyproject.toml
+    cd services/webapp && npm version {{VERSION}} --no-git-tag-version --allow-same-version
+    @echo "Version {{VERSION}} injected into all services"
+
+# Create a release: tag, inject version, commit, and push
+release VERSION:
+    @echo "Creating release v{{VERSION}}..."
+    git tag -a v{{VERSION}} -m "Release {{VERSION}}"
+    just inject-version {{VERSION}}
+    git add services/rag_server/pyproject.toml services/webapp/package.json services/webapp/package-lock.json
+    git commit -m "Bump version to {{VERSION}}"
+    git push origin main --tags
+    @echo "Release v{{VERSION}} created and pushed"
+
+# ============================================================================
+# Deployment
+# ============================================================================
+
+# Deploy to specified environment (local or cloud)
+deploy ENV="local":
+    docker compose -f docker-compose.yml -f docker-compose.{{ENV}}.yml up -d --build
+
+# Deploy to local OrbStack
+deploy-local:
+    just deploy local
+
+# Deploy to cloud (placeholder - configure docker-compose.cloud.yml first)
+deploy-cloud:
+    just deploy cloud
+
+# Stop deployment for specified environment
+deploy-down ENV="local":
+    docker compose -f docker-compose.yml -f docker-compose.{{ENV}}.yml down 
 
 setup:
     cd services/rag_server && \
