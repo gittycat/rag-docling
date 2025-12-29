@@ -23,10 +23,8 @@
 
 	<!-- sun icon -->
 	<svg
-		class="swap-on fill-current absolute"
+		class="swap-on fill-current absolute h-5 w-5"
 		xmlns="http://www.w3.org/2000/svg"
-		width="20"
-		height="20"
 		viewBox="0 0 24 24"
 	>
 		<path
@@ -36,10 +34,8 @@
 
 	<!-- moon icon -->
 	<svg
-		class="swap-off fill-current absolute"
+		class="swap-off fill-current absolute h-5 w-5"
 		xmlns="http://www.w3.org/2000/svg"
-		width="20"
-		height="20"
 		viewBox="0 0 24 24"
 	>
 		<path
