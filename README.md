@@ -1,174 +1,171 @@
-# Locally Hosted RAG System
+# RAG Lab
 
-A locally hosted RAG (Retrieval-Augmented Generation) system for intelligent document research. Upload your private documents, ask questions in natural language, and get AI-powered answers with source citations—all running privately on your machine.
+A locally hosted RAG (Retrieval-Augmented Generation) system for private document research. Upload your documents, ask questions in natural language, and get AI-powered answers with source citations.
 
-## Project Goal
+RAG Lab lets you chat with your documents using AI. It runs on your machine, keeping your data private. The system supports multiple document formats and provides source citations for every answer.
 
-Create an optimized RAG pipeline for local machines that balances accuracy with performance. Since consumer laptops can't run top-tier models, this project helps you find the best combination of small models and techniques for your documents.
+**Status**: This is a development/research project, not production-ready software. It lacks authentication, enterprise security, and high availability features.
 
+**Goal**: Create a RAG system running locally with multiple LLM models that includes the quality evals needed to measure accuracy and speed.
 
-## Main Features
+## Model Options
 
-- **Private & Local**: Can run entirely on your computer or on-prem data center. Alternatively can make use of frontier models for inference, embedding or reranking.
-- **Plug and play models**: Supports multiple local (through Ollama) or online LLM models.
-- **Evaluation page**: Multiple evals can be run to evaluate the RAG for accuracy and speed. __This is ongoing work__.
-- **ChatGPT-like Interface**: Clean, familiar web interface
-- **Multiple Document Formats**: PDF, DOCX, TXT, Markdown, HTML, PowerPoint, Excel
-- **Source Citations**: Every answer includes references to source documents
+RAG Lab supports both local and cloud AI models through a plugin architecture:
 
-## What You Need
+**Local (Ollama)**:  Full privacy, good with small models, Free, 4GB+ RAM
+**Cloud (OpenAI, Anthropic, etc.)**: Data sent to provider, Best accuracy, Pay per use through API key
 
-- **Docker** (Docker Desktop, OrbStack, or similar)
-- **Ollama** for running AI models locally
-- **~4GB RAM** for the AI models
-- **~2GB disk space** for models and data
-- **just** Task runner. `brew install just`
+**Note**: Local models run well for basic use. To match frontier cloud models, more expensive servers with powerful GPUs will be needed to run full-weight non quantised open models.
 
-## Installation
+## Requirements
 
-### 1. Install Dependencies
+- **Docker** - Docker Desktop, OrbStack, or Podman
+- **Ollama** - For local AI models (optional if using cloud only)
+- **4GB RAM** - For AI models
+- **2GB disk** - For models and data
 
+## Quick Start
+
+### 1. Install Prerequisites
+
+**macOS:**
 ```bash
 # Install Ollama
-curl https://ollama.ai/install.sh | sh
+brew install ollama
 
 # Download AI models
-ollama pull gemma3:4b              # Question answering model
-ollama pull nomic-embed-text       # Document indexing model
+ollama pull gemma3:4b
+ollama pull nomic-embed-text
 
 # Install Docker (choose one)
-# - Docker Desktop: https://www.docker.com/products/docker-desktop/
-# - OrbStack (macOS, faster): brew install orbstack
+brew install --cask docker       # Docker Desktop
+# OR
+brew install orbstack            # OrbStack (faster on macOS)
 ```
 
-### 2. Get the Code
+**Linux:**
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Download AI models
+ollama pull gemma3:4b
+ollama pull nomic-embed-text
+
+# Install Docker
+# Follow: https://docs.docker.com/engine/install/
+```
+
+### 2. Download and Configure
 
 ```bash
+# Clone the repository
 git clone https://github.com/gittycat/rag-docling.git
 cd rag-docling
-```
 
-### 3. Configure the System
-
-```bash
-# Copy configuration files
+# Create configuration files from templates
 cp config/models.yml.example config/models.yml
 cp secrets/.env.example secrets/.env
 cp secrets/ollama_config.env.example secrets/ollama_config.env
-
-# (Optional) Edit config/models.yml to change models or settings
-# (Optional) Add API keys to secrets/.env for cloud providers
 ```
 
-### 4. Start the Application
+### 3. Start the Application
 
 ```bash
-docker compose up
+# Start Ollama (if not already running)
+ollama serve &
+
+# Start RAG Lab
+docker compose up -d
 ```
 
-That's it! Open your browser to **http://localhost:8000**
+Open **http://localhost:8000** in your browser.
 
-## How to Use
+### 4. Stop the Application
 
-### 1. Upload Your Documents
+```bash
+docker compose down
+```
 
-1. Use the "Documents" section. The processing (embeddings creation) is what takes more of the time. A progress bar is shown.
+## Usage
 
-### 2. Ask Questions
+### Upload Documents
 
-1. In the /chat page. Use it like any AI chat interface.
+1. Go to **Documents** page
+2. Click **Upload** and select files
+3. Wait for processing (progress bar shows status)
 
-### 3. Manage Your Data (/documents)
+**Supported formats**: PDF, DOCX, PPTX, XLSX, TXT, Markdown, HTML, AsciiDoc
 
-- **View all documents** in the Admin section
-- **Delete documents** you no longer need
-- **Clear chat history** to start fresh
+### Ask Questions
+
+1. Go to **Chat** page
+2. Type your question
+3. Get AI-powered answers with source citations
+
+### Manage Documents
+
+- View all uploaded documents in **Documents** page
+- Delete documents you no longer need
+- Start new chat sessions anytime
 
 ## Configuration
 
-The system uses **YAML-based configuration** for easy customization:
+### Default Setup (Local with Ollama)
 
-### Quick Start (Using Defaults)
-The example configuration files work out-of-the-box with Ollama. Just copy them:
+The example configuration works out-of-the-box with Ollama. No changes needed for basic use.
 
-```bash
-cp config/models.yml.example config/models.yml
-cp secrets/.env.example secrets/.env
-cp secrets/ollama_config.env.example secrets/ollama_config.env
-```
+### Using Cloud Providers
 
-### Configuration Files (Not in Source Control)
+Edit `config/models.yml` to use cloud models:
 
-These files must be created from their `.example` templates before running the application:
-
-**`config/models.yml`** - Main configuration:
 ```yaml
 llm:
-  provider: ollama                              # ollama, openai, anthropic, google, deepseek, moonshot
-  model: gemma3:4b
-  base_url: http://host.docker.internal:11434
-  timeout: 120
-  keep_alive: 10m
-
-embedding:
-  provider: ollama
-  model: nomic-embed-text:latest
-  base_url: http://host.docker.internal:11434
-
-eval:
-  provider: anthropic
+  provider: anthropic          # or: openai, google, deepseek, moonshot
   model: claude-sonnet-4-20250514
-
-reranker:
-  enabled: true
-  model: cross-encoder/ms-marco-MiniLM-L-6-v2
-  top_n: 5
-
-retrieval:
-  top_k: 10
-  enable_hybrid_search: true
-  rrf_k: 60
-  enable_contextual_retrieval: false
 ```
 
-**`secrets/.env`** - API keys:
+Add your API key to `secrets/.env`:
 ```bash
-LLM_API_KEY=                  # For cloud providers (not needed for Ollama)
-ANTHROPIC_API_KEY=sk-ant-... # For evaluations (required)
+LLM_API_KEY=your-api-key-here
 ```
 
-**`secrets/ollama_config.env`** - Ollama settings:
-```bash
-OLLAMA_URL=http://host.docker.internal:11434
-OLLAMA_KEEP_ALIVE=10m         # -1=forever, 0=unload, 10m=10 minutes
-```
+### Configuration Files
 
-See `config/README.md` and `secrets/README.md` for detailed documentation.
+| File | Purpose |
+|------|---------|
+| `config/models.yml` | AI models and retrieval settings |
+| `secrets/.env` | API keys for cloud providers |
+| `secrets/ollama_config.env` | Ollama connection settings |
 
-## Testing
+See `config/README.md` for detailed options.
 
-This project uses [just](https://just.systems/man/en/) as a task runner.
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| "Cannot connect to Ollama" | Run `ollama serve` or check if Ollama is running |
+| Slow first response | Normal - models load on first use |
+| Out of memory | Use smaller model or increase Docker memory |
+| Upload fails | Check file format is supported |
+
+### View Logs
 
 ```bash
-# Install dev dependencies
-TODO: complete
-
-# Unit tests (mocked, no services required)
-TODO: complete
-
-# Integration tests (requires: docker compose up -d)
-TODO: complete
-
-# Evaluation tests (requires ANTHROPIC_API_KEY)
-export ANTHROPIC_API_KEY=sk-ant-...
-TODO: complete
-
-# List all available tasks
-TODO: complete
+docker compose logs -f
 ```
 
-## What's Next
+### Reset Everything
 
-TODO: roadmap
+```bash
+docker compose down -v
+docker compose up -d
+```
 
+## Development
 
+For development setup, testing, and technical documentation, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
+## License
+
+<!-- TODO: Add license information -->
