@@ -488,7 +488,7 @@
 		<div class="relative w-full max-w-4xl mx-auto">
 			<textarea
 				bind:this={textareaElement}
-				placeholder="Type your query..."
+				placeholder="Query your uploaded documents..."
 				class="textarea w-full bg-base-200 rounded-3xl py-4 px-5 pr-16 min-h-[60px] max-h-[200px] resize-none border-base-300 focus:border-primary focus:outline-none"
 				bind:value={inputText}
 				onkeydown={handleKeydown}
