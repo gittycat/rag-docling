@@ -397,6 +397,14 @@ Base URL: `http://localhost:8001`
 | GET | `/metrics/evaluation/definitions` | Metric definitions |
 | GET | `/metrics/evaluation/history` | Past evaluation runs |
 | GET | `/metrics/evaluation/summary` | Latest evaluation with trends |
+| GET | `/metrics/evaluation/{run_id}` | Get specific evaluation run |
+| DELETE | `/metrics/evaluation/{run_id}` | Delete evaluation run |
+| GET | `/metrics/baseline` | Get golden baseline |
+| POST | `/metrics/baseline/{run_id}` | Set golden baseline |
+| DELETE | `/metrics/baseline` | Clear golden baseline |
+| GET | `/metrics/compare/{run_a}/{run_b}` | Compare two evaluation runs |
+| GET | `/metrics/compare-to-baseline/{run_id}` | Compare run to baseline |
+| POST | `/metrics/recommend` | Get config recommendation |
 
 ## Development Setup
 
@@ -659,12 +667,19 @@ Target: 100+ pairs for comprehensive evaluation
 
 Comprehensive visibility into system configuration and performance.
 
-**Endpoints:**
+**Core Endpoints:**
 - `/metrics/system`: Complete overview
 - `/metrics/models`: Model details with references
 - `/metrics/retrieval`: Pipeline configuration
 - `/metrics/evaluation/history`: Past evaluation runs
 - `/metrics/evaluation/summary`: Trends analysis
+- `/metrics/evaluation/{run_id}`: Get/delete specific run
+
+**Baseline & Comparison:**
+- `/metrics/baseline`: Get/set/clear golden baseline
+- `/metrics/compare/{a}/{b}`: Compare two runs
+- `/metrics/compare-to-baseline/{run_id}`: Compare to baseline
+- `/metrics/recommend`: Get optimal config recommendation
 
 ### Health Monitoring
 
