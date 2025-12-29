@@ -140,7 +140,7 @@
 	<div class="flex items-center gap-2 bg-base-200 px-3 py-2 rounded-lg">
 		<div class="tooltip tooltip-bottom" data-tip="Delete selected ({selectedIds.size})">
 			<button
-				class="btn btn-sm btn-square btn-action text-error"
+				class="btn btn-sm btn-square btn-action text-error disabled:text-base-content/30"
 				disabled={!someSelected || isDeleting}
 				onclick={handleDeleteSelected}
 				aria-label="Delete selected documents"
