@@ -370,7 +370,8 @@ def get_metric_definitions() -> list[MetricDefinition]:
 # Evaluation History Management
 # ============================================================================
 
-EVAL_RESULTS_DIR = Path("eval_data/results")
+# Use Docker path if available, otherwise local development path
+EVAL_RESULTS_DIR = Path("/app/eval_data/results") if Path("/app/eval_data").exists() else Path("eval_data/results")
 
 
 def ensure_eval_results_dir():
@@ -444,6 +445,32 @@ def get_evaluation_run_by_id(run_id: str) -> Optional[EvaluationRun]:
             logger.warning(f"Failed to load evaluation run from {filepath}: {e}")
 
     return None
+
+
+def delete_evaluation_run(run_id: str) -> bool:
+    """Delete a specific evaluation run by ID.
+
+    Args:
+        run_id: The run ID to delete
+
+    Returns:
+        True if deleted, False if not found
+    """
+    ensure_eval_results_dir()
+
+    # Search for matching file
+    for filepath in EVAL_RESULTS_DIR.glob("eval_run_*.json"):
+        try:
+            with open(filepath) as f:
+                data = json.load(f)
+                if data.get("run_id") == run_id:
+                    filepath.unlink()
+                    logger.info(f"Deleted evaluation run {run_id} from {filepath}")
+                    return True
+        except Exception as e:
+            logger.warning(f"Failed to check evaluation run from {filepath}: {e}")
+
+    return False
 
 
 def get_evaluation_summary() -> EvaluationSummary:

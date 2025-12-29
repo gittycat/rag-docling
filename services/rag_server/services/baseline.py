@@ -19,8 +19,8 @@ from schemas.metrics import (
 
 logger = logging.getLogger(__name__)
 
-# Default baseline file location
-BASELINE_FILE = Path("eval_data/golden_baseline.json")
+# Use Docker path if available, otherwise local development path
+BASELINE_FILE = Path("/app/eval_data/golden_baseline.json") if Path("/app/eval_data").exists() else Path("eval_data/golden_baseline.json")
 
 
 class BaselineService:

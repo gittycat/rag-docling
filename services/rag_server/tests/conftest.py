@@ -5,6 +5,7 @@ import pytest
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -125,3 +126,73 @@ def integration_env():
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+
+
+def create_mock_models_config():
+    """Create a mock ModelsConfig for unit tests (uses ollama, no API key required)."""
+    from infrastructure.config.models_config import (
+        ModelsConfig,
+        LLMConfig,
+        EmbeddingConfig,
+        EvalConfig,
+        RerankerConfig,
+        RetrievalConfig,
+    )
+
+    return ModelsConfig(
+        llm=LLMConfig(
+            provider="ollama",
+            model="gemma3:4b",
+            base_url="http://localhost:11434",
+            timeout=120,
+            keep_alive="10m",
+        ),
+        embedding=EmbeddingConfig(
+            provider="ollama",
+            model="nomic-embed-text:latest",
+            base_url="http://localhost:11434",
+        ),
+        eval=EvalConfig(
+            provider="anthropic",
+            model="claude-sonnet-4-20250514",
+            api_key="test-key",  # Mock API key for tests
+        ),
+        reranker=RerankerConfig(
+            enabled=True,
+            model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+            top_n=5,
+        ),
+        retrieval=RetrievalConfig(
+            top_k=10,
+            enable_hybrid_search=True,
+            rrf_k=60,
+            enable_contextual_retrieval=False,
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def reset_config_singleton():
+    """Reset the models config singleton before each test."""
+    from infrastructure.config.models_config import reset_models_config
+
+    reset_models_config()
+    yield
+    reset_models_config()
+
+
+@pytest.fixture
+def mock_models_config():
+    """Provide a mock ModelsConfig and patch get_models_config to return it."""
+    mock_config = create_mock_models_config()
+
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=mock_config,
+    ):
+        # Also patch the singleton directly
+        with patch(
+            "infrastructure.config.models_config._models_config",
+            mock_config,
+        ):
+            yield mock_config

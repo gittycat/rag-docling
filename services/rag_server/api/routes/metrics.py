@@ -23,6 +23,7 @@ from services.metrics import (
     load_evaluation_history,
     get_evaluation_summary as fetch_eval_summary,
     get_evaluation_run_by_id,
+    delete_evaluation_run,
 )
 from services.baseline import get_baseline_service
 from services.comparison import get_comparison_service
@@ -135,6 +136,47 @@ async def get_evaluation_summary():
         return fetch_eval_summary()
     except Exception as e:
         logger.error(f"[METRICS] Error fetching evaluation summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# NOTE: Parameterized routes must come AFTER specific routes like /summary
+@router.get("/metrics/evaluation/{run_id}", response_model=EvaluationRun)
+async def get_evaluation_run(run_id: str):
+    """Get a specific evaluation run by ID.
+
+    Args:
+        run_id: The evaluation run ID
+
+    Returns:
+        The evaluation run details
+    """
+    try:
+        run = get_evaluation_run_by_id(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Evaluation run '{run_id}' not found")
+        return run
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching evaluation run: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/metrics/evaluation/{run_id}", status_code=204)
+async def delete_eval_run(run_id: str):
+    """Delete a specific evaluation run by ID.
+
+    Args:
+        run_id: The evaluation run ID to delete
+    """
+    try:
+        deleted = delete_evaluation_run(run_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Evaluation run '{run_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[METRICS] Error deleting evaluation run: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -56,6 +56,7 @@ services:
     volumes:
       - ./config:/app/config:ro               # Model configuration (read-only)
       - ./data/indexed_documents:/app/documents
+      - ./services/rag_server/eval_data:/app/eval_data  # Evaluation results
       - docs_repo:/tmp/shared
       - huggingface_cache:/home/appuser/.cache/huggingface
       - documents_data:/data/documents
@@ -119,6 +120,7 @@ services:
     volumes:
       - ./config:/app/config:ro               # Model configuration (read-only)
       - ./data/indexed_documents:/app/documents
+      - ./services/rag_server/eval_data:/app/eval_data  # Evaluation results
       - docs_repo:/tmp/shared
       - huggingface_cache:/home/appuser/.cache/huggingface
       - documents_data:/data/documents

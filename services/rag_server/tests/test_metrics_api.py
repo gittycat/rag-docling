@@ -18,9 +18,60 @@ from datetime import datetime
 import json
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from infrastructure.config.models_config import (
+    ModelsConfig,
+    LLMConfig,
+    EmbeddingConfig,
+    EvalConfig,
+    RerankerConfig,
+    RetrievalConfig,
+)
+
+
+def create_mock_models_config():
+    """Create a mock ModelsConfig for tests (uses ollama, no API key required)."""
+    return ModelsConfig(
+        llm=LLMConfig(
+            provider="ollama",
+            model="gemma3:4b",
+            base_url="http://localhost:11434",
+            timeout=120,
+            keep_alive="10m",
+        ),
+        embedding=EmbeddingConfig(
+            provider="ollama",
+            model="nomic-embed-text:latest",
+            base_url="http://localhost:11434",
+        ),
+        eval=EvalConfig(
+            provider="anthropic",
+            model="claude-sonnet-4-20250514",
+            api_key="test-key",
+        ),
+        reranker=RerankerConfig(enabled=True),
+        retrieval=RetrievalConfig(),
+    )
+
+
 from main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def mock_models_config_fixture():
+    """Auto-use fixture to mock models config for all tests in this file."""
+    mock_config = create_mock_models_config()
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=mock_config,
+    ):
+        with patch(
+            "infrastructure.config.models_config._models_config",
+            mock_config,
+        ):
+            yield mock_config
 
 
 # ============================================================================
@@ -471,18 +522,38 @@ def test_system_metrics_returns_timestamp(mock_system_metrics):
 
 def test_models_with_reranker_disabled(mock_ollama):
     """GET /metrics/models should handle disabled reranker."""
-    with patch.dict('os.environ', {'ENABLE_RERANKER': 'false'}):
-        response = client.get("/metrics/models")
-        data = response.json()
+    disabled_reranker_config = create_mock_models_config()
+    disabled_reranker_config.reranker.enabled = False
 
-        # Reranker should be None when disabled
-        assert data["reranker"] is None
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=disabled_reranker_config,
+    ):
+        with patch(
+            "infrastructure.config.models_config._models_config",
+            disabled_reranker_config,
+        ):
+            response = client.get("/metrics/models")
+            data = response.json()
+
+            # Reranker should be None when disabled
+            assert data["reranker"] is None
 
 
 def test_retrieval_with_hybrid_disabled():
     """GET /metrics/retrieval should handle disabled hybrid search."""
-    with patch.dict('os.environ', {'ENABLE_HYBRID_SEARCH': 'false'}):
-        response = client.get("/metrics/retrieval")
-        data = response.json()
+    disabled_hybrid_config = create_mock_models_config()
+    disabled_hybrid_config.retrieval.enable_hybrid_search = False
 
-        assert data["hybrid_search"]["enabled"] is False
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=disabled_hybrid_config,
+    ):
+        with patch(
+            "infrastructure.config.models_config._models_config",
+            disabled_hybrid_config,
+        ):
+            response = client.get("/metrics/retrieval")
+            data = response.json()
+
+            assert data["hybrid_search"]["enabled"] is False

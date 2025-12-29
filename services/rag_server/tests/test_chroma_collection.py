@@ -5,9 +5,10 @@ from unittest.mock import Mock, patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+@patch('infrastructure.database.chroma.get_embedding_function')
 @patch('infrastructure.database.chroma.VectorStoreIndex')
 @patch('chromadb.HttpClient')
-def test_get_or_create_collection(mock_client_class, mock_index_class):
+def test_get_or_create_collection(mock_client_class, mock_index_class, mock_embed_fn):
     """Get or create VectorStoreIndex with ChromaDB"""
     from infrastructure.database.chroma import get_or_create_collection
 
@@ -15,6 +16,9 @@ def test_get_or_create_collection(mock_client_class, mock_index_class):
     mock_collection = MagicMock()
     mock_client.get_or_create_collection.return_value = mock_collection
     mock_client_class.return_value = mock_client
+
+    mock_embedding = MagicMock()
+    mock_embed_fn.return_value = mock_embedding
 
     mock_index = MagicMock()
     mock_index_class.from_vector_store.return_value = mock_index
