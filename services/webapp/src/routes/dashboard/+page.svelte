@@ -3,13 +3,19 @@
 	import {
 		fetchSystemMetrics,
 		fetchEvaluationSummary,
+		fetchGoldenBaseline,
 		type SystemMetrics,
-		type EvaluationSummary
+		type EvaluationSummary,
+		type GoldenBaseline
 	} from '$lib/api';
 	import Sparkline from '$lib/components/Sparkline.svelte';
+	import BaselineIndicator from '$lib/components/BaselineIndicator.svelte';
+	import RunComparison from '$lib/components/RunComparison.svelte';
+	import RecommendationPanel from '$lib/components/RecommendationPanel.svelte';
 
 	let metrics = $state<SystemMetrics | null>(null);
 	let evalSummary = $state<EvaluationSummary | null>(null);
+	let baseline = $state<GoldenBaseline | null>(null);
 	let isLoading = $state(true);
 	let error = $state<string | null>(null);
 	let autoRefresh = $state(true);
@@ -47,12 +53,14 @@
 		if (!autoRefresh && !isLoading) isLoading = true;
 		error = null;
 		try {
-			const [m, e] = await Promise.all([
+			const [m, e, b] = await Promise.all([
 				fetchSystemMetrics(),
-				fetchEvaluationSummary().catch(() => null)
+				fetchEvaluationSummary().catch(() => null),
+				fetchGoldenBaseline().catch(() => null)
 			]);
 			metrics = m;
 			evalSummary = e;
+			baseline = b;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load data';
 		} finally {
@@ -317,5 +325,28 @@
 				</div>
 			</div>
 		{/if}
+
+		<!-- Golden Baseline Section -->
+		<div class="bg-base-200 rounded p-2">
+			<div class="text-xs font-semibold mb-1 text-base-content/70">Golden Baseline</div>
+			<BaselineIndicator
+				currentRun={evalSummary?.latest_run ?? metrics?.latest_evaluation ?? null}
+				{baseline}
+				onBaselineChange={loadAll}
+			/>
+		</div>
+
+		<!-- Compare Configurations Section -->
+		<details class="bg-base-200 rounded">
+			<summary class="p-2 cursor-pointer text-xs font-semibold text-base-content/70">
+				Compare Configurations
+			</summary>
+			<div class="px-2 pb-2">
+				<RunComparison />
+			</div>
+		</details>
+
+		<!-- Recommendation Panel -->
+		<RecommendationPanel />
 	</div>
 {/if}

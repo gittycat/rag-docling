@@ -1,5 +1,7 @@
 import logging
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
 
 from schemas.metrics import (
     SystemMetrics,
@@ -8,6 +10,10 @@ from schemas.metrics import (
     MetricDefinition,
     EvaluationHistory,
     EvaluationSummary,
+    GoldenBaseline,
+    ComparisonResult,
+    Recommendation,
+    EvaluationRun,
 )
 from services.metrics import (
     get_system_metrics as fetch_system_metrics,
@@ -16,7 +22,11 @@ from services.metrics import (
     get_metric_definitions,
     load_evaluation_history,
     get_evaluation_summary as fetch_eval_summary,
+    get_evaluation_run_by_id,
 )
+from services.baseline import get_baseline_service
+from services.comparison import get_comparison_service
+from services.recommendation import get_recommendation_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -125,4 +135,174 @@ async def get_evaluation_summary():
         return fetch_eval_summary()
     except Exception as e:
         logger.error(f"[METRICS] Error fetching evaluation summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Baseline Management Endpoints
+# ============================================================================
+
+
+@router.get("/metrics/baseline", response_model=Optional[GoldenBaseline])
+async def get_golden_baseline():
+    """Get the current golden baseline.
+
+    Returns:
+        The golden baseline if set, null otherwise
+    """
+    try:
+        baseline_service = get_baseline_service()
+        return baseline_service.get_baseline()
+    except Exception as e:
+        logger.error(f"[METRICS] Error fetching baseline: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/metrics/baseline/{run_id}", response_model=GoldenBaseline)
+async def set_golden_baseline(run_id: str, set_by: Optional[str] = None):
+    """Set a specific evaluation run as the golden baseline.
+
+    The baseline's metric scores become the thresholds to beat.
+    New evaluation runs will be compared against this baseline.
+
+    Args:
+        run_id: ID of the evaluation run to set as baseline
+        set_by: Optional identifier for who set the baseline
+    """
+    try:
+        # Get the evaluation run
+        run = get_evaluation_run_by_id(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Evaluation run '{run_id}' not found")
+
+        baseline_service = get_baseline_service()
+        return baseline_service.set_baseline(run, set_by=set_by)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[METRICS] Error setting baseline: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/metrics/baseline", status_code=204)
+async def clear_golden_baseline():
+    """Clear the current golden baseline."""
+    try:
+        baseline_service = get_baseline_service()
+        baseline_service.clear_baseline()
+    except Exception as e:
+        logger.error(f"[METRICS] Error clearing baseline: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Comparison Endpoints
+# ============================================================================
+
+
+@router.get("/metrics/compare/{run_a_id}/{run_b_id}", response_model=ComparisonResult)
+async def compare_runs(run_a_id: str, run_b_id: str):
+    """Compare two evaluation runs side-by-side.
+
+    Returns metric deltas, latency/cost comparison, and winner determination.
+
+    Args:
+        run_a_id: ID of first evaluation run
+        run_b_id: ID of second evaluation run
+    """
+    try:
+        # Get both runs
+        run_a = get_evaluation_run_by_id(run_a_id)
+        run_b = get_evaluation_run_by_id(run_b_id)
+
+        if run_a is None:
+            raise HTTPException(status_code=404, detail=f"Evaluation run '{run_a_id}' not found")
+        if run_b is None:
+            raise HTTPException(status_code=404, detail=f"Evaluation run '{run_b_id}' not found")
+
+        comparison_service = get_comparison_service()
+        return comparison_service.compare_runs(run_a, run_b)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[METRICS] Error comparing runs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/metrics/compare-to-baseline/{run_id}", response_model=ComparisonResult)
+async def compare_to_baseline(run_id: str):
+    """Compare a run against the golden baseline.
+
+    Args:
+        run_id: ID of the evaluation run to compare
+    """
+    try:
+        # Get the baseline
+        baseline_service = get_baseline_service()
+        baseline = baseline_service.get_baseline()
+
+        if baseline is None:
+            raise HTTPException(status_code=404, detail="No golden baseline set")
+
+        # Get the runs
+        run = get_evaluation_run_by_id(run_id)
+        baseline_run = get_evaluation_run_by_id(baseline.run_id)
+
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Evaluation run '{run_id}' not found")
+        if baseline_run is None:
+            raise HTTPException(status_code=404, detail=f"Baseline run '{baseline.run_id}' not found")
+
+        comparison_service = get_comparison_service()
+        return comparison_service.compare_runs(run, baseline_run)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[METRICS] Error comparing to baseline: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Recommendation Endpoint
+# ============================================================================
+
+
+@router.post("/metrics/recommend", response_model=Recommendation)
+async def get_recommendation(
+    accuracy_weight: float = Query(0.5, ge=0, le=1, description="Weight for accuracy (0-1)"),
+    speed_weight: float = Query(0.3, ge=0, le=1, description="Weight for speed (0-1)"),
+    cost_weight: float = Query(0.2, ge=0, le=1, description="Weight for cost efficiency (0-1)"),
+    limit_to_runs: int = Query(10, ge=1, le=100, description="Max runs to consider"),
+):
+    """Get recommended configuration based on weighted preferences.
+
+    Analyzes historical evaluation runs and recommends the optimal
+    configuration based on your priorities for accuracy, speed, and cost.
+
+    Args:
+        accuracy_weight: How much to prioritize accuracy (default 0.5)
+        speed_weight: How much to prioritize speed (default 0.3)
+        cost_weight: How much to prioritize cost efficiency (default 0.2)
+        limit_to_runs: Maximum number of historical runs to analyze
+    """
+    try:
+        recommendation_service = get_recommendation_service()
+        result = recommendation_service.get_recommendation(
+            accuracy_weight=accuracy_weight,
+            speed_weight=speed_weight,
+            cost_weight=cost_weight,
+            limit_to_runs=limit_to_runs,
+        )
+
+        if result is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient evaluation data. Run at least one evaluation with config snapshots.",
+            )
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[METRICS] Error getting recommendation: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

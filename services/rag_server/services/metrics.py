@@ -417,6 +417,35 @@ def load_evaluation_history(limit: int = 20) -> EvaluationHistory:
     return EvaluationHistory(runs=runs)
 
 
+def get_evaluation_run_by_id(run_id: str) -> Optional[EvaluationRun]:
+    """Load a specific evaluation run by ID.
+
+    Args:
+        run_id: The run ID to look for
+
+    Returns:
+        EvaluationRun if found, None otherwise
+    """
+    ensure_eval_results_dir()
+
+    # Search for matching file
+    for filepath in EVAL_RESULTS_DIR.glob("eval_run_*.json"):
+        try:
+            with open(filepath) as f:
+                data = json.load(f)
+                if data.get("run_id") == run_id:
+                    # Parse timestamp
+                    if isinstance(data.get("timestamp"), str):
+                        data["timestamp"] = datetime.fromisoformat(
+                            data["timestamp"].replace("Z", "+00:00")
+                        )
+                    return EvaluationRun(**data)
+        except Exception as e:
+            logger.warning(f"Failed to load evaluation run from {filepath}: {e}")
+
+    return None
+
+
 def get_evaluation_summary() -> EvaluationSummary:
     """Get summary of evaluation history with trends."""
     history = load_evaluation_history()

@@ -7,7 +7,7 @@ Provides comprehensive visibility into:
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -192,8 +192,33 @@ class EvaluationRun(BaseModel):
     metric_averages: dict[str, float] = Field(..., description="Average score per metric")
     metric_pass_rates: dict[str, float] = Field(..., description="Pass rate per metric")
 
-    # Configuration snapshot
+    # Configuration snapshot (legacy format, kept for backward compatibility)
     retrieval_config: Optional[dict] = Field(None, description="Retrieval config at time of eval")
+
+    # Enhanced configuration snapshot (new format)
+    config_snapshot: Optional["ConfigSnapshot"] = Field(
+        None, description="Full configuration snapshot at evaluation time"
+    )
+
+    # Latency metrics (new)
+    latency: Optional["LatencyMetrics"] = Field(
+        None, description="Query latency statistics from this run"
+    )
+
+    # Cost metrics (new)
+    cost: Optional["CostMetrics"] = Field(
+        None, description="Token usage and cost tracking for this run"
+    )
+
+    # Golden baseline flag (new)
+    is_golden_baseline: bool = Field(
+        False, description="Whether this run is the golden baseline"
+    )
+
+    # Baseline comparison result (new)
+    compared_to_baseline: Optional["BaselineCheckResult"] = Field(
+        None, description="Comparison result against golden baseline"
+    )
 
     # Detailed results (optional, can be large)
     test_cases: Optional[list[TestCaseResult]] = Field(None, description="Detailed per-test results")
@@ -240,6 +265,194 @@ class EvaluationSummary(BaseModel):
 
 
 # ============================================================================
+# Enhanced Evaluation Models (Config Snapshots, Latency, Cost, Baseline)
+# ============================================================================
+
+
+class ConfigSnapshot(BaseModel):
+    """Complete configuration snapshot at evaluation time.
+
+    Captures all settings that could affect evaluation results,
+    enabling accurate comparison between runs.
+    """
+
+    # LLM Configuration
+    llm_provider: str = Field(..., description="LLM provider (ollama, openai, anthropic, google, deepseek, moonshot)")
+    llm_model: str = Field(..., description="LLM model name (e.g., 'gpt-4o', 'claude-sonnet-4', 'gemma3:4b')")
+    llm_base_url: Optional[str] = Field(None, description="Custom LLM endpoint URL")
+
+    # Embedding Configuration
+    embedding_provider: str = Field(..., description="Embedding provider")
+    embedding_model: str = Field(..., description="Embedding model name")
+
+    # Retrieval Configuration
+    retrieval_top_k: int = Field(..., description="Number of chunks to retrieve initially")
+    hybrid_search_enabled: bool = Field(..., description="Whether hybrid search (BM25+Vector) is enabled")
+    rrf_k: int = Field(60, description="RRF fusion constant")
+    contextual_retrieval_enabled: bool = Field(..., description="Whether contextual retrieval is enabled")
+
+    # Reranker Configuration
+    reranker_enabled: bool = Field(..., description="Whether reranking is enabled")
+    reranker_model: Optional[str] = Field(None, description="Reranker model name")
+    reranker_top_n: Optional[int] = Field(None, description="Number of results after reranking")
+
+
+class LatencyMetrics(BaseModel):
+    """Query latency statistics from an evaluation run.
+
+    Tracks response times to help balance accuracy vs speed.
+    """
+
+    avg_query_time_ms: float = Field(..., description="Average query time in milliseconds")
+    p50_query_time_ms: float = Field(..., description="Median (P50) query time in milliseconds")
+    p95_query_time_ms: float = Field(..., description="95th percentile query time in milliseconds")
+    min_query_time_ms: float = Field(..., description="Minimum query time in milliseconds")
+    max_query_time_ms: float = Field(..., description="Maximum query time in milliseconds")
+    total_queries: int = Field(..., description="Total number of queries measured")
+
+
+class CostMetrics(BaseModel):
+    """Token usage and cost tracking for an evaluation run.
+
+    Enables cost-aware model selection and budgeting.
+    """
+
+    total_input_tokens: int = Field(..., description="Total input tokens across all queries")
+    total_output_tokens: int = Field(..., description="Total output tokens across all queries")
+    total_tokens: int = Field(..., description="Total tokens (input + output)")
+    estimated_cost_usd: float = Field(..., description="Estimated total cost in USD")
+    cost_per_query_usd: float = Field(..., description="Average cost per query in USD")
+
+
+class GoldenBaseline(BaseModel):
+    """Golden baseline configuration and thresholds.
+
+    Represents the target performance to beat. New evaluation runs
+    are compared against this baseline for pass/fail determination.
+    """
+
+    run_id: str = Field(..., description="ID of the baseline evaluation run")
+    set_at: datetime = Field(..., description="When the baseline was set")
+    set_by: Optional[str] = Field(None, description="Who set the baseline")
+
+    # Target thresholds (from baseline run's scores)
+    target_metrics: dict[str, float] = Field(
+        ..., description="Metric thresholds to beat (metric_name -> threshold)"
+    )
+
+    # Reference configuration
+    config_snapshot: ConfigSnapshot = Field(..., description="Configuration of the baseline run")
+
+    # Optional performance targets
+    target_latency_p95_ms: Optional[float] = Field(
+        None, description="Target P95 latency to beat (lower is better)"
+    )
+    target_cost_per_query_usd: Optional[float] = Field(
+        None, description="Target cost per query to beat (lower is better)"
+    )
+
+
+class BaselineCheckResult(BaseModel):
+    """Result of checking a run against the golden baseline."""
+
+    baseline_run_id: str = Field(..., description="ID of the baseline run")
+    checked_run_id: str = Field(..., description="ID of the run being checked")
+    metrics_pass: list[str] = Field(..., description="Metrics that passed baseline")
+    metrics_fail: list[str] = Field(..., description="Metrics that failed baseline")
+    overall_pass: bool = Field(..., description="Whether all metrics passed")
+    metric_deltas: dict[str, float] = Field(
+        ..., description="Delta from baseline per metric (positive = better)"
+    )
+
+
+class ComparisonResult(BaseModel):
+    """Result of comparing two evaluation runs side-by-side.
+
+    Provides detailed analysis of differences between runs
+    to help identify which configuration performs better.
+    """
+
+    run_a_id: str = Field(..., description="ID of first run")
+    run_b_id: str = Field(..., description="ID of second run")
+
+    # Configuration comparison
+    run_a_config: Optional[ConfigSnapshot] = Field(None, description="Config of run A")
+    run_b_config: Optional[ConfigSnapshot] = Field(None, description="Config of run B")
+
+    # Metric deltas (positive = run A is better)
+    metric_deltas: dict[str, float] = Field(
+        ..., description="Score delta per metric (positive = A better)"
+    )
+
+    # Latency comparison
+    latency_delta_ms: Optional[float] = Field(
+        None, description="Latency delta in ms (positive = A faster)"
+    )
+    latency_improvement_pct: Optional[float] = Field(
+        None, description="Latency improvement percentage"
+    )
+
+    # Cost comparison
+    cost_delta_usd: Optional[float] = Field(
+        None, description="Cost delta in USD (positive = A cheaper)"
+    )
+    cost_improvement_pct: Optional[float] = Field(
+        None, description="Cost improvement percentage"
+    )
+
+    # Winner determination
+    winner: Literal["run_a", "run_b", "tie"] = Field(..., description="Which run is better overall")
+    winner_reason: str = Field(..., description="Explanation for winner determination")
+
+
+class Recommendation(BaseModel):
+    """Configuration recommendation based on historical analysis.
+
+    Suggests optimal configuration based on user preferences
+    for accuracy, speed, and cost tradeoffs.
+    """
+
+    recommended_config: ConfigSnapshot = Field(..., description="Recommended configuration")
+    source_run_id: str = Field(..., description="ID of the run this recommendation is based on")
+
+    reasoning: str = Field(..., description="Human-readable explanation for recommendation")
+
+    # Normalized scores (0-1)
+    accuracy_score: float = Field(..., description="Accuracy score (0-1)")
+    speed_score: float = Field(..., description="Speed score (0-1, higher = faster)")
+    cost_score: float = Field(..., description="Cost efficiency score (0-1, higher = cheaper)")
+
+    # Composite score
+    composite_score: float = Field(..., description="Weighted composite score")
+
+    # Weights used for this recommendation
+    weights: dict[str, float] = Field(..., description="Weights used (accuracy, speed, cost)")
+
+    # Alternative options
+    alternatives: list[dict] = Field(
+        default_factory=list,
+        description="Alternative configurations with their scores"
+    )
+
+
+class TrendAnnotation(BaseModel):
+    """Annotation on a trend chart point.
+
+    Marks significant events like configuration changes,
+    baseline updates, or manual notes.
+    """
+
+    timestamp: datetime = Field(..., description="When the event occurred")
+    run_id: str = Field(..., description="Associated evaluation run ID")
+    annotation_type: Literal["config_change", "baseline_set", "regression", "improvement", "note"] = Field(
+        ..., description="Type of annotation"
+    )
+    title: str = Field(..., description="Short title for the annotation")
+    description: Optional[str] = Field(None, description="Detailed description")
+    config_diff: Optional[dict] = Field(None, description="What changed from previous run")
+
+
+# ============================================================================
 # System Overview Model (combines everything)
 # ============================================================================
 
@@ -271,3 +484,7 @@ class SystemMetrics(BaseModel):
         default_factory=dict,
         description="Status of each component (chromadb, redis, ollama)"
     )
+
+
+# Rebuild models to resolve forward references
+EvaluationRun.model_rebuild()
