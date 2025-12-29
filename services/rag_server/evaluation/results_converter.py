@@ -29,7 +29,8 @@ def convert_deepeval_results(
     """Convert DeepEval results to EvaluationRun format.
 
     Args:
-        results: DeepEval evaluation results object
+        results: DeepEval evaluation results dict from run_live_evaluation
+                 Expected structure: {"results": DeepEvalResults, "config_snapshot": ..., ...}
         eval_model: Model used for evaluation
         notes: Optional notes about this run
 
@@ -39,8 +40,14 @@ def convert_deepeval_results(
     run_id = str(uuid.uuid4())[:8]
     timestamp = datetime.utcnow()
 
+    # Handle dict wrapper from run_live_evaluation
+    deepeval_results = results.get("results") if isinstance(results, dict) else results
+    config_snapshot = results.get("config_snapshot") if isinstance(results, dict) else None
+    latency_metrics = results.get("latency_metrics") if isinstance(results, dict) else None
+    cost_metrics = results.get("cost_metrics") if isinstance(results, dict) else None
+
     # Get test results
-    test_results = getattr(results, "test_results", [])
+    test_results = getattr(deepeval_results, "test_results", [])
     total_tests = len(test_results)
     passed_tests = sum(1 for tr in test_results if getattr(tr, "success", False))
     pass_rate = (passed_tests / total_tests * 100) if total_tests > 0 else 0
@@ -149,6 +156,9 @@ def convert_deepeval_results(
         metric_averages=metric_averages,
         metric_pass_rates=metric_pass_rates,
         retrieval_config=retrieval_config,
+        config_snapshot=config_snapshot,
+        latency=latency_metrics,
+        cost=cost_metrics,
         test_cases=test_cases,
         notes=notes,
     )
