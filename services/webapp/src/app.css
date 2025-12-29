@@ -33,3 +33,14 @@
   border-color: oklch(var(--bc) / 0.1);
   color: oklch(var(--bc) / 0.3);
 }
+
+/* =============================================================================
+   Tooltip Visibility Control
+   When .tooltips-hidden is on a parent element, hide all DaisyUI tooltips
+   ============================================================================= */
+
+.tooltips-hidden .tooltip::before,
+.tooltips-hidden .tooltip::after,
+.tooltips-hidden .tooltip .tooltip-content {
+  display: none !important;
+}

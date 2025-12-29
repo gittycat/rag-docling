@@ -2,6 +2,7 @@
 	import '../app.css';
 	import ChatSidebar from '$lib/components/ChatSidebar.svelte';
 	import { page } from '$app/stores';
+	import { showTooltips } from '$lib/stores/ui';
 
 	let { children } = $props();
 
@@ -27,7 +28,7 @@
 	});
 </script>
 
-<div class="min-h-screen bg-base-100 flex">
+<div class="min-h-screen bg-base-100 flex" class:tooltips-hidden={!$showTooltips}>
 	<!-- Sidebar - always visible on all pages -->
 	<ChatSidebar />
 

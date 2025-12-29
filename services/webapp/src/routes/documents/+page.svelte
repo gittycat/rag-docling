@@ -249,7 +249,7 @@
 						<th class="w-24">
 							<div class="tooltip tooltip-bottom" data-tip="Text segments created for search indexing">
 								<button
-									class="flex items-center gap-1 w-full justify-end hover:text-primary transition-colors cursor-help"
+									class="flex items-center gap-1 w-full justify-end hover:text-primary transition-colors"
 									onclick={() => handleSort('chunks')}
 								>
 									Chunks

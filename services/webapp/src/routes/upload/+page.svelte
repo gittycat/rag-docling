@@ -365,13 +365,13 @@
 						<td class="relative">
 							{#if upload.status === 'error' && upload.error}
 								<div class="tooltip tooltip-error tooltip-top z-50 before:-translate-y-1" data-tip={upload.error}>
-									<span class="badge badge-sm {getStatusBadgeClass(upload.status)} cursor-help">
+									<span class="badge badge-sm {getStatusBadgeClass(upload.status)}">
 										Error
 									</span>
 								</div>
 							{:else if upload.status === 'skipped' && upload.skipReason}
 								<div class="tooltip tooltip-info tooltip-top z-50 before:-translate-y-1" data-tip={upload.skipReason}>
-									<span class="badge badge-sm {getStatusBadgeClass(upload.status)} cursor-help">
+									<span class="badge badge-sm {getStatusBadgeClass(upload.status)}">
 										Skipped
 									</span>
 								</div>
