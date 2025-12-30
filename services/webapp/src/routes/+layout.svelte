@@ -18,8 +18,8 @@
 				return 'Upload';
 			case '/documents':
 				return 'Documents';
-			case '/dashboard':
-				return 'Dashboard';
+			case '/analytics':
+				return 'Analytics';
 			case '/settings':
 				return 'Settings';
 			default:

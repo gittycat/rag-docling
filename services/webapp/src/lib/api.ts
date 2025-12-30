@@ -74,7 +74,7 @@ export interface FileCheckResponse {
 }
 
 // ============================================================================
-// Types - Metrics/Dashboard
+// Types - Metrics/Analytics
 // ============================================================================
 
 export interface ModelSize {
@@ -391,7 +391,7 @@ export async function checkDuplicateFiles(
 }
 
 // ============================================================================
-// API Functions - Metrics/Dashboard
+// API Functions - Metrics/Analytics
 // ============================================================================
 
 export async function fetchSystemMetrics(): Promise<SystemMetrics> {

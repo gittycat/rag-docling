@@ -8,11 +8,11 @@
 		type SystemMetrics,
 		type EvaluationSummary
 	} from '$lib/api';
-	import DashboardTabs from '$lib/components/dashboard/DashboardTabs.svelte';
-	import ComparisonTab from '$lib/components/dashboard/ComparisonTab.svelte';
-	import HistoryTab from '$lib/components/dashboard/HistoryTab.svelte';
-	import ConfigTab from '$lib/components/dashboard/ConfigTab.svelte';
-	import SystemHealthTab from '$lib/components/dashboard/SystemHealthTab.svelte';
+	import AnalyticsTabs from '$lib/components/analytics/AnalyticsTabs.svelte';
+	import ComparisonTab from '$lib/components/analytics/ComparisonTab.svelte';
+	import HistoryTab from '$lib/components/analytics/HistoryTab.svelte';
+	import ConfigTab from '$lib/components/analytics/ConfigTab.svelte';
+	import SystemHealthTab from '$lib/components/analytics/SystemHealthTab.svelte';
 
 	let metrics = $state<SystemMetrics | null>(null);
 	let evalSummary = $state<EvaluationSummary | null>(null);
@@ -224,7 +224,7 @@
 		{/if}
 
 		<!-- Tabbed Content -->
-		<DashboardTabs {activeTab} onTabChange={handleTabChange} {tabs}>
+		<AnalyticsTabs {activeTab} onTabChange={handleTabChange} {tabs}>
 			{#if activeTab === 'comparison'}
 				<ComparisonTab {evalSummary} onRefresh={loadAll} />
 			{:else if activeTab === 'history'}
@@ -234,6 +234,6 @@
 			{:else if activeTab === 'health'}
 				<SystemHealthTab {metrics} />
 			{/if}
-		</DashboardTabs>
+		</AnalyticsTabs>
 	</div>
 {/if}
