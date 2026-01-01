@@ -93,4 +93,61 @@ migrate-sessions: docker-up
     @fd -t d -H -X rm -rf __pycache__ ./services/rag_server
     @fd -t d -H -X rm -rf '\.pytest_cache' ./services/rag_server
     @fd -t f -H -e pyc -X rm . ./services/rag_server
+
+# ============================================================================
+# Benchmarking
+# ============================================================================
+
+# Setup benchmark dependencies
+bench-setup:
+    cd services/rag_server && \
+    uv sync --group dev --group eval --group bench
+
+# Start ephemeral benchmark environment
+bench-up:
+    docker compose -f docker-compose.bench.yml up -d --build
+    @echo "Waiting for services to be healthy..."
+    @sleep 10
+    @echo "Benchmark environment ready at http://localhost:8003"
+
+# Stop benchmark environment (ephemeral data is lost)
+bench-down:
+    docker compose -f docker-compose.bench.yml down -v
+
+# View benchmark environment logs
+bench-logs:
+    docker compose -f docker-compose.bench.yml logs -f
+
+# Load a dataset (downloads and caches)
+bench-load DATASET:
+    cd services/rag_server && \
+    .venv/bin/python -c "from evaluation.datasets import get_dataset; d = get_dataset('{{DATASET}}'); d.load(); print(f'Loaded {d.info.name}: {d.info.num_documents} docs, {d.info.num_test_cases} tests')"
+
+# Run benchmark on a dataset
+bench-run DATASET SAMPLES="": bench-up bench-setup
+    cd services/rag_server && \
+    .venv/bin/python -m evaluation.benchmark_cli run {{DATASET}} {{ if SAMPLES != "" { "--samples " + SAMPLES } else { "" } }}
+
+# Run quick benchmark (100 samples)
+bench-quick DATASET="squad": (bench-run DATASET "100")
+
+# List available datasets
+bench-datasets:
+    cd services/rag_server && \
+    .venv/bin/python -m evaluation.benchmark_cli datasets
+
+# Show benchmark history
+bench-history DATASET="":
+    cd services/rag_server && \
+    .venv/bin/python -m evaluation.benchmark_cli history {{DATASET}}
+
+# Show benchmark statistics
+bench-stats DATASET="":
+    cd services/rag_server && \
+    .venv/bin/python -m evaluation.benchmark_cli stats {{DATASET}}
+
+# Launch benchmark dashboard
+bench-dashboard: bench-setup
+    cd services/rag_server && \
+    .venv/bin/python -m evaluation.benchmark_cli dashboard
     

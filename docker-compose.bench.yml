@@ -1,0 +1,99 @@
+# Ephemeral benchmark environment for RAG evaluation
+# Runs isolated instances on different ports to avoid conflicts with main services
+#
+# Usage:
+#   just bench-up       # Start benchmark environment
+#   just bench-down     # Stop and remove (ephemeral data lost)
+
+services:
+  # ChromaDB for benchmark (ephemeral - no volume mount)
+  chromadb-bench:
+    image: chromadb/chroma:latest
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    # No volume mount - data is ephemeral
+    tmpfs:
+      - /chroma/chroma
+    ports:
+      - "8002:8000"  # Different port from main chromadb
+    networks:
+      - bench-private
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # Redis for benchmark (ephemeral)
+  redis-bench:
+    image: redis:8-alpine
+    command: redis-server --loglevel warning
+    # No volume mount - data is ephemeral
+    tmpfs:
+      - /data
+    ports:
+      - "6380:6379"  # Different port from main redis
+    networks:
+      - bench-private
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+
+  # RAG Server for benchmark
+  rag-server-bench:
+    build:
+      context: .
+      dockerfile: ./services/rag_server/Dockerfile
+    user: "1000:1000"
+    ports:
+      - "8003:8001"  # Different port from main rag-server
+    environment:
+      # Point to benchmark databases
+      - CHROMADB_URL=http://chromadb-bench:8000
+      - REDIS_URL=redis://redis-bench:6379/0
+      # API Keys (from secrets/.env)
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Application Settings
+      - LOG_LEVEL=WARNING
+      - MAX_UPLOAD_SIZE=80
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      chromadb-bench:
+        condition: service_healthy
+      redis-bench:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - bench-private
+      - bench-public
+    volumes:
+      - ./config:/app/config:ro
+      - huggingface_cache:/home/appuser/.cache/huggingface
+    secrets:
+      - ollama_config
+
+networks:
+  bench-public:
+    driver: bridge
+  bench-private:
+    driver: bridge
+    internal: true
+
+volumes:
+  huggingface_cache:
+    external: true  # Reuse from main stack to avoid re-downloading models
+
+secrets:
+  ollama_config:
+    file: ./secrets/ollama_config.env
