@@ -3308,6 +3308,7 @@ dependencies = [
     { name = "redis" },
     { name = "sentence-transformers" },
     { name = "sse-starlette" },
+    { name = "streamlit" },
     { name = "uvicorn" },
 ]
 
@@ -3354,6 +3355,7 @@ requires-dist = [
     { name = "redis", specifier = ">=6.4.0" },
     { name = "sentence-transformers", specifier = ">=5.1.1" },
     { name = "sse-starlette", specifier = ">=3.0.2" },
+    { name = "streamlit", specifier = ">=1.52.2" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
 
