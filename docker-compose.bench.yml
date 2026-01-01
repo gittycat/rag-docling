@@ -20,11 +20,11 @@ services:
     networks:
       - bench-private
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/8000' || exit 1"]
       interval: 2s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
 
   # Redis for benchmark (ephemeral)
   redis-bench:
@@ -92,7 +92,7 @@ networks:
 
 volumes:
   huggingface_cache:
-    external: true  # Reuse from main stack to avoid re-downloading models
+    driver: local  # Persists across bench runs to avoid re-downloading models
 
 secrets:
   ollama_config:
