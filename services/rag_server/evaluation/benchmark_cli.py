@@ -151,19 +151,24 @@ def cmd_dashboard(args):
     """Launch the Streamlit dashboard."""
     dashboard_path = Path(__file__).parent / "dashboard" / "app.py"
 
+    # Get streamlit from the same venv as this script
+    venv_bin = Path(sys.executable).parent
+    streamlit_path = venv_bin / "streamlit"
+
     print(f"Launching dashboard at http://localhost:{args.port}")
     print("Press Ctrl+C to stop")
     print()
 
     try:
         subprocess.run(
-            ["streamlit", "run", str(dashboard_path), "--server.port", str(args.port)],
+            [str(streamlit_path), "run", str(dashboard_path), "--server.port", str(args.port)],
             cwd=Path(__file__).parent.parent,
         )
     except KeyboardInterrupt:
         print("\nDashboard stopped.")
     except FileNotFoundError:
-        print("Error: streamlit not found. Install with: uv add streamlit")
+        print(f"Error: streamlit not found at {streamlit_path}")
+        print("Install with: uv sync --group bench")
         return 1
 
     return 0
