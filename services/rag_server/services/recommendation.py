@@ -34,8 +34,12 @@ class RecommendationService:
     ACCURACY_METRICS = [
         "faithfulness",
         "answer_relevancy",
-        "contextual_precision",
-        "contextual_recall",
+        "precision_at_k",
+        "recall_at_k",
+        "mrr",
+        "ndcg",
+        "citation_precision",
+        "citation_recall",
     ]
 
     def get_recommendation(

@@ -24,11 +24,17 @@ async def query(request: QueryRequest):
             if not metadata:
                 create_session_metadata(session_id, is_temporary=False)
 
-        result = query_rag(request.query, session_id=session_id, is_temporary=request.is_temporary)
+        result = query_rag(
+            request.query,
+            session_id=session_id,
+            is_temporary=request.is_temporary,
+            include_chunks=request.include_chunks,
+        )
         return QueryResponse(
             answer=result['answer'],
             sources=result['sources'],
-            session_id=result['session_id']
+            session_id=result['session_id'],
+            citations=result.get("citations"),
         )
     except Exception as e:
         import traceback
@@ -59,7 +65,12 @@ async def query_stream(request: QueryRequest):
             create_session_metadata(session_id, is_temporary=False)
 
     return StreamingResponse(
-        query_rag_stream(request.query, session_id, is_temporary=request.is_temporary),
+        query_rag_stream(
+            request.query,
+            session_id,
+            is_temporary=request.is_temporary,
+            include_chunks=request.include_chunks,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

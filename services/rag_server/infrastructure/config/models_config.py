@@ -57,6 +57,18 @@ class EvalConfig(BaseModel):
     provider: str
     model: str
     api_key: str | None = None
+    citation_scope: Literal["retrieved", "explicit"] = "retrieved"
+    citation_format: Literal["numeric"] = "numeric"
+    abstention_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "I don't have enough information to answer this question.",
+            "I do not have enough information to answer this question.",
+            "I don't have enough information to answer the question.",
+            "I do not have enough information to answer the question.",
+            "Not enough information to answer.",
+            "Insufficient information to answer.",
+        ]
+    )
 
     @field_validator("model")
     @classmethod

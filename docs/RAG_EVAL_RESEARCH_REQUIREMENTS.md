@@ -25,6 +25,7 @@ This document captures the requirements for the evaluation research, the assumpt
 - Evaluation must support both:
   - LLM-as-judge citation scoring
   - Manual inspection workflows
+- Future UI setting: choose whether citations are derived from all retrieved chunks or only explicitly cited sources.
 
 ### Model Constraints
 - Evaluation models are user-configured:
@@ -232,6 +233,17 @@ This document captures the requirements for the evaluation research, the assumpt
 - Confirm dataset priority order and subset sizes.
 - Define citation schema for doc/section/chunk IDs in API responses.
 - Agree on default objective weights and UI display format.
+- Consider future work: replace heuristic long-form completeness with an LLM-judge or semantic matching approach.
+
+## Completed Work Summary (this implementation)
+- New evaluation_v2 module (datasets, runner, metrics, CLI): 13 new files under `services/rag_server/evaluation_v2`.
+- Legacy eval removal + CLI shim: 27 files removed under `services/rag_server/evaluation` and `services/rag_server/tests/evaluation`, plus 2 shim files under `services/rag_server/evaluation`.
+- Query API chunk/citation support: 3 files updated under `services/rag_server/schemas`, `services/rag_server/api/routes`, `services/rag_server/pipelines`.
+- Metrics and recommendation updates (retrieval/citation/abstention/long-form definitions): 4 files updated under `services/rag_server/services`, `services/rag_server/schemas`, `services/rag_server/tests`.
+- Explicit numeric citations and prompting: 2 files updated under `services/rag_server/infrastructure/llm` and `services/rag_server/pipelines` (plus query response wiring already counted).
+- Manual review export workflow: 1 new file + 2 updates under `services/rag_server/evaluation_v2`.
+- Eval config expansion (citation scope/format + abstention phrases): 3 files updated under `config/` and 2 under `services/rag_server`.
+- API migration mapping: 1 new file under `docs/`.
 
 ## Appendix: Common Domains With Strong Public Datasets
 

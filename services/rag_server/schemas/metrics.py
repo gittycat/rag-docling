@@ -296,6 +296,20 @@ class ConfigSnapshot(BaseModel):
     reranker_model: Optional[str] = Field(None, description="Reranker model name")
     reranker_top_n: Optional[int] = Field(None, description="Number of results after reranking")
 
+    # Evaluation Configuration
+    citation_scope: Optional[str] = Field(
+        None,
+        description="Citation scope used for evaluation (retrieved or explicit)",
+    )
+    citation_format: Optional[str] = Field(
+        None,
+        description="Citation format used for explicit citations (e.g., numeric)",
+    )
+    abstention_phrases: Optional[list[str]] = Field(
+        None,
+        description="Phrases treated as abstentions for unanswerable detection",
+    )
+
 
 class LatencyMetrics(BaseModel):
     """Query latency statistics from an evaluation run.

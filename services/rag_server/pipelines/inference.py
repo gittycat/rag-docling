@@ -380,7 +380,19 @@ def create_chat_engine(
 
     # Get prompts
     system_prompt = get_system_prompt()
-    context_prompt = get_context_prompt()
+    include_citations = False
+    citation_format = "numeric"
+    try:
+        from infrastructure.config.models_config import get_models_config
+        eval_config = get_models_config().eval
+        include_citations = eval_config.citation_scope == "explicit"
+        citation_format = eval_config.citation_format
+    except Exception:
+        include_citations = False
+    context_prompt = get_context_prompt(
+        include_citations=include_citations,
+        citation_format=citation_format,
+    )
     condense_prompt = get_condense_prompt()  # None = use LlamaIndex default
 
     # Get chat memory (with temporary support)
@@ -422,7 +434,11 @@ def create_chat_engine(
 # STEP 5: QUERY PROCESSING
 # ============================================================================
 
-def extract_sources(source_nodes: List) -> List[Dict]:
+def extract_sources(
+    source_nodes: List,
+    include_chunks: bool = False,
+    dedupe_by_document: bool = True,
+) -> List[Dict]:
     """
     Extract source information from retrieved nodes.
 
@@ -438,11 +454,13 @@ def extract_sources(source_nodes: List) -> List[Dict]:
     for node in source_nodes:
         metadata = node.metadata
         doc_id = metadata.get('document_id')
+        chunk_index = metadata.get('chunk_index')
+        chunk_id = getattr(node, "id_", None)
 
         # Deduplicate by document_id
-        if doc_id and doc_id in seen_docs:
-            continue
-        if doc_id:
+        if dedupe_by_document and doc_id:
+            if doc_id in seen_docs:
+                continue
             seen_docs.add(doc_id)
 
         full_text = node.get_content()
@@ -454,12 +472,72 @@ def extract_sources(source_nodes: List) -> List[Dict]:
             'path': metadata.get('path', ''),
             'score': node.score if hasattr(node, 'score') and node.score else None
         }
+        if include_chunks:
+            source["chunk_id"] = chunk_id
+            source["chunk_index"] = chunk_index
         sources.append(source)
 
     return sources
 
 
-def query_rag(query_text: str, session_id: str, is_temporary: bool = False) -> Dict:
+def extract_numeric_citations(answer: str, sources: List[Dict]) -> List[Dict]:
+    """Extract numeric citations like [1], [1,2], [1-3] mapped to sources list."""
+    import re
+
+    if not answer or not sources:
+        return []
+
+    citation_indices: list[int] = []
+    bracket_patterns = [
+        r"\[(\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*)\]",
+        r"\((\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*)\)",
+    ]
+
+    for pattern in bracket_patterns:
+        for match in re.findall(pattern, answer):
+            parts = [p.strip() for p in match.split(",")]
+            for part in parts:
+                if "-" in part:
+                    bounds = [b.strip() for b in part.split("-", 1)]
+                    if len(bounds) == 2 and bounds[0].isdigit() and bounds[1].isdigit():
+                        start = int(bounds[0])
+                        end = int(bounds[1])
+                        if start <= end:
+                            citation_indices.extend(range(start, end + 1))
+                elif part.isdigit():
+                    citation_indices.append(int(part))
+
+    # De-duplicate while preserving order
+    seen = set()
+    unique_indices = []
+    for idx in citation_indices:
+        if idx not in seen:
+            seen.add(idx)
+            unique_indices.append(idx)
+
+    citations = []
+    for idx in unique_indices:
+        source_idx = idx - 1
+        if 0 <= source_idx < len(sources):
+            source = sources[source_idx]
+            citations.append(
+                {
+                    "source_index": idx,
+                    "document_id": source.get("document_id"),
+                    "chunk_id": source.get("chunk_id"),
+                    "chunk_index": source.get("chunk_index"),
+                }
+            )
+
+    return citations
+
+
+def query_rag(
+    query_text: str,
+    session_id: str,
+    is_temporary: bool = False,
+    include_chunks: bool = False,
+) -> Dict:
     """
     Execute RAG query pipeline (synchronous, non-streaming).
 
@@ -515,7 +593,21 @@ def query_rag(query_text: str, session_id: str, is_temporary: bool = False) -> D
         logger.warning("[QUERY] No context nodes retrieved - LLM will respond without context")
 
     # Extract sources
-    sources = extract_sources(response.source_nodes)
+    sources = extract_sources(
+        response.source_nodes,
+        include_chunks=include_chunks,
+        dedupe_by_document=not include_chunks,
+    )
+    citations = None
+    if include_chunks:
+        try:
+            from infrastructure.config.models_config import get_models_config
+
+            models_config = get_models_config()
+            if models_config.eval.citation_format == "numeric":
+                citations = extract_numeric_citations(str(response), sources)
+        except Exception:
+            citations = None
 
     # Update session metadata (non-temporary sessions only)
     if not is_temporary:
@@ -534,11 +626,17 @@ def query_rag(query_text: str, session_id: str, is_temporary: bool = False) -> D
         'answer': str(response),
         'sources': sources,
         'query': query_text,
-        'session_id': session_id
+        'session_id': session_id,
+        'citations': citations,
     }
 
 
-def query_rag_stream(query_text: str, session_id: str, is_temporary: bool = False) -> Generator[str, None, None]:
+def query_rag_stream(
+    query_text: str,
+    session_id: str,
+    is_temporary: bool = False,
+    include_chunks: bool = False,
+) -> Generator[str, None, None]:
     """
     Execute RAG query pipeline with streaming response (Server-Sent Events).
 
@@ -573,7 +671,21 @@ def query_rag_stream(query_text: str, session_id: str, is_temporary: bool = Fals
             yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
 
         # After streaming completes, send sources
-        sources = extract_sources(streaming_response.source_nodes)
+        sources = extract_sources(
+            streaming_response.source_nodes,
+            include_chunks=include_chunks,
+            dedupe_by_document=not include_chunks,
+        )
+        citations = None
+        if include_chunks:
+            try:
+                from infrastructure.config.models_config import get_models_config
+
+                models_config = get_models_config()
+                if models_config.eval.citation_format == "numeric":
+                    citations = extract_numeric_citations(str(streaming_response), sources)
+            except Exception:
+                citations = None
         logger.info(f"[QUERY_STREAM] Streaming complete - {len(sources)} sources")
 
         # Update session metadata (non-temporary sessions only)
@@ -586,7 +698,7 @@ def query_rag_stream(query_text: str, session_id: str, is_temporary: bool = Fals
                 title = generate_session_title(query_text)
                 update_session_title(session_id, title)
 
-        yield f"event: sources\ndata: {json.dumps({'sources': sources, 'session_id': session_id})}\n\n"
+        yield f"event: sources\ndata: {json.dumps({'sources': sources, 'citations': citations, 'session_id': session_id})}\n\n"
 
         # Send done event
         yield f"event: done\ndata: {{}}\n\n"

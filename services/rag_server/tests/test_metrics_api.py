@@ -187,10 +187,10 @@ def mock_system_metrics():
         ),
         evaluation_metrics=[
             MetricDefinition(
-                name="contextual_precision",
+                name="precision_at_k",
                 category="retrieval",
                 description="Test metric",
-                threshold=0.7,
+                threshold=0.5,
                 interpretation="Test",
             ),
         ],
@@ -398,8 +398,9 @@ def test_eval_definitions_includes_expected_metrics():
     data = response.json()
 
     metric_names = {m["name"] for m in data}
-    assert "contextual_precision" in metric_names
-    assert "contextual_recall" in metric_names
+    assert "precision_at_k" in metric_names
+    assert "recall_at_k" in metric_names
+    assert "citation_precision" in metric_names
     assert "faithfulness" in metric_names
     assert "answer_relevancy" in metric_names
     assert "hallucination" in metric_names

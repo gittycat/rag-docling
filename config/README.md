@@ -50,6 +50,21 @@ Configure the model used for DeepEval metrics:
 eval:
   provider: anthropic
   model: claude-sonnet-4-20250514
+  # Citation scope for evaluation:
+  # - retrieved: treat all retrieved chunks as citations
+  # - explicit: only use explicitly cited chunks (if provided by the server)
+  citation_scope: retrieved
+  # Citation format for explicit citations
+  # - numeric: uses [1], [2] style references mapped to source order
+  citation_format: numeric
+  # Abstention phrases used to detect "no answer" responses
+  abstention_phrases:
+    - "I don't have enough information to answer this question."
+    - "I do not have enough information to answer this question."
+    - "I don't have enough information to answer the question."
+    - "I do not have enough information to answer the question."
+    - "Not enough information to answer."
+    - "Insufficient information to answer."
 ```
 
 **Note:** Requires `ANTHROPIC_API_KEY` in `secrets/.env`

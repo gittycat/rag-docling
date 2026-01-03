@@ -22,7 +22,10 @@ def get_system_prompt() -> str:
     )
 
 
-def get_context_prompt() -> str:
+def get_context_prompt(
+    include_citations: bool = False,
+    citation_format: str = "numeric",
+) -> str:
     """
     Instructions for using retrieved context to answer questions.
 
@@ -33,7 +36,14 @@ def get_context_prompt() -> str:
         {context_str}: Retrieved document chunks
         {chat_history}: Previous conversation messages
     """
-    return """Context from retrieved documents:
+    citation_instructions = ""
+    if include_citations and citation_format == "numeric":
+        citation_instructions = (
+            "\n- Add numeric citations in square brackets like [1], [2] that map to the "
+            "order of context chunks provided above."
+        )
+
+    return f"""Context from retrieved documents:
 {context_str}
 
 Instructions:
@@ -41,6 +51,7 @@ Instructions:
 - If the context does not contain sufficient information, respond: "I don't have enough information to answer this question."
 - Never use prior knowledge or make assumptions beyond what is explicitly stated
 - Be specific and cite details from the context when relevant
+- Use citations consistently when referencing facts{citation_instructions}
 - Previous conversation context is available for reference
 
 Provide a direct, accurate answer based on the context:"""
