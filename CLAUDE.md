@@ -43,10 +43,12 @@ Local RAG system: FastAPI + Docling + LlamaIndex + PostgreSQL (pg_textsearch BM2
 
 ## Architecture
 
-- `rag-server` (port 8001): RAG API — `public` network, exposed to host
-- `task-worker`: Async document processing worker via SKIP LOCKED — `private` network
-- `postgres`: PostgreSQL 17 with pg_textsearch (BM25) — `private` network
-- `chromadb`: Vector database for embeddings — `private` network
+- `webapp` (port 8000): SvelteKit UI — proxies `/api/eval/*` to evals, other `/api/*` to rag-server
+- `rag-server` (port 8001): RAG API — `public` + `private` networks, exposed to host
+- `evals` (port 8002): Standalone eval service (DeepEval) — `public` + `private` networks
+- `task-worker`: Async document processing worker via SKIP LOCKED — `public` + `private` (public for host Ollama access)
+- `postgres`: PostgreSQL 17 with pg_textsearch (BM25) — `private` network only
+- `chromadb`: Vector database for embeddings — `private` network only
 - Ollama: runs on host at `http://host.docker.internal:11434`
 
 ### Document Processing
@@ -57,10 +59,11 @@ Local RAG system: FastAPI + Docling + LlamaIndex + PostgreSQL (pg_textsearch BM2
 
 ### Key Patterns
 - **Hybrid Search**: pg_textsearch BM25 + ChromaDB vectors with RRF fusion (k=60), auto-indexes
-- **Contextual Retrieval**: LLM-generated context prepended to chunks before embedding (toggle: `ENABLE_CONTEXTUAL_RETRIEVAL`)
+- **Contextual Retrieval**: LLM-generated context prepended to chunks before embedding (toggle: `enable_contextual_retrieval` in config.yml)
 - **Async Processing**: SKIP LOCKED on job_tasks table for work queue + PostgreSQL job_batches for progress tracking
 - **Async Concurrency**: Evals use `asyncio.gather()` + `Semaphore` for parallel RAG queries and LLM judge calls. RAG server offloads sync generators/LLM calls to executor threads to avoid blocking FastAPI's event loop.
 - **Conversational RAG**: `condense_plus_context` mode, `ChatMemoryBuffer` + `PostgresChatStore`
+- **PII Masking**: opt-in (`pii.enabled` in config.yml) reversible Presidio token masking on all LLM-bound text — query path, session titles, contextual-retrieval ingestion (`infrastructure/pii/`)
 - **Document IDs**: `{doc_id}-chunk-{i}`
 
 ## Package Management
@@ -83,16 +86,17 @@ uv run pytest              # run commands in venv
 ```bash
 just test-unit             # unit tests
 just test-integration      # integration tests (requires docker services)
-just test-eval             # eval tests (requires ANTHROPIC_API_KEY)
+just test-eval             # eval tests (requires API key for the active.eval provider)
 just test-eval-full        # full eval suite
+just eval ...              # custom eval run (tier/datasets/samples)
 just show-config           # show RAG configuration
 just show-config-full      # show full config with all settings
 ```
 
-**Evaluation:** DeepEval with Anthropic Claude. See `docs/DEEPEVAL_IMPLEMENTATION_SUMMARY.md`.
+**Evaluation:** DeepEval in the standalone `services/evals` service; judge = `active.eval` model in config.yml. See `docs/dev/eval-framework.md`.
 ```bash
-cd services/rag_server && uv sync --group eval
-ANTHROPIC_API_KEY=sk-ant-... uv run python -m evaluation.cli eval --samples 5
+docker compose exec evals .venv/bin/python -m evals.cli eval --tier generation --datasets ragbench --samples 5
+# or via API: POST http://localhost:8002/eval/runs
 ```
 
 **CI/CD:** Forgejo with `.forgejo/workflows/ci.yml`. Core tests run on every push. Eval tests triggered with `[eval]` in commit message or manual dispatch.
@@ -102,7 +106,7 @@ ANTHROPIC_API_KEY=sk-ant-... uv run python -m evaluation.cli eval --samples 5
 ### Hybrid Search & Contextual Retrieval
 - `pg_textsearch BM25Retriever` + `ChromaVectorStore` combined via `HybridRRFRetriever` (k=60)
 - BM25 index auto-refreshes on insert/update/delete
-- Falls back to vector-only if `ENABLE_HYBRID_SEARCH=false`
+- Falls back to vector-only if `enable_hybrid_search: false` in config.yml
 - Contextual retrieval: `add_contextual_prefix_to_chunk()` in `pipelines/ingestion.py`
 
 ### Docling + LlamaIndex
@@ -126,7 +130,7 @@ documents, document_chunks, chat_sessions, chat_messages, job_batches, job_tasks
 ### Configuration
 - `config.yml`: all model settings, prompt templates, provider config
 - API keys stored as files under `secrets/` (filename = key name)
-- Supported providers: ollama (local), openai/anthropic/google/deepseek (cloud, require API keys)
+- Supported providers: ollama/vllm (local), openai/anthropic/google/deepseek/moonshot (cloud, require API keys)
 - Env vars (docker-compose.yml): `DATABASE_HOST`, `DATABASE_PORT`, `CHROMADB_HOST`, `CHROMADB_PORT`, `MAX_UPLOAD_SIZE=80`, `LOG_LEVEL=WARNING`
 
 ## Key Files
@@ -136,10 +140,12 @@ All under `services/rag_server/`:
 - `pipelines/inference.py` — RAG query, hybrid search, reranking, chat engine
 - `infrastructure/search/` — `vector_store.py`, `bm25_retriever.py`, `hybrid_retriever.py`
 - `infrastructure/database/postgres.py` — async connection pool (asyncpg + SQLAlchemy 2.0)
-- `infrastructure/database/repositories/` — document, session, job repos
+- `infrastructure/database/` — `documents.py`, `sessions.py`, `jobs.py` (flat async functions, explicit session passing)
 - `infrastructure/llm/factory.py` — multi-provider LLM client factory
+- `infrastructure/pii/` — Presidio masking service, streaming unmask, guardrails, audit
 - `infrastructure/tasks/` — `task_worker.py`, `worker.py`
-- `evaluation/` — DeepEval framework, `evals/data/golden_qa.json` (10 Q&A pairs)
+
+Eval service under `services/evals/`: `evals/runner.py`, `evals/cli.py`, `api/`, datasets in `evals/data/` (golden_qa.json + public dataset cache).
 
 ## Common Issues
 
@@ -150,7 +156,7 @@ All under `services/rag_server/`:
 
 ## Testing
 
-Tests in `services/rag_server/tests/`. Unit tests use `@patch` mocks. Integration tests require `--run-integration` flag. Eval tests require `--run-eval` flag + `ANTHROPIC_API_KEY`.
+Tests in `services/rag_server/tests/` (and `services/evals/tests/`). Unit tests use `@patch` mocks. Integration tests require `--run-integration` flag. Eval tests require `--run-eval` flag + the API key for the `active.eval` provider.
 
 ### Integration Test Strategy
 - **No separate test-runner service** — tests reuse the `rag-server` service definition to avoid config drift (env, secrets, volumes, networks)
