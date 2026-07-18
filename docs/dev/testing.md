@@ -4,10 +4,10 @@
 
 | Category | Tests | Dependencies | Command |
 |----------|-------|-------------|---------|
-| **Unit** | ~32 | None (fully mocked) | `just test-unit` |
-| **Integration** | 25 | Docker services (PostgreSQL, Ollama, RAG server) | `just test-integration` |
-| **Integration (full)** | 25 + slow | Same + longer timeouts | `just test-integration-full` |
-| **Evaluation** | 27 | ANTHROPIC_API_KEY + Docker services | `just test-eval` |
+| **Unit** | ~100 | None (fully mocked) | `just test-unit` |
+| **Integration** | ~30 | Docker services (PostgreSQL, Ollama, RAG server) | `just test-integration` |
+| **Integration (full)** | same + slow | Same + longer timeouts | `just test-integration-full` |
+| **Evaluation** | eval suite | API key for the `active.eval` provider + Docker services | `just test-eval` |
 
 ## Test Structure
 
@@ -20,17 +20,19 @@ tests/
 │   ├── test_pipeline.py              # Upload → index → query → delete round-trips (9 tests)
 │   ├── test_chat_sessions.py         # Session lifecycle via HTTP API (5 tests)
 │   ├── test_async_upload.py          # Async task upload workflow + progress tracking (8 tests)
-│   ├── test_api_documents.py         # Document management endpoints (1 test)
-│   └── test_hybrid_search.py         # BROKEN: imports dead ChromaDB module (see Roadmap)
-└── evaluation/                       # Evaluation tests (DeepEval + Claude judge)
+│   ├── test_api_documents.py         # Document management endpoints
+│   ├── test_full_upload_pipeline.py  # Full upload pipeline round-trip
+│   └── test_pii_integration.py       # PII mask → real cloud LLM → unmask round trip (eval-gated)
 ```
+
+Evaluation tests (DeepEval + LLM judge) live in the standalone eval service: `services/evals/tests/`.
 
 ## Pytest Markers
 
 ```python
 @pytest.mark.integration  # Requires --run-integration flag
 @pytest.mark.slow         # Tests taking > 30s (skipped by default, use --run-slow)
-@pytest.mark.eval         # Requires --run-eval and ANTHROPIC_API_KEY
+@pytest.mark.eval         # Requires --run-eval and the active.eval provider's API key
 ```
 
 ## Integration Test Design

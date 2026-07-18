@@ -27,7 +27,7 @@ This document outlines planned features and enhancements for the RAG system, org
 
 ### PII Masking for Cloud LLMs (Feb 2026)
 - Microsoft Presidio + spaCy reversible token masking before cloud LLM calls
-- Masks query, retrieved context, chat history, and session titles on the cloud generation path
+- Masks query, retrieved context, chat history, and session titles on the cloud generation path; contextual-retrieval ingestion calls masked as of Jul 2026
 - Corpus-local guardrail + audit logging (see [dev/pii-masking.md](dev/pii-masking.md))
 
 ### Eval Service + Dashboard (Feb–Jul 2026)

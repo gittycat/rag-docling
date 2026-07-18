@@ -28,9 +28,9 @@ uv sync --group eval   # Add evaluation dependencies
 cd ../webapp
 npm install
 
-# Configuration
-cp config.yml.example config.yml
-cp secrets/.env.example secrets/.env
+# Configuration: config.yml is checked in — edit it directly (active models, retrieval settings).
+# Create the secret files referenced in docker-compose.yml under secrets/
+# (one raw value per file, e.g. secrets/OPENAI_API_KEY, secrets/POSTGRES_SUPERUSER, ...)
 
 # Start infrastructure
 docker compose up -d

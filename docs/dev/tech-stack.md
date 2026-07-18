@@ -26,12 +26,14 @@
 
 ## AI Models
 
+Active models are set in `config.yml` (`active:` section) and can be local or cloud. Default local setup:
+
 | Purpose | Model | Provider | Size |
 |---------|-------|----------|------|
 | LLM | gemma3:4b | Ollama | 4B params |
 | Embeddings | nomic-embed-text | Ollama | 137M params |
 | Reranker | ms-marco-MiniLM-L-6-v2 | HuggingFace | 22M params |
-| Evaluation | claude-sonnet-4-20250514 | Anthropic | Cloud |
+| Evaluation | any cloud model (OpenAI/Anthropic) | Cloud | Cloud |
 
 ## LLM Provider Support
 
@@ -42,5 +44,6 @@ The system supports multiple LLM providers via factory pattern:
 - **Google Gemini**
 - **DeepSeek**
 - **Moonshot**
+- **vLLM** (OpenAI-compatible, self-hosted)
 
 Provider selection via `config.yml`.

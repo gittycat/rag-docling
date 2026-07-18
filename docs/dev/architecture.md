@@ -40,8 +40,8 @@ The system is composed of multiple services running in a Docker Compose managed 
 
 ## Network Isolation
 
-- **Public network**: webapp, rag-server (accessible from host)
-- **Private network**: postgres, chromadb, task-worker (internal only)
+- **Public network** (host-reachable): webapp, rag-server, evals, task-worker (public needed for Ollama access via `host.docker.internal`)
+- **Private network** (internal only): postgres, chromadb
 - **Shared volumes**: Document staging (`/tmp/shared`), PostgreSQL data, model cache
 
 ## Data Flow
@@ -73,7 +73,6 @@ services/rag_server/
 ├── services/                # Business logic (sessions, metrics)
 ├── schemas/                 # Pydantic request/response models
 ├── core/                    # Global settings and logging
-├── evaluation/              # DeepEval framework
 └── tests/                   # Unit and integration tests
 ```
 
@@ -103,10 +102,11 @@ Shares codebase with RAG Server (same Docker image, different entrypoint).
 
 ## Docker Volumes
 
-- `postgres_data`: PostgreSQL persistence (documents, embeddings, sessions, queues)
+- `postgres_data`: PostgreSQL persistence (documents, sessions, queues)
+- `chroma_data`: ChromaDB vector persistence
 - `docs_repo`: Shared file upload staging
-- `huggingface_cache`: Reranker model cache
-- `documents_data`: Original document storage for downloads
+
+Bind mounts: `./.cache/huggingface` (reranker model cache), `./data/indexed_documents` (original documents for downloads), `./config.yml` (shared read-write model configuration).
 
 ## Core Concepts
 

@@ -30,7 +30,7 @@ Component health via `/metrics/system`:
 ### Common Issues
 
 - **Ollama not accessible**: Check host binding with `curl http://localhost:11434/api/tags`
-- **PostgreSQL connection fails**: Verify `DATABASE_URL` and `private` network connectivity
+- **PostgreSQL connection fails**: Verify `DATABASE_HOST`/`DATABASE_PORT`/`DATABASE_NAME` env vars, DB secrets, and `private` network connectivity
 - **Docker build fails**: Ensure `--index-strategy unsafe-best-match` in Dockerfile
 - **Tests fail**: Use `.venv/bin/pytest` not `uv run pytest`
 - **Reranker slow first query**: Model downloads ~80MB on first use
@@ -59,9 +59,9 @@ docker compose up -d
 ### Backup & Restore
 
 ```bash
-# Manual backup (PostgreSQL)
-docker compose exec postgres pg_dump -U raguser ragbench > backups/ragbench.sql
+# Manual backup (PostgreSQL) — superuser name comes from secrets/POSTGRES_SUPERUSER
+docker compose exec postgres pg_dump -U "$(cat secrets/POSTGRES_SUPERUSER)" ragbench > backups/ragbench.sql
 
 # Restore
-cat backups/ragbench.sql | docker compose exec -T postgres psql -U raguser -d ragbench
+cat backups/ragbench.sql | docker compose exec -T postgres psql -U "$(cat secrets/POSTGRES_SUPERUSER)" -d ragbench
 ```

@@ -14,20 +14,20 @@ Without systematic evaluation, configuration changes (chunk size, top-k, reranki
 **Test Dataset**: Golden Q&A pairs (question, expected answer, ground truth context)
 - Current: 10 pairs from Paul Graham essays
 - Target: 100+ pairs for production confidence
-- Location: `evals/data/golden_qa.json`
+- Location: `services/evals/evals/data/golden_qa.json`
 
 **Evaluation Types**:
 - **Retrieval Metrics**: Measure if correct chunks are retrieved
 - **Generation Metrics**: Measure answer accuracy and relevance
 - **Safety Metrics**: Detect hallucinations and unsupported claims
 
-**Public Datasets**: Five additional datasets available for comprehensive evaluation (retrieval, generation, citation, abstention). See [docs/RAG_EVALUATION_DATASETS.md](../RAG_EVALUATION_DATASETS.md).
+**Public Datasets**: Five additional datasets available for comprehensive evaluation (retrieval, generation, citation, abstention). List them with `just eval-datasets` or `GET /eval/datasets`.
 
 ## Framework: DeepEval
 
 **Why DeepEval**: Migrated from RAGAS (2025-12-07) for better CI/CD integration and pytest compatibility.
 
-**LLM Judge**: Claude Sonnet 4 (Anthropic) - evaluates retrieval relevance, answer faithfulness, and hallucination detection.
+**LLM Judge**: the model set as `active.eval` in `config.yml` (cloud provider, e.g. OpenAI or Anthropic) - evaluates retrieval relevance, answer faithfulness, and hallucination detection.
 
 **Integration**:
 - Pytest integration with custom markers (`@pytest.mark.eval`)
@@ -52,7 +52,7 @@ Higher scores are better (except hallucination - lower is better).
 
 ## Running Evaluations
 
-**Prerequisites**: `ANTHROPIC_API_KEY` secret file, Docker services running.
+**Prerequisites**: the API key secret file for the `active.eval` provider in `config.yml` (e.g. `secrets/OPENAI_API_KEY` or `secrets/ANTHROPIC_API_KEY`), Docker services running.
 
 **Via API** (recommended for webapp integration):
 ```bash
@@ -140,25 +140,6 @@ The eval service runs as a standalone FastAPI app. The webapp proxies `/api/eval
 - Async parallelization: RAG queries and LLM judge calls run concurrently via `asyncio.gather()` + `Semaphore`
 - Concurrency controlled by `query_concurrency` (default 10) and `judge_concurrency` (default 10) in `EvalConfig`
 - Progress callback + cancellation via `threading.Event`
-
-## Legacy Evaluation API Endpoints (rag-server, port 8001)
-
-**Core Endpoints**:
-- `GET /metrics/evaluation/definitions`: Metric descriptions and thresholds
-- `GET /metrics/evaluation/history`: Past evaluation runs
-- `GET /metrics/evaluation/summary`: Latest run with trend analysis
-- `GET /metrics/evaluation/{run_id}`: Specific run details
-- `DELETE /metrics/evaluation/{run_id}`: Delete evaluation run
-
-**Baseline & Comparison**:
-- `GET /metrics/baseline`: Get golden baseline run
-- `POST /metrics/baseline/{run_id}`: Set run as golden baseline
-- `DELETE /metrics/baseline`: Clear baseline
-- `GET /metrics/compare/{run_a}/{run_b}`: Compare two runs
-- `GET /metrics/compare-to-baseline/{run_id}`: Compare run to baseline
-
-**Configuration Tuning**:
-- `POST /metrics/recommend`: Get configuration recommendation based on evaluation history
 
 ## Research References
 

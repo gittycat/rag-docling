@@ -1,6 +1,6 @@
 ## About
 
-This projects implements a RAG AI assistant that searches your organisation’s trusted content and answers questions using it. It delivers more accurate, relevant responses grounded in your data than what is obtained by simple LLM apps like ChatGPT.
+This project implements a RAG AI assistant that searches your organisation’s trusted content and answers questions using it. It delivers more accurate, relevant responses grounded in your data than what is obtained by simple LLM apps like ChatGPT.
 
 RAGs have become the most common application of AI in enterprise environments.
 This specific RAG focuses on two core features: data privacy and observability.
@@ -9,7 +9,7 @@ This specific RAG focuses on two core features: data privacy and observability.
 
 - Option to run fully on-prem (locally). No calls outside the intranet needed.
 For decent performance, this requires a dedicated server spec'd for large open source models.
-- Frontier cloud models can also be used. Privacy is then ensured by performing data anynimization on any request to the cloud and inserting back the redacted data on responses.
+- Frontier cloud models can also be used. Privacy is then ensured by performing data anonymization on any request to the cloud and inserting back the redacted data on responses. This PII masking is opt-in (`pii.enabled` in `config.yml`) and covers queries, chat history, retrieved context, session titles, and document ingestion.
 
 ## Observability
 
@@ -28,6 +28,7 @@ These metrics allow admins to determine the best combinations of LLM models and 
 ## Tech Stack
 
 - **Backend**: Python, FastAPI, PostgreSQL (pg_textsearch for BM25)
+- **Frontend**: SvelteKit, Tailwind CSS, DaisyUI
 - **RAG Pipeline**: Docling, LlamaIndex
 - **Vector DB**: ChromaDB
 - **Search**: Hybrid (BM25 + Vector + RRF)
@@ -47,7 +48,7 @@ This is a development/research project, not production-ready software. It lacks 
 
 ## AI Development
 
-This project is developed using **Claude Code** (Anthropic) as the primary coding assitant. OpenAI GPT and Google Gemini models are also used to explore alternative implementations.
+This project is developed using **Claude Code** (Anthropic) as the primary coding assistant. OpenAI GPT and Google Gemini models are also used to explore alternative implementations.
 
 All code is reviewed, tested (TDD), and validated for correctness and security.
 
@@ -101,6 +102,8 @@ active:
 ```
 
 To switch models, change the active model name to any model defined in the `models` section. Local models (Ollama) work out of the box. Cloud models require API keys.
+
+> Note: the checked-in `config.yml` may have cloud models active. For a local-only start, set `active.inference` and `active.embedding` to Ollama-backed models (e.g. `gemma3-4b`, `nomic-embed`); otherwise create the matching API key files under `secrets/` first.
 
 **Secrets**:
 
