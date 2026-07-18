@@ -2,7 +2,7 @@
 
 Optional feature to anonymize sensitive data before sending to cloud LLM providers. Uses Microsoft Presidio for PII detection and reversible token-based masking.
 
-**Status**: Planned (see [implementation plan](../PII_MASKING_IMPLEMENTATION_PLAN.md))
+**Status**: Implemented (`infrastructure/pii/`), opt-in via `pii.enabled`
 
 ## How It Works
 
@@ -53,12 +53,12 @@ When `audit.enabled: true`, all masking/unmasking operations are logged:
 
 ## Data Flow Points
 
-| Path | Description |
-|------|-------------|
-| User queries | Query text, chat history, retrieved context sent to LLM |
-| Contextual retrieval | Document chunks sent to LLM during ingestion |
-| Session titles | First user message sent for title generation |
-| Evaluation | Test data sent to evaluation LLM |
+| Path | Status | Description |
+|------|--------|-------------|
+| User queries | Masked | Query text, chat history, retrieved context sent to LLM |
+| Contextual retrieval | Masked | Document name + chunk preview masked before the ingestion LLM call; generated prefix unmasked before local storage/embedding (per-document token mapping) |
+| Session titles | Masked | First user message sent for title generation |
+| Evaluation | Not masked | Test data sent to evaluation LLM (`services/evals`) — do not point evals at documents containing real PII |
 
 ## Limitations
 

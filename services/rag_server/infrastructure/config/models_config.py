@@ -220,12 +220,13 @@ class PiiAuditConfig(BaseModel):
 class PiiConfig(BaseModel):
     """PII masking configuration for the opt-in cloud generation tier.
 
-    Scope (Task 2.3, narrowed per ARCHITECTURE_REFACTOR_PLAN.md): masking
-    applies only to the generation path (query, retrieved context, chat
-    history, session-title generation). Embeddings, contextual enrichment,
-    and reranking stay local/VM-side and are never masked — see
-    Task 2.4's validate_privacy_posture() for the enforcement of that
-    boundary.
+    Scope: masking applies to every path that sends text to the configured
+    LLM — the generation path (query, retrieved context, chat history,
+    session-title generation) and contextual enrichment during ingestion
+    (document name + chunk preview are masked before the LLM call; the
+    generated prefix is unmasked before local storage/embedding).
+    Embeddings and reranking stay local/VM-side and are never masked — see
+    validate_privacy_posture() for the enforcement of that boundary.
     """
 
     enabled: bool = False

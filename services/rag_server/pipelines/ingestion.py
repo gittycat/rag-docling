@@ -10,7 +10,10 @@ Complete flow for processing documents from upload to indexing:
 """
 
 from pathlib import Path
-from typing import List, Dict, Any, Callable, Optional
+from typing import List, Dict, Any, Callable, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from infrastructure.pii.service import TokenMapping
 from datetime import datetime, timezone
 import asyncio
 import time
@@ -238,7 +241,40 @@ def chunk_document(file_path: str, chunk_size: int = 500) -> List[TextNode]:
 # STEP 3: CONTEXTUAL RETRIEVAL (OPTIONAL)
 # ============================================================================
 
-def add_contextual_prefix_to_chunk(node: TextNode, document_name: str, document_type: str) -> TextNode:
+def _mask_contextual_inputs(
+    document_name: str, chunk_preview: str, token_mapping: Optional["TokenMapping"]
+) -> tuple[str, str, Optional["TokenMapping"]]:
+    """Mask PII in the prompt inputs before they reach the (possibly cloud) LLM.
+
+    Returns (document_name, chunk_preview, mapping); passthrough when PII masking
+    is disabled (mapping stays None so unmasking is skipped too).
+    """
+    from infrastructure.pii.config import get_pii_config
+    from infrastructure.pii.service import TokenMapping, mask_text
+
+    if not get_pii_config().enabled:
+        return document_name, chunk_preview, None
+
+    mapping = token_mapping if token_mapping is not None else TokenMapping()
+    masked_name = mask_text(document_name, existing_mapping=mapping, context_id=document_name).masked_text
+    masked_preview = mask_text(chunk_preview, existing_mapping=mapping, context_id=document_name).masked_text
+    return masked_name, masked_preview, mapping
+
+
+def _unmask_contextual_prefix(context: str, token_mapping: Optional["TokenMapping"], document_name: str) -> str:
+    """Restore original PII values in the generated prefix (it is stored and embedded locally)."""
+    from infrastructure.pii.service import get_pii_service, unmask_text
+
+    if token_mapping is None:
+        return context
+
+    recovered = get_pii_service().attempt_fuzzy_recovery(context, token_mapping)
+    return unmask_text(recovered, token_mapping, context_id=document_name).unmasked_text
+
+
+def add_contextual_prefix_to_chunk(
+    node: TextNode, document_name: str, document_type: str, token_mapping: Optional["TokenMapping"] = None
+) -> TextNode:
     """
     Add LLM-generated contextual prefix to chunk (Anthropic method).
 
@@ -257,7 +293,8 @@ def add_contextual_prefix_to_chunk(node: TextNode, document_name: str, document_
     start_time = time.time()
 
     chunk_preview = node.get_content()[:400]
-    prompt = get_contextual_prefix_prompt(document_name, document_type, chunk_preview)
+    masked_name, masked_preview, pii_mapping = _mask_contextual_inputs(document_name, chunk_preview, token_mapping)
+    prompt = get_contextual_prefix_prompt(masked_name, document_type, masked_preview)
 
     try:
         llm = get_llm_client()
@@ -265,7 +302,7 @@ def add_contextual_prefix_to_chunk(node: TextNode, document_name: str, document_
         response = llm.complete(prompt)
         llm_duration = time.time() - llm_start
 
-        context = response.text.strip()
+        context = _unmask_contextual_prefix(response.text.strip(), pii_mapping, document_name)
 
         # Prepend context to original text
         enhanced_text = f"{context}\n\n{node.text}"
@@ -283,7 +320,9 @@ def add_contextual_prefix_to_chunk(node: TextNode, document_name: str, document_
         return node
 
 
-async def add_contextual_prefix_to_chunk_async(node: TextNode, document_name: str, document_type: str) -> TextNode:
+async def add_contextual_prefix_to_chunk_async(
+    node: TextNode, document_name: str, document_type: str, token_mapping: Optional["TokenMapping"] = None
+) -> TextNode:
     """Async variant of add_contextual_prefix_to_chunk, using llm.acomplete()."""
     from infrastructure.llm import get_contextual_prefix_prompt
 
@@ -291,7 +330,8 @@ async def add_contextual_prefix_to_chunk_async(node: TextNode, document_name: st
     start_time = time.time()
 
     chunk_preview = node.get_content()[:400]
-    prompt = get_contextual_prefix_prompt(document_name, document_type, chunk_preview)
+    masked_name, masked_preview, pii_mapping = _mask_contextual_inputs(document_name, chunk_preview, token_mapping)
+    prompt = get_contextual_prefix_prompt(masked_name, document_type, masked_preview)
 
     try:
         llm = get_llm_client()
@@ -299,7 +339,7 @@ async def add_contextual_prefix_to_chunk_async(node: TextNode, document_name: st
         response = await llm.acomplete(prompt)
         llm_duration = time.time() - llm_start
 
-        context = response.text.strip()
+        context = _unmask_contextual_prefix(response.text.strip(), pii_mapping, document_name)
 
         # Prepend context to original text
         enhanced_text = f"{context}\n\n{node.text}"
@@ -326,10 +366,19 @@ async def _add_contextual_retrieval_async(nodes: List[TextNode], file_path: str,
     contextual_start = time.time()
     completed = 0
 
+    # One mapping per document so the same entity gets the same token in every chunk.
+    # mask() runs synchronously between awaits, so concurrent tasks can't interleave mutations.
+    from infrastructure.pii.config import get_pii_config
+    from infrastructure.pii.service import TokenMapping
+
+    doc_token_mapping = TokenMapping() if get_pii_config().enabled else None
+
     async def _process(node: TextNode) -> TextNode:
         nonlocal completed
         async with sem:
-            result = await add_contextual_prefix_to_chunk_async(node, file_path_obj.name, extension)
+            result = await add_contextual_prefix_to_chunk_async(
+                node, file_path_obj.name, extension, token_mapping=doc_token_mapping
+            )
             completed += 1
             if completed % 10 == 0:
                 elapsed = time.time() - contextual_start
