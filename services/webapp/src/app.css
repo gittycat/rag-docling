@@ -4,6 +4,9 @@
   themes: nord --default, dim --prefersdark;
 }
 
+/* LayerChart 2 — map its surface tokens onto daisyUI base-* so charts follow the theme */
+@import "layerchart/daisyui-5.css";
+
 /* =============================================================================
    Action Button Style
    Usage: Add class "btn-action" for consistent icon buttons with ghost/outline styling

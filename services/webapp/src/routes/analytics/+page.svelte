@@ -5,10 +5,8 @@
 	import { fetchSystemMetrics, type SystemMetrics } from '$lib/api';
 	import { fetchEvalDashboard, fetchActiveEvalJob, type EvalDashboardResponse, type ActiveEvalJob } from '$lib/api/evals';
 	import AnalyticsTabs from '$lib/components/analytics/AnalyticsTabs.svelte';
-	import OverviewTab from '$lib/components/analytics/OverviewTab.svelte';
-	import ScorecardTab from '$lib/components/analytics/ScorecardTab.svelte';
-	import TrendsTab from '$lib/components/analytics/TrendsTab.svelte';
-	import ComparisonTab from '$lib/components/analytics/ComparisonTab.svelte';
+	import HealthTab from '$lib/components/analytics/HealthTab.svelte';
+	import ExperimentsTab from '$lib/components/analytics/ExperimentsTab.svelte';
 	import SystemHealthTab from '$lib/components/analytics/SystemHealthTab.svelte';
 
 	let metrics = $state<SystemMetrics | null>(null);
@@ -21,20 +19,27 @@
 	let refreshInterval: number | null = null;
 	let activeJobInterval: number | null = null;
 
-	// Tab state - read from URL or default to 'overview'
-	let activeTab = $state<string>('overview');
+	// Tab state - read from URL or default to 'health'
+	let activeTab = $state<string>('health');
 
 	const tabs = [
-		{ id: 'overview', label: 'Overview', icon: 'overview' },
-		{ id: 'scorecard', label: 'Scorecard', icon: 'scorecard' },
-		{ id: 'trends', label: 'Trends', icon: 'trends' },
-		{ id: 'compare', label: 'Compare', icon: 'compare' },
+		{ id: 'health', label: 'Health', icon: 'overview' },
+		{ id: 'experiments', label: 'Experiments', icon: 'compare' },
 		{ id: 'system', label: 'System', icon: 'system' }
 	];
 
+	// Backwards-compat: old ?tab= ids redirect to the new 3-tab layout.
+	const TAB_ALIASES: Record<string, string> = {
+		overview: 'health',
+		scorecard: 'health',
+		trends: 'experiments',
+		compare: 'experiments'
+	};
+
 	onMount(() => {
 		const urlTab = $page.url.searchParams.get('tab');
-		activeTab = urlTab && tabs.some((t) => t.id === urlTab) ? urlTab : 'overview';
+		const resolved = urlTab ? (TAB_ALIASES[urlTab] ?? urlTab) : null;
+		activeTab = resolved && tabs.some((t) => t.id === resolved) ? resolved : 'health';
 
 		loadAll();
 		startAutoRefresh();
@@ -277,14 +282,10 @@
 
 		<!-- Tabbed Content -->
 		<AnalyticsTabs {activeTab} onTabChange={handleTabChange} {tabs}>
-			{#if activeTab === 'overview'}
-				<OverviewTab {metrics} {refreshTick} />
-			{:else if activeTab === 'scorecard'}
-				<ScorecardTab />
-			{:else if activeTab === 'trends'}
-				<TrendsTab />
-			{:else if activeTab === 'compare'}
-				<ComparisonTab onRefresh={loadAll} />
+			{#if activeTab === 'health'}
+				<HealthTab {metrics} {refreshTick} />
+			{:else if activeTab === 'experiments'}
+				<ExperimentsTab onRefresh={loadAll} />
 			{:else if activeTab === 'system'}
 				<SystemHealthTab {metrics} />
 			{/if}

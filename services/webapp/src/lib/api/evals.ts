@@ -2,6 +2,28 @@
 
 const API_BASE = '/api/eval';
 
+// Hard ceiling so a hung proxy/backend can never leave a tab spinning forever.
+const DEFAULT_TIMEOUT_MS = 15000;
+
+async function fetchJson<T>(url: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const response = await fetch(url, { signal: controller.signal });
+		if (!response.ok) {
+			throw new Error(`Request failed (${response.status} ${response.statusText}): ${url}`);
+		}
+		return (await response.json()) as T;
+	} catch (e) {
+		if (e instanceof DOMException && e.name === 'AbortError') {
+			throw new Error(`Request timed out after ${timeoutMs / 1000}s: ${url}`);
+		}
+		throw e;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 // ============================================================================
 // Types — mirror services/evals/api/schemas.py
 // ============================================================================
@@ -132,56 +154,30 @@ export interface EvalDashboardResponse {
 // Fetchers
 // ============================================================================
 
-export async function fetchEvalDashboard(): Promise<EvalDashboardResponse> {
-	const response = await fetch(`${API_BASE}/dashboard`);
-	if (!response.ok) {
-		throw new Error(`Failed to fetch eval dashboard: ${response.statusText}`);
-	}
-	return response.json();
+export function fetchEvalDashboard(): Promise<EvalDashboardResponse> {
+	return fetchJson<EvalDashboardResponse>(`${API_BASE}/dashboard`);
 }
 
-export async function fetchEvalRuns(limit: number = 50): Promise<EvalRunListResponse> {
+export function fetchEvalRuns(limit: number = 50): Promise<EvalRunListResponse> {
 	const params = new URLSearchParams();
 	params.set('limit', limit.toString());
-
-	const response = await fetch(`${API_BASE}/runs?${params}`);
-	if (!response.ok) {
-		throw new Error(`Failed to fetch eval runs: ${response.statusText}`);
-	}
-	return response.json();
+	return fetchJson<EvalRunListResponse>(`${API_BASE}/runs?${params}`);
 }
 
-export async function fetchEvalRun(id: string): Promise<EvalRunDetail> {
-	const response = await fetch(`${API_BASE}/runs/${id}`);
-	if (!response.ok) {
-		throw new Error(`Failed to fetch eval run: ${response.statusText}`);
-	}
-	return response.json();
+export function fetchEvalRun(id: string): Promise<EvalRunDetail> {
+	return fetchJson<EvalRunDetail>(`${API_BASE}/runs/${id}`);
 }
 
-export async function compareEvalRuns(ids: string[]): Promise<EvalCompareResponse> {
+export function compareEvalRuns(ids: string[]): Promise<EvalCompareResponse> {
 	const params = new URLSearchParams();
 	params.set('ids', ids.join(','));
-
-	const response = await fetch(`${API_BASE}/runs/compare?${params}`);
-	if (!response.ok) {
-		throw new Error(`Failed to compare eval runs: ${response.statusText}`);
-	}
-	return response.json();
+	return fetchJson<EvalCompareResponse>(`${API_BASE}/runs/compare?${params}`);
 }
 
-export async function fetchActiveEvalJob(): Promise<ActiveEvalJob | null> {
-	const response = await fetch(`${API_BASE}/runs/active`);
-	if (!response.ok) {
-		throw new Error(`Failed to fetch active eval job: ${response.statusText}`);
-	}
-	return response.json();
+export function fetchActiveEvalJob(): Promise<ActiveEvalJob | null> {
+	return fetchJson<ActiveEvalJob | null>(`${API_BASE}/runs/active`);
 }
 
-export async function fetchEvalDatasets(): Promise<EvalDatasetInfo[]> {
-	const response = await fetch(`${API_BASE}/datasets`);
-	if (!response.ok) {
-		throw new Error(`Failed to fetch eval datasets: ${response.statusText}`);
-	}
-	return response.json();
+export function fetchEvalDatasets(): Promise<EvalDatasetInfo[]> {
+	return fetchJson<EvalDatasetInfo[]>(`${API_BASE}/datasets`);
 }
