@@ -23,11 +23,15 @@ Without systematic evaluation, configuration changes (chunk size, top-k, reranki
 
 **Public Datasets**: Five additional datasets available for comprehensive evaluation (retrieval, generation, citation, abstention). List them with `just eval-datasets` or `GET /eval/datasets`.
 
-## Framework: DeepEval
+## Framework: In-House
 
-**Why DeepEval**: Migrated from RAGAS (2025-12-07) for better CI/CD integration and pytest compatibility.
+Metrics and the LLM-as-judge are implemented in this repo (`services/evals/evals/metrics/`
+and `evals/judges/llm_judge.py`) — no third-party eval framework is used. The
+project moved from RAGAS to DeepEval (2025-12-07), then off DeepEval as the
+metrics were replaced with hand-rolled ones; the dependency was dropped once
+nothing imported it.
 
-**LLM Judge**: the model set as `active.eval` in `config.yml` (cloud provider, e.g. OpenAI or Anthropic) - evaluates retrieval relevance, answer faithfulness, and hallucination detection.
+**LLM Judge**: the model set as `active.eval` in `config.yml` (cloud provider, e.g. OpenAI or Anthropic) - evaluates retrieval relevance, answer faithfulness, and hallucination detection. Note that judge prompts are **not** PII-masked — see [pii-masking.md](pii-masking.md) for the gate that enforces this.
 
 **Integration**:
 - Pytest integration with custom markers (`@pytest.mark.eval`)

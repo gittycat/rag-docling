@@ -6,7 +6,7 @@
 | [database.md](database.md) | database, postgres, connection pool, sqlalchemy, queries | Connection pooling config, DB access patterns, session management, file layout |
 | [tech-stack.md](tech-stack.md) | tech stack, versions, models, providers, llm | Backend/frontend technology versions, AI models, LLM provider support |
 | [configuration.md](configuration.md) | config, secrets, env vars, yaml, api keys | YAML config, environment variables, Docker secrets management |
-| [eval-framework.md](eval-framework.md) | eval, evaluation, metrics, deepeval, dashboard, api | Eval framework, metrics, DeepEval, eval service API (port 8002), dashboard metrics, running evals |
+| [eval-framework.md](eval-framework.md) | eval, evaluation, metrics, judge, dashboard, api | Eval framework, metrics, LLM-as-judge, eval service API (port 8002), dashboard metrics, running evals |
 | [rag-api.md](rag-api.md) | api, rest, endpoints, query, documents, sessions, upload | RAG server REST API reference (port 8001) — all endpoints for documents, queries, sessions, metrics |
 | [testing.md](testing.md) | testing, pytest, integration, unit, markers | Test categories, structure, integration test design, pytest markers |
 | [cicd-deployment.md](cicd-deployment.md) | ci, cd, forgejo, deployment, docker compose, versioning | Forgejo CI/CD setup, pipeline config, deployment environments, version management |

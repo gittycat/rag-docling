@@ -25,7 +25,7 @@ tests/
 │   └── test_pii_integration.py       # PII mask → real cloud LLM → unmask round trip (eval-gated)
 ```
 
-Evaluation tests (DeepEval + LLM judge) live in the standalone eval service: `services/evals/tests/`.
+Evaluation tests (in-house metrics + LLM judge) live in the standalone eval service: `services/evals/tests/`.
 
 ## Pytest Markers
 

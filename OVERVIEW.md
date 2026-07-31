@@ -60,7 +60,7 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 | **Async Processing** | PostgreSQL `SKIP LOCKED` work queue |
 | **Chat & Persistence** | PostgreSQL (sessions, history, metadata) |
 | **Privacy** | Microsoft Presidio + spaCy (PII detection & masking) |
-| **Evaluation** | DeepEval, LLM-as-judge (Anthropic Claude) |
+| **Evaluation** | In-house metrics, LLM-as-judge (Anthropic Claude) |
 | **Frontend** | SvelteKit, Tailwind CSS, DaisyUI |
 | **LLM Inference** | Ollama (local) or OpenAI / Anthropic / Google / DeepSeek / Moonshot (cloud) |
 | **Deployment** | Docker Compose |

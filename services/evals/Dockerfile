@@ -23,10 +23,6 @@ RUN uv sync --frozen
 # Switch to non-root user
 USER appuser
 
-# Opt out of DeepEval's telemetry (public IP lookup + usage events on import).
-# Set here rather than only in docker-compose so `docker run` is covered too.
-ENV DEEPEVAL_TELEMETRY_OPT_OUT=true
-
 EXPOSE 8002
 
 # Default: run the API server. CLI still accessible via:

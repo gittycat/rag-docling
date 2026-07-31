@@ -22,7 +22,7 @@ The system is composed of multiple services running in a Docker Compose managed 
 - **evals** (Python 3.13 + FastAPI): Evaluation API and CLI for RAG quality assessment
   - Runs on port 8002, always-on (no profile gating)
   - Triggers eval runs, tracks progress, serves results
-  - Heavy deps (deepeval, datasets, HuggingFace) isolated from rag-server
+  - Heavy deps (datasets, HuggingFace) isolated from rag-server
   - CLI still accessible via `docker compose exec evals .venv/bin/python -m evals.cli ...`
 
 **Frontend Service**:
