@@ -41,6 +41,13 @@ dependencies = [
     "en-core-web-md",
 ]
 
+[project.optional-dependencies]
+# Higher-recall PII detection (pii.gliner.enabled). Optional because it costs
+# ~10x the per-call latency and is only worth it for PII-heavy corpora.
+gliner = [
+    "gliner>=0.2.28",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.3",

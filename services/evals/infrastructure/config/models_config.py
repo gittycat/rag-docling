@@ -230,6 +230,24 @@ class ModelDefinitions(BaseModel):
     reranker: dict[str, dict[str, Any]]
 
 
+# Judge providers that never leave the local/VM trust boundary.
+LOCAL_JUDGE_PROVIDERS = {"ollama"}
+
+
+class PiiConfig(BaseModel):
+    """The eval service's view of the rag-server `pii` block.
+
+    Only the master toggle matters here, read as "this deployment's corpus is
+    considered sensitive". Nothing in the eval path is masked: the judge prompts
+    embed retrieved chunks and generated answers verbatim (see
+    evals/judges/llm_judge.py), so an eval run ships more corpus content to the
+    judge than a normal query ships to the generation LLM.
+    """
+
+    enabled: bool = False
+    allow_cloud_judge: bool = False  # explicit opt-out of the gate below
+
+
 class ModelsConfig(BaseModel):
     """Root configuration for all models and retrieval settings."""
 
@@ -239,6 +257,27 @@ class ModelsConfig(BaseModel):
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
+    pii: PiiConfig = Field(default_factory=PiiConfig)
+
+    def validate_privacy_posture(self) -> None:
+        """Refuse to run cloud-judged evals on a corpus declared sensitive.
+
+        Masking covers the generation path; the judge path has no equivalent, so
+        pointing a cloud judge at a real corpus quietly undoes the protection
+        pii.enabled was turned on for. Set pii.allow_cloud_judge: true to accept
+        that (e.g. a synthetic eval dataset), or use a local judge.
+        """
+        if not self.pii.enabled or self.pii.allow_cloud_judge:
+            return
+
+        if self.eval.provider not in LOCAL_JUDGE_PROVIDERS:
+            raise ValueError(
+                f"pii.enabled is true but the eval judge provider '{self.eval.provider}' "
+                f"is not local. Judge prompts contain retrieved chunks and answers "
+                f"verbatim — nothing in the eval path is masked. Use a local judge "
+                f"({', '.join(sorted(LOCAL_JUDGE_PROVIDERS))}), or set "
+                f"pii.allow_cloud_judge: true if the eval dataset holds no real PII."
+            )
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> "ModelsConfig":
@@ -300,6 +339,7 @@ class ModelsConfig(BaseModel):
         config.llm.validate_provider_requirements()
         config.embedding.validate_provider_requirements()
         config.eval.validate_provider_requirements()
+        config.validate_privacy_posture()
 
         return config
 
@@ -380,6 +420,10 @@ class ModelsConfig(BaseModel):
         # Copy prompts unchanged
         if "prompts" in data:
             resolved["prompts"] = data["prompts"]
+
+        # Copy pii unchanged (extra keys are ignored by PiiConfig)
+        if "pii" in data:
+            resolved["pii"] = data["pii"]
 
         return resolved
 

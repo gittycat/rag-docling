@@ -45,8 +45,14 @@ COPY --chown=appuser:appuser services/rag_server/pyproject.toml ./
 # Cache mount persists downloaded packages across builds
 # Pulls in en-core-web-md (~35MB, pinned in pyproject.toml) for the PII masking
 # spaCy NER model — en_core_web_lg is more accurate but ~15x larger on disk.
+#
+# INSTALL_GLINER=true adds the higher-recall PII detector required by
+# pii.gliner.enabled (the server refuses to boot if that is set without it):
+#   docker compose build --build-arg INSTALL_GLINER=true rag-server
+ARG INSTALL_GLINER=false
 RUN --mount=type=cache,target=/home/appuser/.cache/uv,uid=1000,gid=1000 \
-    uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+    uv sync --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match \
+      $([ "$INSTALL_GLINER" = "true" ] && echo "--extra gliner")
 
 # Copy application code (exclude pyproject.toml to avoid overwriting .venv)
 COPY --chown=appuser:appuser services/rag_server/api ./api

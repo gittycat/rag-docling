@@ -217,6 +217,58 @@ class PiiAuditConfig(BaseModel):
     log_level: str = "INFO"
 
 
+class PiiSessionMappingConfig(BaseModel):
+    """Bounds on the in-memory session token-mapping cache.
+
+    Mappings hold original PII values in cleartext, so they are evicted on an
+    idle timer as well as on a size cap — an unbounded cache would keep every
+    name a user ever mentioned in RAM for the process lifetime.
+    """
+
+    max_sessions: int = 500
+    ttl_seconds: int = 3600
+
+
+class PiiGlinerConfig(BaseModel):
+    """Optional GLiNER recognizer, registered alongside spaCy NER and the pattern recognizers.
+
+    spaCy is the weak point of the default stack on the entity type that matters
+    most in business documents: published cross-domain benchmarks put Presidio's
+    PERSON F1 anywhere between 0.18 and 0.78, and phone at 0.35-0.54. GLiNER
+    scores better on both and degrades far less out-of-domain, at roughly 10x the
+    CPU latency (~160ms vs ~15ms per text). Presidio's regex recognizers still win
+    on EMAIL/CREDIT_CARD/IBAN and keep running either way, so this only adds a
+    second opinion on the NER-shaped entities.
+
+    Off by default: it costs latency on every query and requires the optional
+    `gliner` package (`uv sync --extra gliner`).
+    """
+
+    enabled: bool = False
+    model_name: str = "urchade/gliner_multi_pii-v1"  # Apache-2.0
+    threshold: float = 0.4
+    # GLiNER takes ad-hoc natural-language labels; this maps them onto Presidio
+    # entity types. Only mappings whose target is in `entities` ever get requested.
+    entity_mapping: dict[str, str] = Field(
+        default_factory=lambda: {
+            "person": "PERSON",
+            "name": "PERSON",
+            "email": "EMAIL_ADDRESS",
+            "phone number": "PHONE_NUMBER",
+            "credit card number": "CREDIT_CARD",
+            "social security number": "US_SSN",
+            "passport number": "US_PASSPORT",
+            "driver licence": "US_DRIVER_LICENSE",
+            "bank account number": "US_BANK_NUMBER",
+            "iban": "IBAN_CODE",
+            "ip address": "IP_ADDRESS",
+            "address": "LOCATION",
+        }
+    )
+    map_location: str | None = None  # None = auto-detect GPU, else "cpu"/"cuda"
+    load_onnx_model: bool = False  # ONNX backend for CPUs without AVX2
+
+
 class PiiConfig(BaseModel):
     """PII masking configuration for the opt-in cloud generation tier.
 
@@ -230,6 +282,10 @@ class PiiConfig(BaseModel):
     """
 
     enabled: bool = False
+    # Read by the eval service only (services/evals): opts out of its refusal to
+    # run a cloud judge against a corpus declared sensitive. Declared here so the
+    # `pii` block has a single documented schema.
+    allow_cloud_judge: bool = False
     entities: list[str] = Field(
         default_factory=lambda: [
             "PERSON",
@@ -249,6 +305,8 @@ class PiiConfig(BaseModel):
     validation: PiiValidationConfig = Field(default_factory=PiiValidationConfig)
     output_guardrails: PiiGuardrailsConfig = Field(default_factory=PiiGuardrailsConfig)
     audit: PiiAuditConfig = Field(default_factory=PiiAuditConfig)
+    session_mapping: PiiSessionMappingConfig = Field(default_factory=PiiSessionMappingConfig)
+    gliner: PiiGlinerConfig = Field(default_factory=PiiGlinerConfig)
 
 
 class CitationInstructions(BaseModel):
@@ -341,6 +399,19 @@ class ModelsConfig(BaseModel):
                 f"provider ({', '.join(sorted(LOCAL_EMBEDDING_PROVIDERS))}) — masking "
                 f"does not cover the embedding path."
             )
+
+        # Fail at boot rather than at first query: a missing optional package must
+        # not silently downgrade detection to spaCy-only after the operator asked
+        # for GLiNER.
+        if self.pii.enabled and self.pii.gliner.enabled:
+            from importlib.util import find_spec
+
+            if find_spec("gliner") is None:
+                raise ValueError(
+                    "pii.gliner.enabled is true but the 'gliner' package is not installed. "
+                    "Install it with `uv sync --extra gliner` locally, or rebuild the image "
+                    "with `--build-arg INSTALL_GLINER=true` (or set pii.gliner.enabled: false)."
+                )
 
     @classmethod
     def load(cls, config_path: str | Path | None = None, *, validate_secrets: bool = True) -> "ModelsConfig":

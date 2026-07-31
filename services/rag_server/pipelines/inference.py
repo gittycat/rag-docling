@@ -30,7 +30,11 @@ from infrastructure.config.models_config import get_models_config
 from infrastructure.llm.prompts import get_system_prompt, get_context_prompt, get_condense_prompt
 from infrastructure.pii.config import get_pii_config
 from infrastructure.pii.service import get_pii_service, mask_text, unmask_text, TokenMapping
-from infrastructure.pii.postprocessor import PIIMaskingPostprocessor, get_session_token_mapping
+from infrastructure.pii.postprocessor import (
+    PIIMaskingPostprocessor,
+    clear_session_token_mapping,
+    get_session_token_mapping,
+)
 from infrastructure.pii.streaming import buffer_and_unmask_stream, buffer_and_unmask_stream_async
 
 logger = logging.getLogger(__name__)
@@ -214,6 +218,9 @@ def clear_session_memory(session_id: str) -> None:
     # Remove from cache
     if session_id in _memory_cache:
         del _memory_cache[session_id]
+
+    # Drop the cleartext PII mapping with the history it belongs to
+    clear_session_token_mapping(session_id)
 
     # Clear from PostgreSQL
     chat_store = _get_chat_store()

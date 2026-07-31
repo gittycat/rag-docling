@@ -89,7 +89,7 @@ class PIIMaskingService:
 
     @property
     def analyzer(self) -> AnalyzerEngine:
-        """Lazy-load Presidio's analyzer (spaCy NER + pattern recognizers)."""
+        """Lazy-load Presidio's analyzer (spaCy NER + pattern recognizers, optionally + GLiNER)."""
         if self._analyzer is None:
             from presidio_analyzer.nlp_engine import NlpEngineProvider
 
@@ -101,7 +101,32 @@ class PIIMaskingService:
             ).create_engine()
             self._analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
             logger.info(f"[PII] Initialized Presidio AnalyzerEngine (model={self.config.spacy_model})")
+            if self.config.gliner.enabled:
+                self._register_gliner(self._analyzer)
         return self._analyzer
+
+    def _register_gliner(self, analyzer: AnalyzerEngine) -> None:
+        """Add GLiNER as an extra recognizer — spaCy NER and the pattern recognizers
+        keep running, and Presidio merges the results, so this only raises recall.
+
+        Loads the model eagerly (~200MB download on first use) so a broken setup
+        surfaces here rather than mid-request. config validation already guaranteed
+        the package is importable.
+        """
+        from presidio_analyzer.predefined_recognizers import GLiNERRecognizer
+
+        cfg = self.config.gliner
+        recognizer = GLiNERRecognizer(
+            model_name=cfg.model_name,
+            entity_mapping=cfg.entity_mapping,
+            threshold=cfg.threshold,
+            map_location=cfg.map_location,
+            load_onnx_model=cfg.load_onnx_model,
+            supported_language=self.config.language,
+        )
+        recognizer.load()
+        analyzer.registry.add_recognizer(recognizer)
+        logger.info(f"[PII] Registered GLiNER recognizer (model={cfg.model_name}, threshold={cfg.threshold})")
 
     @property
     def anonymizer(self) -> AnonymizerEngine:

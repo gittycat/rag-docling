@@ -278,6 +278,12 @@ prompts:
 pii:
   enabled: false  # Master toggle
 
+  # Read by the eval service. Judge prompts embed retrieved chunks and answers
+  # verbatim and are never masked, so with pii.enabled the eval service refuses
+  # to start against a cloud judge. Set true only when the eval dataset holds no
+  # real PII (e.g. synthetic questions).
+  allow_cloud_judge: false
+
   # Entity types to detect and mask. Full list: https://microsoft.github.io/presidio/supported_entities/
   entities:
     - PERSON
@@ -298,6 +304,18 @@ pii:
   language: en
   spacy_model: en_core_web_md  # en_core_web_lg is more accurate but ~15x larger on disk
 
+  # Optional second opinion on NER-shaped entities (names, phones, addresses),
+  # registered alongside spaCy and the regex recognizers rather than replacing
+  # them. spaCy is the weak link on PERSON recall; GLiNER scores better and holds
+  # up across domains, at ~10x the CPU cost per call (~160ms vs ~15ms).
+  # Requires the optional package: `uv sync --extra gliner`.
+  gliner:
+    enabled: false
+    model_name: urchade/gliner_multi_pii-v1  # Apache-2.0, ~200MB on first use
+    threshold: 0.4          # GLiNER's own confidence threshold
+    map_location: null      # null = auto-detect GPU; "cpu" to force CPU
+    load_onnx_model: false  # true for CPUs without AVX2 (needs onnxruntime)
+
   # Validate that tokens the LLM was given survive unaltered in its response;
   # attempt fuzzy recovery (bracket/case/separator repair) if not
   validation:
@@ -309,6 +327,13 @@ pii:
   output_guardrails:
     enabled: true
     block_on_detection: false  # if true, raise instead of returning the response
+
+  # Bounds on the in-memory session token mapping (holds cleartext PII, so it is
+  # evicted on idle as well as on size). Losing a mapping is safe — the next turn
+  # re-masks from persisted history; only token numbering changes.
+  session_mapping:
+    max_sessions: 500
+    ttl_seconds: 3600
 
   # Audit logging of mask/unmask operations (never logs original PII values at INFO)
   audit:
