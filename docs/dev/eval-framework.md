@@ -39,6 +39,49 @@ nothing imported it.
 - CI/CD compatible (optional eval tests on demand)
 - Results stored in `evals/data/runs/` for metrics API
 
+### Decision: staying in-house (reviewed 2026-08-01)
+
+Re-adopting DeepEval (or RAGAS/Phoenix) was considered and declined. Reasons, in
+order of weight:
+
+1. **It would trade a calibrated judge for an uncalibrated one.** `evals/calibration.py`
+   measures our judge against RAGBench's human-verified TRACe labels. Third-party
+   metrics arrive with prompts we don't control and no calibration for this corpus,
+   so the calibration work would have to be redone against them.
+2. **Telemetry posture conflicts with the product thesis.** DeepEval phones home on
+   import (public IP via `api.ipify.org`) and is oriented toward a hosted platform.
+   The judge path is also the one place with no PII masking — see the gate in
+   [pii-masking.md](pii-masking.md). A default-telemetry dependency on exactly that
+   path is the wrong direction for a privacy-first product.
+3. **Low overlap, high switching cost.** A framework would replace roughly the ~200
+   LOC in `metrics/generation.py` out of ~6,300, and contributes nothing to the six
+   dataset loaders, citation/abstention metrics, Pareto frontier, cost telemetry, or
+   the dashboard API.
+
+**What would justify revisiting**: needing metrics we don't want to maintain
+(e.g. multi-turn conversational, agentic tool-use, or red-teaming suites), or a
+team large enough that maintaining metric implementations stops being worthwhile.
+If that happens, prefer vendoring specific metric *implementations* over adopting a
+framework wholesale, and check the telemetry defaults first.
+
+**Worth stealing regardless**: G-Eval's scoring approach (chain-of-thought plus
+token-probability weighting) discriminates better than the current single-shot
+`SCORE: 0.8` parse. That is an idea to port into `llm_judge.py`, not a reason to
+take the dependency.
+
+### Known limitation: failed judge calls score 0.0
+
+`LLMJudge._evaluate` returns `score=0.0` when all retries fail, and `_parse_response`
+returns 0.0 when no `SCORE:` line is found. The generation metrics pass `result.score`
+into `MetricResult` and drop `result.metadata`, where the `{"error": ...}` marker
+lives. Aggregation (`sum(scores)/len(scores)`) therefore treats a judge timeout or a
+malformed response as "the answer was completely unfaithful".
+
+Effect: transient judge flakiness silently depresses reported scores, and corrupts
+calibration — the measurement everything else rests on. The fix is to propagate the
+error marker and exclude those samples from aggregation; the runner already
+redistributes weight for objectives with no data, so the machinery exists.
+
 ## Metrics & Thresholds
 
 **Retrieval Metrics**:
