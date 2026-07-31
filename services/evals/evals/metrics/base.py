@@ -90,7 +90,12 @@ class BaseMetric(ABC):
                             result = await result
                         return result
                     except Exception as e:
-                        logger.warning(f"[METRIC] {self.name} failed for question {q.id}: {e}")
+                        # Excluded from the average rather than scored 0.0 — a failed
+                        # judge call is missing data, not a bad answer.
+                        logger.warning(
+                            f"[METRIC] {self.name} failed for question {q.id}, "
+                            f"excluding from average: {e}"
+                        )
                         return None
                     finally:
                         completed_count += 1

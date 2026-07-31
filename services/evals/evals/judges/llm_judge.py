@@ -17,6 +17,18 @@ from evals.config import JudgeConfig
 logger = logging.getLogger(__name__)
 
 
+class JudgeError(Exception):
+    """The judge could not produce a score.
+
+    Raised instead of returning a 0.0 score: a failed judge call is missing data,
+    not evidence of a bad answer. Callers exclude the sample from the average.
+    """
+
+
+class JudgeParseError(JudgeError):
+    """The LLM response contained no parseable SCORE line."""
+
+
 @dataclass
 class JudgeResult:
     """Result from an LLM judge evaluation.
@@ -207,7 +219,14 @@ REASONING: [Your explanation]"""
         return await self._evaluate(prompt, "context_relevance")
 
     async def _evaluate(self, prompt: str, metric_name: str) -> JudgeResult:
-        """Run evaluation with retry logic using async LLM call."""
+        """Run evaluation with retry logic using async LLM call.
+
+        Raises JudgeError once retries are exhausted. Returning a 0.0 score here
+        would be indistinguishable from a genuine "not grounded at all" verdict
+        and would drag every batch average down on transient flakiness.
+        """
+        last_error: Exception | None = None
+
         for attempt in range(self.config.max_retries):
             try:
                 response = await self.llm.acomplete(prompt)
@@ -224,39 +243,37 @@ REASONING: [Your explanation]"""
                 )
 
             except Exception as e:
+                last_error = e
                 logger.warning(f"[JUDGE] Attempt {attempt + 1} failed: {e}")
-                if attempt == self.config.max_retries - 1:
-                    logger.error(f"[JUDGE] All attempts failed for {metric_name}")
-                    return JudgeResult(
-                        metric_name=metric_name,
-                        score=0.0,
-                        reasoning=f"Evaluation failed: {e}",
-                        raw_response="",
-                        metadata={"error": str(e)},
-                    )
 
-        return JudgeResult(metric_name=metric_name, score=0.0, reasoning="Unknown error")
+        logger.error(f"[JUDGE] All attempts failed for {metric_name}: {last_error}")
+        raise JudgeError(f"{metric_name} evaluation failed after "
+                         f"{self.config.max_retries} attempts: {last_error}") from last_error
 
     def _parse_response(self, response: str) -> tuple[float, str]:
-        """Parse the score and reasoning from LLM response."""
+        """Parse the score and reasoning from LLM response.
+
+        Raises JudgeParseError on malformed output so _evaluate's retry loop
+        engages — a missing or unparseable SCORE line is a failed call, not a 0.0.
+        """
         lines = response.strip().split("\n")
-        score = 0.0
+        score: float | None = None
         reasoning = ""
 
         for line in lines:
             line = line.strip()
-            if line.upper().startswith("SCORE:"):
+            if line.upper().startswith("SCORE:") and score is None:
+                score_str = line.split(":", 1)[1].strip()
+                # Handle various formats: "0.8", "0.8/1", "80%"
+                is_percent = "%" in score_str
+                score_str = score_str.replace("/1", "").replace("%", "")
                 try:
-                    score_str = line.split(":", 1)[1].strip()
-                    # Handle various formats: "0.8", "0.8/1", "80%"
-                    score_str = score_str.replace("/1", "").replace("%", "")
-                    if "%" in line:
-                        score = float(score_str) / 100
-                    else:
-                        score = float(score_str)
-                    score = max(0.0, min(1.0, score))  # Clamp to 0-1
+                    score = float(score_str)
                 except ValueError:
-                    logger.warning(f"[JUDGE] Failed to parse score from: {line}")
+                    raise JudgeParseError(f"Unparseable score in judge response: {line!r}")
+                if is_percent:
+                    score /= 100
+                score = max(0.0, min(1.0, score))  # Clamp to 0-1
             elif line.upper().startswith("REASONING:"):
                 reasoning = line.split(":", 1)[1].strip()
 
@@ -269,5 +286,8 @@ REASONING: [Your explanation]"""
                 elif score_line_found:
                     reasoning += line + " "
             reasoning = reasoning.strip()
+
+        if score is None:
+            raise JudgeParseError(f"No SCORE line in judge response: {response.strip()[:200]!r}")
 
         return score, reasoning

@@ -69,18 +69,23 @@ token-probability weighting) discriminates better than the current single-shot
 `SCORE: 0.8` parse. That is an idea to port into `llm_judge.py`, not a reason to
 take the dependency.
 
-### Known limitation: failed judge calls score 0.0
+### Failed judge calls are excluded, not scored 0.0
 
-`LLMJudge._evaluate` returns `score=0.0` when all retries fail, and `_parse_response`
-returns 0.0 when no `SCORE:` line is found. The generation metrics pass `result.score`
-into `MetricResult` and drop `result.metadata`, where the `{"error": ...}` marker
-lives. Aggregation (`sum(scores)/len(scores)`) therefore treats a judge timeout or a
-malformed response as "the answer was completely unfaithful".
+A judge call that fails is missing data, not evidence of an unfaithful answer, so it
+never contributes a score:
 
-Effect: transient judge flakiness silently depresses reported scores, and corrupts
-calibration — the measurement everything else rests on. The fix is to propagate the
-error marker and exclude those samples from aggregation; the runner already
-redistributes weight for objectives with no data, so the machinery exists.
+- `_parse_response` raises `JudgeParseError` when the response has no `SCORE:` line or
+  an unparseable one. This engages `_evaluate`'s retry loop — previously a malformed
+  response was accepted as a valid 0.0, so `max_retries` did nothing for that case.
+- `_evaluate` raises `JudgeError` once retries are exhausted.
+- `BaseMetric.compute_batch` catches it in `_run_one`, drops the sample, and reports
+  the reduced `sample_size`; the average is over successes only.
+- `calibration.py` drops the item and reports `dropped_judge_failures` /
+  `items_requested` in the result metadata, so a run over a flaky judge is visibly
+  thin rather than quietly computed over whatever succeeded.
+
+Genuine 0.0 scores still exist and are distinct: no context retrieved (`Faithfulness`)
+and no expected answer defined (`AnswerCorrectness`).
 
 ## Metrics & Thresholds
 

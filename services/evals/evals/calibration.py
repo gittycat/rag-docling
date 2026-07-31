@@ -64,9 +64,10 @@ async def calibrate_judge(
     judge = LLMJudge(judge_config)
     sem = asyncio.Semaphore(concurrency)
     completed = 0
+    dropped_judge_failures = 0
 
     async def _judge_one(item: dict[str, Any]) -> dict[str, Any] | None:
-        nonlocal completed
+        nonlocal completed, dropped_judge_failures
         async with sem:
             try:
                 question = item.get("question", "")
@@ -80,7 +81,17 @@ async def calibrate_judge(
 
                 faith_task = judge.evaluate_faithfulness(answer=response, context=context)
                 rel_task = judge.evaluate_context_relevance(question=question, context=context)
-                faith, rel = await asyncio.gather(faith_task, rel_task)
+                # return_exceptions so a failing judge call doesn't orphan its sibling
+                # task; either failure drops the whole item rather than scoring it 0.0,
+                # which would make the judge look wrong about ground truth it never saw.
+                faith, rel = await asyncio.gather(faith_task, rel_task, return_exceptions=True)
+                for outcome in (faith, rel):
+                    if isinstance(outcome, BaseException):
+                        dropped_judge_failures += 1
+                        logger.warning(
+                            f"[CALIBRATION] Judge failed for item {item.get('id')}: {outcome}"
+                        )
+                        return None
 
                 return {
                     "id": item.get("id"),
@@ -129,6 +140,10 @@ async def calibrate_judge(
         metadata={
             "adherence_sample_count": len(adherence_pairs),
             "relevance_sample_count": len(relevance_pairs),
+            # Surfaced so a calibration run over a flaky judge is visibly thin
+            # rather than quietly computed over whatever happened to succeed.
+            "items_requested": len(items),
+            "dropped_judge_failures": dropped_judge_failures,
         },
     )
 
