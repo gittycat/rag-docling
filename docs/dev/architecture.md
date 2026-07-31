@@ -134,6 +134,18 @@ Bind mounts: `./.cache/huggingface` (reranker model cache), `./data/indexed_docu
 
 **Session Management**: PostgreSQL-backed conversation history with persistent storage (no TTL).
 
+**In-memory chat buffers** (`pipelines/inference.py`): two process-local caches of
+`ChatMemoryBuffer` objects, both holding cleartext user messages, both bounded by an
+idle TTL plus an LRU size cap (`chat_memory.*` in `config.yml`). They live here rather
+than under `pii.*` because they are not PII-specific — every session's history passes
+through them whether masking is on or off.
+
+- `_memory_cache` (`chat_memory.persistent`): a cache in front of the PostgreSQL chat
+  store. Eviction costs one reload.
+- `_temporary_sessions` (`chat_memory.temporary`): the *only* copy of a temporary
+  session's history — no DB row, no delete hook — so the TTL is what bounds it. Kept
+  shorter on purpose; eviction ends the conversation, which "temporary" already implies.
+
 **Chat Mode**: Uses `condense_plus_context` - condenses conversation history into standalone query, then retrieves context.
 
 ### Document Metadata

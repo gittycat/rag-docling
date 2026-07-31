@@ -184,6 +184,32 @@ class RetrievalConfig(BaseModel):
     contextual_concurrency: int = 8
 
 
+class ChatMemoryCacheConfig(BaseModel):
+    """Bounds on one in-memory cache of ChatMemoryBuffer objects."""
+
+    max_sessions: int = 500
+    ttl_seconds: int = 3600
+
+
+class ChatMemoryConfig(BaseModel):
+    """Bounds on the process-local chat memory caches.
+
+    Both hold cleartext user messages in RAM, but the tradeoffs differ:
+
+    - persistent: a cache in front of PostgreSQL. Evicting costs one reload, so
+      it can be sized generously.
+    - temporary: the only copy of a temporary session's history — there is no DB
+      row and no delete hook, so the TTL is what bounds it. Kept shorter
+      deliberately: eviction ends the conversation, which is what "temporary"
+      already promises.
+    """
+
+    persistent: ChatMemoryCacheConfig = Field(default_factory=ChatMemoryCacheConfig)
+    temporary: ChatMemoryCacheConfig = Field(
+        default_factory=lambda: ChatMemoryCacheConfig(max_sessions=200, ttl_seconds=1800)
+    )
+
+
 class ChromaDBConfig(BaseModel):
     """Configuration for ChromaDB vector store."""
 
@@ -381,6 +407,7 @@ class ModelsConfig(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     chromadb: ChromaDBConfig = Field(default_factory=ChromaDBConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    chat_memory: ChatMemoryConfig = Field(default_factory=ChatMemoryConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
     _source_path: Path | None = None

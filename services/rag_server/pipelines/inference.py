@@ -16,6 +16,8 @@ import json
 import logging
 import time
 import uuid
+from collections import OrderedDict
+from dataclasses import dataclass
 
 from llama_index.core import VectorStoreIndex
 from llama_index.core.memory import ChatMemoryBuffer
@@ -46,11 +48,23 @@ logger = logging.getLogger(__name__)
 # PostgreSQL-backed chat store (persists across container restarts)
 _chat_store = None
 
-# Cache of memory buffers per session
-_memory_cache: Dict[str, ChatMemoryBuffer] = {}
+# Both caches below hold cleartext user messages for the process lifetime unless
+# bounded, so both get an idle TTL plus an LRU size cap (config: chat_memory.*).
+# Losing a persistent entry is free — the buffer rehydrates from PostgreSQL.
+# Losing a temporary entry ends that conversation, which is what "temporary"
+# already promises; there is no DB copy and no delete hook, so the TTL is the
+# only lever. Process-local by design: the server runs a single uvicorn worker.
+@dataclass
+class _MemoryEntry:
+    memory: ChatMemoryBuffer
+    last_used: float  # time.monotonic()
+
+
+# Cache of memory buffers per session (PostgreSQL-backed sessions)
+_memory_cache: "OrderedDict[str, _MemoryEntry]" = OrderedDict()
 
 # Temporary session cache (in-memory only, cleared on restart)
-_temporary_sessions: Dict[str, ChatMemoryBuffer] = {}
+_temporary_sessions: "OrderedDict[str, _MemoryEntry]" = OrderedDict()
 
 # Token counting handler (global, reset before each query)
 _token_counter: Optional[TokenCountingHandler] = None
@@ -149,6 +163,58 @@ def _get_token_limit_for_chat_history() -> int:
     return default_limit
 
 
+def _expire_idle(cache: "OrderedDict[str, _MemoryEntry]", ttl_seconds: int, now: float) -> int:
+    expired = [sid for sid, entry in cache.items() if now - entry.last_used > ttl_seconds]
+    for session_id in expired:
+        del cache[session_id]
+    return len(expired)
+
+
+def _enforce_capacity(cache: "OrderedDict[str, _MemoryEntry]", max_sessions: int) -> int:
+    # Kept in LRU order by _cache_get/_cache_put's move_to_end.
+    over_capacity = max(0, len(cache) - max_sessions)
+    for _ in range(over_capacity):
+        cache.popitem(last=False)
+    return over_capacity
+
+
+def _cache_get(
+    cache: "OrderedDict[str, _MemoryEntry]",
+    cache_config,
+    session_id: str,
+) -> Optional[ChatMemoryBuffer]:
+    """Expire idle entries, then return session_id's buffer if it survived."""
+    now = time.monotonic()
+    # Expire first, so a session idle past the TTL gets a fresh buffer rather
+    # than the stale one it would otherwise still hit.
+    dropped = _expire_idle(cache, cache_config.ttl_seconds, now)
+    if dropped:
+        logger.debug(f"[CHAT] Expired {dropped} idle memory buffer(s); {len(cache)} retained")
+
+    entry = cache.get(session_id)
+    if entry is None:
+        return None
+
+    entry.last_used = now
+    cache.move_to_end(session_id)
+    return entry.memory
+
+
+def _cache_put(
+    cache: "OrderedDict[str, _MemoryEntry]",
+    cache_config,
+    session_id: str,
+    memory: ChatMemoryBuffer,
+) -> None:
+    cache[session_id] = _MemoryEntry(memory=memory, last_used=time.monotonic())
+    cache.move_to_end(session_id)
+
+    # After the insert — the new entry is what can push the cache over the cap.
+    evicted = _enforce_capacity(cache, cache_config.max_sessions)
+    if evicted:
+        logger.info(f"[CHAT] Evicted {evicted} least-recently-used memory buffer(s)")
+
+
 def get_or_create_chat_memory(
     session_id: str,
     is_temporary: bool = False,
@@ -168,11 +234,14 @@ def get_or_create_chat_memory(
     """
     from services.session import get_session_metadata, create_session_metadata
 
+    chat_memory_config = get_models_config().chat_memory
+
     # Handle temporary sessions
     if is_temporary:
-        if session_id in _temporary_sessions:
+        cached = _cache_get(_temporary_sessions, chat_memory_config.temporary, session_id)
+        if cached is not None:
             logger.debug(f"[CHAT] Using temporary memory for session: {session_id}")
-            return _temporary_sessions[session_id]
+            return cached
 
         # Create new temporary memory (no persistence)
         token_limit = _get_token_limit_for_chat_history()
@@ -182,14 +251,15 @@ def get_or_create_chat_memory(
             chat_store_key=session_id
         )
 
-        _temporary_sessions[session_id] = memory
+        _cache_put(_temporary_sessions, chat_memory_config.temporary, session_id, memory)
         logger.info(f"[CHAT] Created temporary memory for session: {session_id} (in-memory only)")
         return memory
 
     # Check cache first
-    if session_id in _memory_cache:
+    cached = _cache_get(_memory_cache, chat_memory_config.persistent, session_id)
+    if cached is not None:
         logger.debug(f"[CHAT] Using cached memory for session: {session_id}")
-        return _memory_cache[session_id]
+        return cached
 
     # Lazy-create metadata if missing (for existing sessions)
     if ensure_metadata:
@@ -207,7 +277,7 @@ def get_or_create_chat_memory(
     )
 
     # Cache it
-    _memory_cache[session_id] = memory
+    _cache_put(_memory_cache, chat_memory_config.persistent, session_id, memory)
     logger.info(f"[CHAT] Created new memory for session: {session_id} (token_limit={token_limit})")
 
     return memory
@@ -215,9 +285,10 @@ def get_or_create_chat_memory(
 
 def clear_session_memory(session_id: str) -> None:
     """Clear chat history for a session from PostgreSQL."""
-    # Remove from cache
-    if session_id in _memory_cache:
-        del _memory_cache[session_id]
+    # Remove from cache. Temporary sessions live only here, so dropping the entry
+    # is the whole clear — nothing downstream will find them in PostgreSQL.
+    _memory_cache.pop(session_id, None)
+    _temporary_sessions.pop(session_id, None)
 
     # Drop the cleartext PII mapping with the history it belongs to
     clear_session_token_mapping(session_id)

@@ -211,6 +211,24 @@ database:
   pool_recycle: 3600    # Recycle connections after 1 hour (seconds)
 
 # ============================================================================
+# Chat Memory Caches (in-process, per rag-server worker)
+# ============================================================================
+# Both caches hold cleartext user messages in RAM. Bounded by an idle TTL and an
+# LRU size cap so a long-lived process does not accumulate every session it ever
+# served. Evicted entries are dropped, not persisted.
+chat_memory:
+  # Cache in front of the PostgreSQL chat store — eviction costs one reload.
+  persistent:
+    max_sessions: 500
+    ttl_seconds: 3600
+
+  # Temporary sessions have no DB copy, so eviction ends the conversation.
+  # Shorter on purpose: this is the only bound on cleartext temporary history.
+  temporary:
+    max_sessions: 200
+    ttl_seconds: 1800
+
+# ============================================================================
 # Prompts - RAG pipeline prompts
 # ============================================================================
 prompts:
