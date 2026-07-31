@@ -26,3 +26,12 @@ dev = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# deepeval ships a pytest11 plugin that is autoloaded and phones home on import
+# (public IP via api.ipify.org, plus a reachability probe to google.com) before
+# conftest.py gets a chance to set DEEPEVAL_TELEMETRY_OPT_OUT. Nothing in this
+# service imports deepeval, so just don't load the plugin.
+addopts = "-p no:deepeval"
