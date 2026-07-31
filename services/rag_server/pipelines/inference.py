@@ -460,11 +460,19 @@ async def _afinalize_pii_masking(pii_ctx: _PIIMaskingContext, query_text: str, r
 
 
 def _unmask_source_nodes(source_nodes: List[NodeWithScore], token_mapping: TokenMapping) -> List[NodeWithScore]:
-    """Sources shown to the user must never contain mask tokens — only the LLM-facing copy is masked."""
+    """Sources shown to the user must never contain mask tokens — only the LLM-facing copy is masked.
+
+    Covers metadata too (file_name, path): the postprocessor masks it, and
+    extract_sources reads it straight back out for display. Unmasking is a plain
+    string replace, so running it over every string value is cheap."""
     unmasked = []
     for nws in source_nodes:
         text = unmask_text(nws.node.get_content(), token_mapping).unmasked_text
-        node = TextNode(text=text, metadata=nws.node.metadata)
+        metadata = {
+            key: unmask_text(value, token_mapping).unmasked_text if isinstance(value, str) else value
+            for key, value in nws.node.metadata.items()
+        }
+        node = TextNode(text=text, metadata=metadata)
         unmasked.append(NodeWithScore(node=node, score=nws.score))
     return unmasked
 

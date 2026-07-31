@@ -56,12 +56,14 @@ When `audit.enabled: true`, all masking/unmasking operations are logged:
 | Path | Status | Description |
 |------|--------|-------------|
 | User queries | Masked | Query text, chat history, retrieved context sent to LLM |
+| Chunk metadata | Masked | Free-text metadata values (`file_name`, `path`) are masked before the synthesizer renders nodes with `MetadataMode.LLM`; unmasked again on the source nodes returned to the UI. Structural keys (`document_id`, `chunk_index`, `file_type`, `file_hash`, `file_size_bytes`, `uploaded_at`) pass through untouched |
 | Contextual retrieval | Masked | Document name + chunk preview masked before the ingestion LLM call; generated prefix unmasked before local storage/embedding (per-document token mapping) |
 | Session titles | Masked | First user message sent for title generation |
 | Evaluation | Not masked | Test data sent to evaluation LLM (`services/evals`) — do not point evals at documents containing real PII |
 
 ## Limitations
 
+- **Detection recall is the weak link**: the default `en_core_web_md` backend misses a large share of names. Notably, names joined by separators in filenames (`Jane_Doe_severance.pdf`) are **not** detected — spaCy NER needs natural-language context. Masking the metadata plumbing does not fix this; a stronger backend (GLiNER recognizer) or separator normalization does. See the strict xfail in `tests/test_pii_metadata.py`
 - **Token preservation**: LLMs may alter tokens (e.g., remove brackets). Validation detects this; fuzzy recovery attempts restoration
 - **Performance**: Adds ~20-50ms per request for Presidio analysis
 - **Not for embeddings**: Embeddings are generated from original text (stored locally in PostgreSQL)
