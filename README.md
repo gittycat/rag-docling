@@ -144,11 +144,25 @@ docker compose down
 docker compose down -v
 ```
 
+## Documentation
+
+- **[Operator guide](docs/guide/INDEX.md)** — running, configuring, and tuning
+  RAGBench. Built around the tuning loop: measure a baseline, change one thing,
+  re-measure, decide whether it helped. Covers building an evaluation set from your
+  own documents, an experiment cookbook, privacy verification, and the limits of
+  what the evaluations prove.
+- **[Internal documentation](docs/internal/INDEX.md)** — engineering reference:
+  architecture, RAG pipeline, retrieval, APIs, database, configuration, testing,
+  CI/CD, and the reasoning behind key design decisions.
+- **[Suggestions](docs/suggestions.md)** — known defects and improvement proposals.
+
+New here? Start with [what this does](docs/guide/01-what-this-does.md), then
+[getting running](docs/guide/02-getting-running.md).
+
 ## Development
 
-For development setup, testing, and technical documentation, see [DEVELOPMENT.md](DEVELOPMENT.md).
-This tech doc is more of a dumping ground for notes as I hit them during development.
-It is focused on giving an AI the background knowledge on the architecture and implementation details on a per need basis.
+Prerequisites, local setup, `just` recipes, and testing:
+[docs/internal/development.md](docs/internal/development.md).
 
 ## License
 

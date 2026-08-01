@@ -4,7 +4,8 @@
 #
 # Prerequisites:
 # 1. Set up a container registry (ghcr.io, Docker Hub, etc.)
-# 2. Push images with: just build-push (see DEVELOPMENT.md for registry setup)
+# 2. Build and push images to it (no `just` recipe exists for this yet —
+#    see docs/internal/cicd-deployment.md)
 # 3. Configure REGISTRY and VERSION below
 # 4. Ensure cloud server has Docker installed and registry access
 

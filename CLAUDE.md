@@ -12,8 +12,12 @@ For DaisyUI doc, use context7 with id: websites/daisyui
 ## Development Documentation
 
 Architecture, API reference, database patterns, configuration, eval framework, testing,
-observability, PII masking, CI/CD: see `docs/dev/INDEX.md` — load a topic with the
-`dev-docs` skill rather than reading everything.
+observability, PII masking, CI/CD, and design rationale: see `docs/internal/INDEX.md` —
+load a topic with the `dev-docs` skill rather than reading everything.
+
+Operator-facing procedure (deploying, configuring, tuning, running evals) lives in
+`docs/guide/INDEX.md`. Known defects and improvement proposals are in
+`docs/suggestions.md` — check it before "fixing" something that is already recorded.
 
 ## Python
 
@@ -42,6 +46,6 @@ observability, PII masking, CI/CD: see `docs/dev/INDEX.md` — load a topic with
 ## Common Issues
 
 - **Docker build fails:** ensure `--index-strategy unsafe-best-match` in Dockerfile
-- **Reranker slow on first query:** downloads model (~80MB), adds ~100-300ms
+- **Reranker slow on first query:** the model loads lazily and is cached process-wide; `just init` pre-caches it so boot fails fast instead of the first query paying for a download
 - **task-worker issues:** `docker compose logs task-worker` — auto-restarts, stuck tasks reset after 1 hour
-- **Slow processing:** contextual retrieval takes ~85% of time (LLM calls per chunk)
+- **Slow processing:** contextual retrieval's per-chunk LLM calls dominate ingestion time (unmeasured — see `docs/suggestions.md` §5.3)

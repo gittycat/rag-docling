@@ -26,16 +26,16 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 - **Secrets handled correctly** — API keys and DB credentials via Docker secrets mounted as files, following OWASP guidance (no secrets in environment variables or logs).
 
 ### 🎯 Retrieval Quality
-- **Hybrid search** — combines sparse keyword search (BM25) and dense vector search, fused with Reciprocal Rank Fusion (RRF) for ~48% better retrieval than either method alone.
-- **Contextual retrieval** — an LLM prepends document-level context to each chunk before embedding, cutting retrieval failures by ~49% with zero added query-time latency.
+- **Hybrid search** — combines sparse keyword search (BM25) and dense vector search, fused with Reciprocal Rank Fusion (RRF), so rare literal terms and semantic matches are both retrievable.
+- **Contextual retrieval** — an LLM prepends document-level context to each chunk before embedding, at ingestion time rather than query time. Anthropic, who published the technique, [measured a 49% reduction in retrieval failures](https://www.anthropic.com/engineering/contextual-retrieval) for contextual embeddings combined with contextual BM25, and 67% with reranking added, on their own corpus.
 - **Cross-encoder reranking** — a second-stage reranker (ms-marco-MiniLM) reorders candidates so the most relevant passages reach the model.
 - **Broad document support** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, AsciiDoc, and plain text, parsed with Docling.
 
 ### 📊 Observability & Evaluation
 - **Built-in evaluation service** — a standalone API that runs automated quality assessments against multiple datasets (RAGBench, SQuAD 2.0, QASPER, HotpotQA, MS MARCO) plus your own golden Q&A.
 - **Five headline metrics** — Retrieval Relevance, Faithfulness, Answer Completeness, Answer Relevance, and Response Latency, distilled for at-a-glance dashboards.
-- **LLM-as-judge scoring** — Anthropic Claude evaluates faithfulness, correctness, citation accuracy, and abstention handling, with configurable weighted scoring.
-- **Run comparison & trends** — compare configurations side-by-side to find the best model/setting mix for your data and cost constraints.
+- **LLM-as-judge scoring** — a configurable judge model (OpenAI or Anthropic) scores faithfulness, answer correctness, and answer relevancy. Retrieval, citation, and abstention metrics are computed without a judge, so they are deterministic and free.
+- **Run comparison & trends** — compare configurations side-by-side to find the best model/setting mix for your data and cost constraints. See [the tuning workflow](docs/guide/06-tuning-workflow.md) for how to tell a real difference from noise.
 
 ### 💬 Conversational RAG
 - **Persistent, session-based chat** — PostgreSQL-backed conversation history so context survives restarts.
@@ -65,15 +65,21 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 | **LLM Inference** | Ollama (local) or OpenAI / Anthropic / Google / DeepSeek / Moonshot (cloud) |
 | **Deployment** | Docker Compose |
 
-### Default local models
+### Running fully local
+
 | Purpose | Model | Runs on |
 |---------|-------|---------|
 | Answer generation | gemma3:4b | Ollama (local) |
 | Embeddings | nomic-embed-text | Ollama (local) |
 | Reranking | ms-marco-MiniLM-L-6-v2 | HuggingFace (local) |
-| Evaluation judge | Claude Sonnet | Anthropic (cloud) |
 
-All defaults are swappable in `config.yml`.
+Set `active.inference` and `active.embedding` to Ollama-backed entries in
+`config.yml` and no request leaves your network. Note that the checked-in
+`config.yml` ships with cloud models selected for generation and evaluation — see
+[the getting-running guide](docs/guide/02-getting-running.md) before first boot.
+
+Evaluation uses an LLM-as-judge, which requires a cloud model unless you point it
+at a local one. All model choices are swappable in `config.yml`.
 
 ---
 
@@ -90,6 +96,24 @@ RAGBench ships as a set of Docker Compose services:
 - **Ollama** (on the host) — local model inference
 
 Minimum footprint for local development: Docker, Ollama, ~4 GB RAM, ~2 GB disk. Production on-prem deployments benefit from a GPU server sized for larger open-source models.
+
+---
+
+## Documentation
+
+Two purpose-built sets:
+
+- **[Operator guide](docs/guide/INDEX.md)** — for running and tuning RAGBench on
+  your own infrastructure. Its spine is the tuning loop: measure a baseline, change
+  one thing, re-measure, decide whether it was worth it. Includes building an
+  evaluation set from your own documents, an experiment cookbook, and an honest
+  account of what the measurements can and cannot prove.
+- **[Internal documentation](docs/internal/INDEX.md)** — the engineering reference.
+  Architecture, the RAG pipeline, APIs, configuration, and the reasoning behind key
+  design decisions.
+
+[`docs/suggestions.md`](docs/suggestions.md) tracks known defects and improvement
+proposals.
 
 ---
 

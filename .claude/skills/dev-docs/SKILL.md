@@ -9,7 +9,7 @@ Load development documentation for topic: $ARGUMENTS
 
 ## Instructions
 
-1. Read the index file at `docs/dev/INDEX.md`
+1. Read the index file at `docs/internal/INDEX.md`
 2. If `$ARGUMENTS` is empty or "list", show the user the available topics from the index and stop
 3. Otherwise, match the topic against the **Topic** column keywords in the index. Pick the best matching file(s) — usually 1, sometimes 2 if the topic spans areas
 4. Read the matched file(s) using the Read tool

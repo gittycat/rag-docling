@@ -1,0 +1,159 @@
+# Testing
+
+RAGBench's test suite spans three tiers — unit, integration, and eval — each with a different
+dependency footprint and a different opt-in flag. All three are pytest-based except the eval
+tier's day-to-day invocation, which normally runs through the `evals` CLI rather than pytest
+directly.
+
+## Categories
+
+### Unit tests
+
+Unit tests live in `services/rag_server/tests/` as flat `test_*.py` files (auth, PII masking,
+config, embeddings, LLM factory, chat memory cache, contextual retrieval, worker/task
+concurrency, metrics API, privacy posture, API key validation, BM25 query safety, and more).
+They run against a local `uv`-managed virtualenv with no Docker services involved; dependencies
+are mocked (`mock_models_config`, `reset_config_singleton` fixtures in `tests/conftest.py`).
+
+```bash
+just test-unit        # alias: just test
+# underlying command:
+cd services/rag_server && .venv/bin/pytest tests/ --ignore=tests/integration -v
+```
+
+`just setup` (`uv sync --group dev --python 3.13`) must have been run at least once to create the
+venv.
+
+### Integration tests
+
+Integration tests live in `services/rag_server/tests/integration/` and exercise the real stack —
+Postgres, ChromaDB/Ollama, and the rag-server HTTP API — through a disposable container that
+reuses the `rag-server` service's own image and environment (see "Integration test design"
+below). The main compose stack (`just up`) must already be running.
+
+```bash
+just test-integration
+# underlying command:
+docker compose run --rm -e RAG_SERVER_URL=http://rag-server:8001 rag-server \
+  .venv/bin/pytest tests/integration -v --run-integration
+```
+
+`just test-integration-full` runs the same command with `--run-slow` added, additionally
+exercising tests marked `slow` (large-document ingestion, longer polling loops).
+
+### Eval tests
+
+The eval tier measures answer quality rather than code correctness, and its everyday entry point
+is the `evals` service's own CLI, not pytest:
+
+```bash
+just test-eval         # 5-sample smoke run against the ragbench dataset
+# underlying command:
+docker compose exec evals .venv/bin/python -m evals.cli eval \
+  --tier end_to_end --datasets ragbench --samples 5
+
+just test-eval-full     # all samples, all datasets (ragbench, qasper, hotpotqa, msmarco)
+```
+
+`services/evals/tests/` also contains a pytest suite (`test_rag_eval.py`, `test_api.py`,
+`test_judge_failures.py`, `test_privacy_posture.py`) that exercises the eval framework's own code
+paths, separately from the CLI-driven smoke runs above. There is no `just`/`make` recipe for
+invoking that pytest suite directly; running it means `cd services/evals && pytest
+tests/test_rag_eval.py --run-eval --eval-samples=5 -v` by hand.
+
+## Pytest markers
+
+`services/rag_server/pyproject.toml` registers three markers, all under `--strict-markers`, and
+all skipped by default:
+
+| Marker | Selects | Enabling flag | Default |
+|---|---|---|---|
+| `integration` | tests requiring Docker services (Postgres, Ollama) | `--run-integration` | skipped |
+| `slow` | tests taking longer than 30 seconds | `--run-slow` | skipped |
+| `eval` | RAG evaluation tests, require an API key for the active eval provider | `--run-eval` (plus optional `--eval-samples=N`) | skipped |
+
+The gating logic lives in `services/rag_server/tests/conftest.py`, which registers the
+`--run-integration`, `--run-slow`, `--run-eval`, and `--eval-samples` CLI options and skips the
+corresponding tests unless the flag is present. A plain `pytest tests/` run therefore executes
+only unmarked unit tests. `services/evals/pyproject.toml` has its own, simpler pytest config
+(`testpaths=["tests"]`) and does not register these markers.
+
+## Integration test design: no separate test-runner service
+
+Integration tests run inside a disposable container built from the **same service definition as
+`rag-server`** (`docker compose run --rm rag-server ...`), not a dedicated `test-runner` service.
+The alternative — a parallel compose service just to execute tests — would need to duplicate
+rag-server's environment variables, Docker secrets, volume mounts, and network placement by hand,
+and every change to rag-server's config would risk drifting out of sync with a second definition
+nobody remembers to update. Reusing the `rag-server` service avoids that: the test container gets
+the real image, the real secrets mounts, the real `private`/`public` network placement, for free.
+
+The integration `conftest.py` layers two more pieces on top of this:
+
+- A session-scoped `check_services` fixture fails the whole session up front if Postgres, Ollama,
+  or the rag-server `/health` endpoint aren't reachable, then drains the task queue (waits up to
+  600 seconds for `job_tasks` rows to leave `pending`/`in_progress`) so pre-existing async work
+  doesn't interfere with the run.
+- When `/run/secrets` exists on disk (i.e. the tests are actually running inside the `rag-server`
+  container, as `just test-integration` arranges), the fixtures re-initialize `Settings` from the
+  mounted Docker secrets instead of the mock settings unit tests use — this is the mechanism that
+  gives integration tests real credentials rather than test doubles.
+- The `integration_env` fixture sets integration-specific overrides on top of that — notably
+  `ENABLE_CONTEXTUAL_RETRIEVAL=false` (disabled for test speed) alongside
+  `ENABLE_HYBRID_SEARCH=true` and `ENABLE_RERANKER=true` — and restores prior environment on
+  teardown.
+
+## Fixtures of note
+
+- `sample_pdf`, `corrupted_pdf`, `sample_text_file`, `large_text_file` generate synthetic
+  documents on the fly with `fpdf2` — no static fixture files are checked in for these cases.
+- `large_public_markdown` and `large_public_pdf` (session-scoped) download real external
+  documents over the network (an SDK README, an arXiv paper) for realistic-size testing; both
+  `skip` rather than fail if the download fails or the file turns out too small.
+- `api_client` is a session-scoped `httpx.Client`; `upload_and_wait` uploads a document and polls
+  `/tasks/{batch_id}/status` until it completes; `document_cleanup`/`session_cleanup` collect
+  teardown-time deletions; `test_document` composes all of the above into a create-upload-wait-
+  yield-delete fixture for an end-to-end round trip.
+- `wait_for_task` polls with a 300-second default timeout and tolerates transient 404/500
+  responses while workers are still committing progress.
+- `reset_config_singleton` (autouse, unit tests) resets the models-config singleton before and
+  after every test; `mock_models_config` patches `get_models_config` to a fixed configuration
+  (Ollama LLM/embedding, Anthropic eval, reranker enabled) for isolated unit tests.
+
+## Known stale test: `tests/test_bm25_query_safety.py`
+
+There are two BM25 query implementations in the codebase, and this test file no longer tracks
+the one that is actually live.
+
+The retrieval path the query pipeline actually uses is `PgSearchBM25Retriever`
+(`infrastructure/search/bm25_retriever.py`), wired into hybrid search from
+`infrastructure/search/hybrid_retriever.py`. Its SQL builds the query with pg_textsearch's
+`to_bm25query(...)` function and the `<@>` distance operator. A second, older function,
+`search_chunks_bm25` in `infrastructure/database/documents.py`, still builds SQL the previous
+way — via `bm25_search(...)` and `websearch_to_tsquery(...)` — but nothing in the running
+application calls it anymore; its only remaining caller is this test file.
+
+`test_bm25_query_safety.py` asserts that **both** functions produce SQL containing
+`bm25_search(` and `websearch_to_tsquery('english', :query)`. That assertion is true of the dead
+`search_chunks_bm25` helper, but it does not match what `PgSearchBM25Retriever._search_bm25`
+actually emits today — reading that method directly shows `to_bm25query`/`<@>` in the generated
+SQL, not `bm25_search`/`websearch_to_tsquery`. The test was written against the old
+implementation and never updated when the live retriever moved to pg_textsearch's newer
+operator form.
+
+Practically, this means the test gives false confidence: a green `test_document_bm25_search_uses_pg_textsearch`
+result only proves an unused code path still looks the way it always did, and
+`test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries` is asserting on SQL text the
+current retriever does not produce, so it is checking the wrong thing rather than checking
+nothing — it does not exercise or validate the BM25 query safety of the code path that actually
+serves queries. Anyone touching `PgSearchBM25Retriever`'s SQL should not treat this file as a
+safety net.
+
+## Frontend tests
+
+There is no frontend test framework in `services/webapp`. `package.json` defines only `dev`,
+`build`, `preview`, `prepare`, `check`, and `check:watch` scripts — no `test` script, and no
+vitest, Playwright, or similar config exists anywhere under `services/webapp`. No `*.test.*` or
+`*.spec.*` files exist in `services/webapp/src` either. The only check the frontend has is static
+type checking via `svelte-check` (`just`-less: `npm run check` / `npm run check:watch` inside
+`services/webapp`), which catches type and template errors but exercises no runtime behavior.
