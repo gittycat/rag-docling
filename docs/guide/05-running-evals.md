@@ -237,11 +237,15 @@ is process-wide, not per-user.
 
 ### From the dashboard
 
-You cannot start an evaluation from the dashboard. The API supports it and no UI
-calls it — the empty state in the Experiments tab tells you to use the CLI. The
-dashboard is for *reading* results, which chapter 9 covers.
+The Experiments tab has a **Run evaluation** panel. "Options" opens the form —
+run name, tier, datasets (filtered to those supporting the selected tier),
+samples per dataset, seed, and whether the LLM judge is enabled; "Start run"
+posts it. While a run is active the panel replaces the form with live progress
+(phase, current dataset, question counter, elapsed time) and a **Cancel** button.
+The run list refreshes on its own when the run finishes.
 
-This is the most-requested item in [`docs/suggestions.md`](../suggestions.md).
+The same one-at-a-time rule applies: starting a run while one is active surfaces
+the service's `409` as an error in the panel.
 
 ---
 

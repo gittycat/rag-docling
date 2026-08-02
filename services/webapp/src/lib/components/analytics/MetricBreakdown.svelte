@@ -2,10 +2,11 @@
 	import type { EvalRunDetail, ScorecardMetric } from '$lib/api/evals';
 	import type { Bracket, BracketHealth } from '$lib/utils/stageHealth';
 	import { bracketForGroup } from '$lib/utils/stageHealth';
-	import { thresholdColorClass } from '$lib/utils/thresholds';
+	import { thresholdBand, thresholdColorClass } from '$lib/utils/thresholds';
 	import { metricDescription, metricLabel, STAGE_INFO } from '$lib/utils/metricInfo';
 	import InfoTip from './InfoTip.svelte';
 	import HealthBadge from './HealthBadge.svelte';
+	import ScoreDistribution from './ScoreDistribution.svelte';
 
 	interface Props {
 		detail: EvalRunDetail | null;
@@ -32,6 +33,23 @@
 
 	function metricsByGroup(group: string): ScorecardMetric[] {
 		return detail?.scorecard?.metrics.filter((m) => m.group === group) ?? [];
+	}
+
+	function stdDev(m: ScorecardMetric): number | null {
+		return typeof m.details?.std_dev === 'number' ? m.details.std_dev : null;
+	}
+
+	function individualScores(m: ScorecardMetric): number[] {
+		const raw = m.details?.individual_scores;
+		if (!Array.isArray(raw)) return [];
+		return raw.filter((v): v is number => typeof v === 'number');
+	}
+
+	// Which per-metric distributions are expanded, keyed by "group/name".
+	let expanded = $state<Record<string, boolean>>({});
+
+	function toggle(key: string) {
+		expanded = { ...expanded, [key]: !expanded[key] };
 	}
 
 	// Pill background tint derived from the metric's threshold band.
@@ -64,17 +82,46 @@
 				<div class="flex flex-col divide-y divide-base-content/5">
 					{#each groupMetrics as m}
 						{@const desc = metricDescription(m.name)}
-						<div class="flex items-center justify-between gap-2 py-1">
-							<span class="capitalize text-xs inline-flex items-center gap-1">
-								{metricLabel(m.name)}
-								{#if desc}<InfoTip text={desc} />{/if}
-								{#if group === 'generation' && typeof m.details?.std_dev === 'number'}
-									<span class="text-base-content/40 text-[10px]">±{((m.details.std_dev as number) * 100).toFixed(1)}%</span>
-								{/if}
-							</span>
-							<span class="px-1.5 py-0.5 rounded-sm font-mono tabular-nums text-xs {pillClass(m.name, m.value)}">
-								{(m.value * 100).toFixed(1)}%
-							</span>
+						{@const sd = stdDev(m)}
+						{@const scores = individualScores(m)}
+						{@const key = `${group}/${m.name}`}
+						<div class="flex flex-col py-1">
+							<div class="flex items-center justify-between gap-2">
+								<span class="capitalize text-xs inline-flex items-center gap-1">
+									{metricLabel(m.name)}
+									{#if desc}<InfoTip text={desc} />{/if}
+									{#if sd != null}
+										<span class="text-base-content/40 text-[10px]" title="Standard deviation across questions">
+											±{(sd * 100).toFixed(1)}%
+										</span>
+									{/if}
+									{#if m.sample_size}
+										<span class="text-base-content/30 text-[10px]">n={m.sample_size}</span>
+									{/if}
+								</span>
+								<span class="inline-flex items-center gap-1">
+									{#if scores.length > 0}
+										<button
+											class="btn btn-ghost btn-xs px-1 h-5 min-h-0 text-[10px] font-mono"
+											onclick={() => toggle(key)}
+											aria-expanded={!!expanded[key]}
+											title="Per-question score distribution"
+										>
+											{expanded[key] ? '▾' : '▸'} dist
+										</button>
+									{/if}
+									<!-- Shape + color: the band must survive greyscale. -->
+									<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm font-mono tabular-nums text-xs {pillClass(m.name, m.value)}">
+										<HealthBadge health={thresholdBand(m.name, m.value)} showWord={false} />
+										{(m.value * 100).toFixed(1)}%
+									</span>
+								</span>
+							</div>
+							{#if expanded[key] && scores.length > 0}
+								<div class="mt-1.5 mb-1 pl-1 pr-1">
+									<ScoreDistribution {scores} />
+								</div>
+							{/if}
 						</div>
 					{/each}
 				</div>

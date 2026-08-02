@@ -8,6 +8,18 @@
 	import HealthTab from '$lib/components/analytics/HealthTab.svelte';
 	import ExperimentsTab from '$lib/components/analytics/ExperimentsTab.svelte';
 	import SystemHealthTab from '$lib/components/analytics/SystemHealthTab.svelte';
+	import HealthBadge from '$lib/components/analytics/HealthBadge.svelte';
+	import type { Health } from '$lib/utils/stageHealth';
+
+	// Component/system status strings mapped onto the shared traffic-light bands so
+	// status is never conveyed by color alone.
+	function statusHealth(status: string): Health {
+		const s = status?.toLowerCase() ?? '';
+		if (['healthy', 'loaded', 'available', 'ok'].includes(s)) return 'good';
+		if (['unavailable', 'unhealthy', 'error', 'failed'].includes(s)) return 'bad';
+		if (!s || s === 'unknown') return 'unknown';
+		return 'warn';
+	}
 
 	let metrics = $state<SystemMetrics | null>(null);
 	let evalDashboard = $state<EvalDashboardResponse | null>(null);
@@ -155,12 +167,7 @@
 				<span class="text-base-content/50">v{metrics.version}</span>
 				<div class="divider divider-horizontal mx-0 h-4"></div>
 				<span class="flex items-center gap-1">
-					<span
-						class="h-2 w-2 rounded-full {metrics.health_status === 'healthy'
-							? 'bg-success animate-pulse'
-							: 'bg-error'}"
-					></span>
-					<span class="capitalize">{metrics.health_status}</span>
+					<HealthBadge health={statusHealth(metrics.health_status)} label={metrics.health_status} />
 				</span>
 				<div class="divider divider-horizontal mx-0 h-4"></div>
 				<span><strong>{metrics.document_count}</strong> docs</span>
@@ -267,13 +274,9 @@
 						<span
 							class="flex items-center gap-1 text-xs font-mono bg-base-200 border border-base-content/10 rounded-sm px-1.5 py-0.5"
 						>
-							<span
-								class="h-1.5 w-1.5 rounded-full {status === 'healthy' ||
-								status === 'available'
-									? 'bg-success'
-									: 'bg-error'}"
-							></span>
+							<HealthBadge health={statusHealth(status)} label={status} showWord={false} />
 							<span class="capitalize">{name}</span>
+							<span class="text-base-content/50">{status}</span>
 						</span>
 					</div>
 				{/each}

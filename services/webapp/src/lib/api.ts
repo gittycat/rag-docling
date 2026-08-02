@@ -298,6 +298,39 @@ export async function fetchSystemMetrics(): Promise<SystemMetrics> {
 	return response.json();
 }
 
+export interface ModelsInfo {
+	llm_model: string;
+	llm_provider: string;
+	llm_hosting: string;
+	embedding_model: string;
+	reranker_model: string | null;
+	reranker_enabled: boolean;
+	cost_per_1m_input_tokens: number;
+	cost_per_1m_output_tokens: number;
+}
+
+export interface AppConfig {
+	max_upload_size_mb: number;
+}
+
+/** Per-model cost rates — used to show cost context alongside eval results. */
+export async function fetchModelsInfo(): Promise<ModelsInfo> {
+	const response = await fetch(`${API_BASE}/models/info`);
+	if (!response.ok) {
+		throw new Error(`Failed to fetch model info: ${response.statusText}`);
+	}
+	return response.json();
+}
+
+/** Server-side limits the UI must respect (currently the upload size cap). */
+export async function fetchAppConfig(): Promise<AppConfig> {
+	const response = await fetch(`${API_BASE}/config`);
+	if (!response.ok) {
+		throw new Error(`Failed to fetch config: ${response.statusText}`);
+	}
+	return response.json();
+}
+
 export async function fetchHealth(): Promise<{ status: string }> {
 	const response = await fetch(`${API_BASE}/health`);
 	if (!response.ok) {
@@ -469,23 +502,6 @@ export async function getChatHistory(sessionId: string): Promise<ChatHistoryResp
 		throw new Error(`Failed to fetch chat history: ${response.statusText}`);
 	}
 	return response.json();
-}
-
-/**
- * Clear chat history for a session.
- */
-export async function clearChatSession(sessionId: string): Promise<void> {
-	const response = await fetch(`${API_BASE}/chat/clear`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json'
-		},
-		body: JSON.stringify({ session_id: sessionId })
-	});
-
-	if (!response.ok) {
-		throw new Error(`Failed to clear session: ${response.statusText}`);
-	}
 }
 
 /**

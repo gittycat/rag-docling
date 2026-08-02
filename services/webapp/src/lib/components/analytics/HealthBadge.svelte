@@ -6,9 +6,11 @@
 		/** Override the default word (good/weak/critical/no data). */
 		label?: string;
 		size?: 'sm' | 'md';
+		/** Hide the word and keep the shape — the label stays available to screen readers. */
+		showWord?: boolean;
 	}
 
-	let { health, label, size = 'sm' }: Props = $props();
+	let { health, label, size = 'sm', showWord = true }: Props = $props();
 
 	// Accessibility: never color-only. Each band gets a distinct shape AND word,
 	// so the signal survives greyscale / color-blindness.
@@ -43,5 +45,7 @@
 			<rect x="1" y="5" width="10" height="2" rx="1" />
 		{/if}
 	</svg>
-	<span class="font-mono text-[10px] font-semibold uppercase tracking-wider">{word}</span>
+	{#if showWord}
+		<span class="font-mono text-[10px] font-semibold uppercase tracking-wider">{word}</span>
+	{/if}
 </span>

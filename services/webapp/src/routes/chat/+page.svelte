@@ -5,7 +5,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import {
 		streamQuery,
-		clearChatSession,
 		getChatHistory,
 		getDocumentDownloadUrl,
 		createNewSession,
@@ -301,14 +300,31 @@
 		URL.revokeObjectURL(url);
 	}
 
-	// Deduplicate sources by document_id
+	// Deduplicate passages, not documents: two chunks from the same file are two
+	// distinct pieces of evidence and both are worth showing.
 	function getUniqueSources(sources: ChatSource[]): ChatSource[] {
 		const seen = new Set<string>();
 		return sources.filter((s) => {
-			if (!s.document_id || seen.has(s.document_id)) return false;
-			seen.add(s.document_id);
+			const key = `${s.document_id ?? s.document_name}::${s.excerpt}`;
+			if (seen.has(key)) return false;
+			seen.add(key);
 			return true;
 		});
+	}
+
+	function sourceKey(message: number, index: number): string {
+		return `${message}:${index}`;
+	}
+
+	// Which source passages are expanded, keyed by message index + source index.
+	let expandedSources = $state<Record<string, boolean>>({});
+
+	function toggleSource(key: string) {
+		expandedSources = { ...expandedSources, [key]: !expandedSources[key] };
+	}
+
+	function formatScore(score: number | null): string {
+		return score != null ? score.toFixed(3) : '—';
 	}
 </script>
 
@@ -429,38 +445,70 @@
 				{#if message.role === 'assistant' && message.sources && message.sources.length > 0}
 					{@const uniqueSources = getUniqueSources(message.sources)}
 					{#if uniqueSources.length > 0}
-						<div class="chat-footer mt-2">
-							<div class="text-xs opacity-70">Sources:</div>
-							<div class="mt-1 flex flex-wrap gap-1">
-								{#each uniqueSources as source (source.document_id)}
-									{#if source.document_id}
-										<a
-											href={getDocumentDownloadUrl(source.document_id)}
-											class="badge badge-outline badge-sm transition-colors hover:badge-primary"
-											target="_blank"
-											title={source.excerpt}
-										>
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="mr-1 h-3 w-3"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
+						<div class="chat-footer mt-2 w-full max-w-3xl">
+							<div class="text-xs opacity-70">
+								Sources ({uniqueSources.length}) — expand to read the retrieved passage
+							</div>
+							<div class="mt-1 flex flex-col gap-1">
+								{#each uniqueSources as source, si}
+									{@const key = sourceKey(index, si)}
+									{@const open = !!expandedSources[key]}
+									<div class="rounded-sm border border-base-300 bg-base-200/40">
+										<div class="flex items-center gap-2 px-2 py-1">
+											<button
+												class="btn btn-ghost btn-xs px-1 h-5 min-h-0 font-mono"
+												onclick={() => toggleSource(key)}
+												aria-expanded={open}
+												aria-label="{open ? 'Collapse' : 'Expand'} passage from {source.document_name}"
 											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-												/>
-											</svg>
-											{source.document_name}
-										</a>
-									{:else}
-										<span class="badge badge-ghost badge-sm" title={source.excerpt}>
-											{source.document_name}
-										</span>
-									{/if}
+												{open ? '▾' : '▸'}
+											</button>
+											<span class="text-xs font-medium truncate flex-1" title={source.path || source.document_name}>
+												{source.document_name}
+											</span>
+											<span
+												class="badge badge-ghost badge-xs font-mono tabular-nums"
+												title="Retrieval score (higher is a closer match)"
+											>
+												{formatScore(source.score)}
+											</span>
+											{#if source.document_id}
+												<a
+													href={getDocumentDownloadUrl(source.document_id)}
+													class="btn btn-ghost btn-xs px-1 h-5 min-h-0"
+													target="_blank"
+													rel="noopener"
+													aria-label="Download {source.document_name}"
+													title="Download source document"
+												>
+													<svg
+														xmlns="http://www.w3.org/2000/svg"
+														class="h-3.5 w-3.5"
+														fill="none"
+														viewBox="0 0 24 24"
+														stroke="currentColor"
+														stroke-width="2"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"
+														/>
+													</svg>
+												</a>
+											{/if}
+										</div>
+										{#if open}
+											<div class="border-t border-base-300 px-2 py-1.5">
+												{#if source.path}
+													<div class="text-[10px] font-mono opacity-50 break-all mb-1">{source.path}</div>
+												{/if}
+												<div class="text-xs whitespace-pre-wrap max-h-64 overflow-y-auto opacity-90">
+													{source.full_text || source.excerpt}
+												</div>
+											</div>
+										{/if}
+									</div>
 								{/each}
 							</div>
 						</div>

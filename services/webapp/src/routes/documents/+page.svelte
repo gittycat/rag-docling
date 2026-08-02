@@ -13,21 +13,30 @@
 	let selectedIds = new SvelteSet<string>();
 	let isLoading = $state(true);
 	let error = $state<string | null>(null);
+	let deleteFailures = $state<{ id: string; name: string; reason: string }[]>([]);
 	let isDeleting = $state(false);
 
 	// Sorting state
 	let sortBy = $state<DocumentSortField>('uploaded_at');
 	let sortOrder = $state<SortOrder>('desc');
 
-	// Pagination - limit visible rows
-	const MAX_VISIBLE_ROWS = 15;
+	// Pagination over the fetched list (the API returns everything in one call).
+	const PAGE_SIZES = [15, 25, 50, 100];
+	let pageSize = $state(25);
+	let page = $state(1);
 
 	const allSelected = $derived(documents.length > 0 && selectedIds.size === documents.length);
 	const someSelected = $derived(selectedIds.size > 0);
 
-	// Calculate visible documents and remaining count
-	const visibleDocuments = $derived(documents.slice(0, MAX_VISIBLE_ROWS));
-	const remainingCount = $derived(Math.max(0, documents.length - MAX_VISIBLE_ROWS));
+	const pageCount = $derived(Math.max(1, Math.ceil(documents.length / pageSize)));
+	// Clamp when the list shrinks (deletes, sort changes) so the page is never empty.
+	const currentPage = $derived(Math.min(page, pageCount));
+	const pageStart = $derived((currentPage - 1) * pageSize);
+	const visibleDocuments = $derived(documents.slice(pageStart, pageStart + pageSize));
+
+	function goToPage(next: number) {
+		page = Math.min(Math.max(1, next), pageCount);
+	}
 
 	onMount(async () => {
 		await loadDocuments();
@@ -88,6 +97,7 @@
 		if (!confirm('Are you sure you want to delete this document?')) return;
 
 		isDeleting = true;
+		deleteFailures = [];
 		try {
 			await deleteDocument(id);
 			selectedIds.delete(id);
@@ -103,12 +113,37 @@
 		if (!confirm(`Are you sure you want to delete ${selectedIds.size} document(s)?`)) return;
 
 		isDeleting = true;
+		error = null;
+		deleteFailures = [];
 		try {
 			const idsToDelete = Array.from(selectedIds);
-			for (const id of idsToDelete) {
-				await deleteDocument(id);
+			const nameOf = new Map(documents.map((d) => [d.id, d.file_name]));
+
+			// A partial failure must not be reported as success: settle every delete,
+			// keep the ones that failed selected, and name them.
+			const results = await Promise.allSettled(idsToDelete.map((id) => deleteDocument(id)));
+
+			const failures: { id: string; name: string; reason: string }[] = [];
+			results.forEach((result, i) => {
+				const id = idsToDelete[i];
+				if (result.status === 'fulfilled') {
+					selectedIds.delete(id);
+				} else {
+					failures.push({
+						id,
+						name: nameOf.get(id) ?? id,
+						reason:
+							result.reason instanceof Error ? result.reason.message : 'Delete failed'
+					});
+				}
+			});
+
+			deleteFailures = failures;
+			if (failures.length > 0) {
+				const succeeded = idsToDelete.length - failures.length;
+				error = `${succeeded} of ${idsToDelete.length} document(s) deleted — ${failures.length} failed.`;
 			}
-			selectedIds.clear();
+
 			await loadDocuments();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete documents';
@@ -126,6 +161,7 @@
 			sortBy = field;
 			sortOrder = field === 'name' ? 'asc' : 'desc';
 		}
+		page = 1;
 		await loadDocuments();
 	}
 
@@ -211,8 +247,25 @@
 					d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
 				/>
 			</svg>
-			<span>{error}</span>
-			<button class="btn btn-ghost btn-sm" onclick={() => (error = null)}>Dismiss</button>
+			<div class="flex-1">
+				<div>{error}</div>
+				{#if deleteFailures.length > 0}
+					<ul class="mt-1 text-xs font-mono list-disc list-inside">
+						{#each deleteFailures as failure (failure.id)}
+							<li class="truncate" title="{failure.name}: {failure.reason}">
+								{failure.name} — {failure.reason}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+			<button
+				class="btn btn-ghost btn-sm"
+				onclick={() => {
+					error = null;
+					deleteFailures = [];
+				}}>Dismiss</button
+			>
 		</div>
 	{/if}
 
@@ -227,12 +280,13 @@
 				<thead>
 					<tr class="bg-base-200">
 						<th class="w-8">
-							<label>
+							<label title="Select all {documents.length} documents (every page)">
 								<input
 									type="checkbox"
 									class="checkbox checkbox-xs"
 									checked={allSelected}
 									onchange={toggleSelectAll}
+									aria-label="Select all documents"
 								/>
 							</label>
 						</th>
@@ -326,10 +380,44 @@
 				</tbody>
 			</table>
 
-			<!-- Remaining documents indicator -->
-			{#if remainingCount > 0}
-				<div class="text-center py-3 text-sm text-base-content/60 bg-base-200/50 border-t border-base-300">
-					+{remainingCount} more document{remainingCount === 1 ? '' : 's'} stored
+			<!-- Pagination -->
+			{#if documents.length > 0}
+				<div
+					class="flex items-center gap-3 flex-wrap py-2 px-2 text-xs text-base-content/60 bg-base-200/50 border-t border-base-300"
+				>
+					<span class="font-mono tabular-nums">
+						{pageStart + 1}–{Math.min(pageStart + pageSize, documents.length)} of {documents.length}
+					</span>
+					<label class="flex items-center gap-1">
+						<span>Rows</span>
+						<select
+							class="select select-xs select-bordered"
+							bind:value={pageSize}
+							onchange={() => (page = 1)}
+						>
+							{#each PAGE_SIZES as size}
+								<option value={size}>{size}</option>
+							{/each}
+						</select>
+					</label>
+					<div class="flex-1"></div>
+					<div class="join">
+						<button
+							class="btn btn-xs join-item"
+							onclick={() => goToPage(currentPage - 1)}
+							disabled={currentPage <= 1}
+							aria-label="Previous page">‹</button
+						>
+						<span class="btn btn-xs join-item pointer-events-none font-mono">
+							{currentPage} / {pageCount}
+						</span>
+						<button
+							class="btn btn-xs join-item"
+							onclick={() => goToPage(currentPage + 1)}
+							disabled={currentPage >= pageCount}
+							aria-label="Next page">›</button
+						>
+					</div>
 				</div>
 			{/if}
 		{/if}

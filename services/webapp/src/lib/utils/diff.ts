@@ -1,13 +1,24 @@
 /**
- * Configuration diff utilities for comparing eval run configs
+ * Configuration diff utilities for comparing eval run configs.
+ *
+ * n-way by design: the comparison UI lets a user select up to four runs, so a
+ * two-column diff would silently ignore selected input.
  */
 import type { EvalRunConfig } from '$lib/api/evals';
 
-export interface DiffLine {
-	key: string;
+export interface DiffCell {
 	value: string;
-	oldValue?: string;
-	type: 'same' | 'added' | 'removed' | 'changed';
+	/** Differs from the baseline (first) column. */
+	changed: boolean;
+	/** Value was never captured for this run — not the same as "off"/"absent". */
+	unknown: boolean;
+}
+
+export interface DiffRow {
+	key: string;
+	cells: DiffCell[];
+	/** At least one column differs from the baseline. */
+	varies: boolean;
 }
 
 const CONFIG_KEYS: (keyof EvalRunConfig)[] = [
@@ -21,66 +32,45 @@ const CONFIG_KEYS: (keyof EvalRunConfig)[] = [
 ];
 
 // For these, null means the runner never captured the setting — not that it was
-// off or absent. Showing them as added/removed would report a config change that
-// did not happen. `reranker_model` is deliberately excluded: there, null does
-// mean "no reranker".
+// off or absent. Reporting them as changed would report a config change that did
+// not happen. `reranker_model` is deliberately excluded: there, null does mean
+// "no reranker".
 const UNKNOWN_WHEN_NULL = new Set<string>([
 	'retrieval_top_k',
 	'hybrid_search_enabled',
 	'contextual_retrieval_enabled'
 ]);
 
-/**
- * Compare two eval run configs and return diff lines
- * Produces a git-style diff with additions, removals, and changes
- */
-export function diffConfigs(
-	configA: EvalRunConfig | null | undefined,
-	configB: EvalRunConfig | null | undefined
-): DiffLine[] {
-	if (!configA && !configB) return [];
-	if (!configA) return objectToDiff(configB!, 'added');
-	if (!configB) return objectToDiff(configA, 'removed');
+const UNKNOWN = 'Unknown';
+const ABSENT = '—';
 
-	const results: DiffLine[] = [];
+/**
+ * Compare n eval run configs against the first (baseline) one.
+ * Rows with no captured value in any run are omitted entirely.
+ */
+export function diffConfigs(configs: (EvalRunConfig | null | undefined)[]): DiffRow[] {
+	if (configs.length === 0) return [];
+
+	const rows: DiffRow[] = [];
 
 	for (const key of CONFIG_KEYS) {
-		const aVal = formatValue(configA[key], key);
-		const bVal = formatValue(configB[key], key);
+		const raw = configs.map((c) => formatValue(c?.[key], key));
+		if (raw.every((v) => v === '')) continue;
 
-		if (aVal === '' && bVal === '') {
-			continue;
-		} else if (aVal === '') {
-			results.push({ key: formatKey(key), value: bVal, type: 'added' });
-		} else if (bVal === '') {
-			results.push({ key: formatKey(key), value: aVal, type: 'removed' });
-		} else if (aVal !== bVal) {
-			results.push({ key: formatKey(key), value: bVal, oldValue: aVal, type: 'changed' });
-		} else {
-			results.push({ key: formatKey(key), value: aVal, type: 'same' });
-		}
+		const cells: DiffCell[] = raw.map((value, i) => ({
+			value: value === '' ? ABSENT : value,
+			// An uncaptured value cannot be claimed to differ from anything.
+			changed: i > 0 && value !== raw[0] && value !== UNKNOWN && raw[0] !== UNKNOWN,
+			unknown: value === UNKNOWN
+		}));
+
+		rows.push({ key: formatKey(key), cells, varies: cells.some((c) => c.changed) });
 	}
 
-	return results;
+	return rows;
 }
 
-/**
- * Convert a single config to diff lines (all added or all removed)
- */
-function objectToDiff(config: EvalRunConfig, type: 'added' | 'removed'): DiffLine[] {
-	const results: DiffLine[] = [];
-	for (const key of CONFIG_KEYS) {
-		const value = formatValue(config[key], key);
-		if (value !== '') {
-			results.push({ key: formatKey(key), value, type });
-		}
-	}
-	return results;
-}
-
-/**
- * Format a config key for display (snake_case to Title Case)
- */
+/** snake_case config key to Title Case label. */
 function formatKey(key: string): string {
 	return key
 		.replace(/_/g, ' ')
@@ -88,45 +78,17 @@ function formatKey(key: string): string {
 		.replace(/Llm/g, 'LLM');
 }
 
-/**
- * Format a config value for display
- */
 function formatValue(value: unknown, key?: string): string {
 	if (value === undefined || value === null) {
-		return key && UNKNOWN_WHEN_NULL.has(key) ? 'Unknown' : '';
+		return key && UNKNOWN_WHEN_NULL.has(key) ? UNKNOWN : '';
 	}
 	if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
 	return String(value);
 }
 
-/**
- * Get CSS classes for a diff line type
- */
-export function getDiffLineClasses(type: DiffLine['type']): string {
-	switch (type) {
-		case 'added':
-			return 'bg-success/20 text-success';
-		case 'removed':
-			return 'bg-error/20 text-error';
-		case 'changed':
-			return 'bg-warning/20 text-warning';
-		default:
-			return '';
-	}
-}
-
-/**
- * Get the prefix character for a diff line
- */
-export function getDiffPrefix(type: DiffLine['type']): string {
-	switch (type) {
-		case 'added':
-			return '+';
-		case 'removed':
-			return '-';
-		case 'changed':
-			return '~';
-		default:
-			return ' ';
-	}
+/** CSS classes for a cell, given whether it differs from the baseline. */
+export function getDiffCellClasses(cell: DiffCell): string {
+	if (cell.unknown) return 'text-base-content/40 italic';
+	if (cell.changed) return 'bg-warning/20 text-warning';
+	return '';
 }

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { SystemMetrics } from '$lib/api';
+	import type { Health } from '$lib/utils/stageHealth';
+	import HealthBadge from './HealthBadge.svelte';
 
 	interface Props {
 		metrics: SystemMetrics | null;
@@ -7,11 +9,22 @@
 
 	let { metrics }: Props = $props();
 
-	function getStatusBadge(status: string): string {
+	function statusHealth(status: string): Health {
 		const s = status?.toLowerCase() || '';
-		if (['healthy', 'loaded', 'available'].includes(s)) return 'badge-success';
-		if (['unavailable', 'unhealthy', 'error'].includes(s)) return 'badge-error';
-		return 'badge-warning';
+		if (['healthy', 'loaded', 'available'].includes(s)) return 'good';
+		if (['unavailable', 'unhealthy', 'error'].includes(s)) return 'bad';
+		return 'warn';
+	}
+
+	function getStatusBadge(status: string): string {
+		switch (statusHealth(status)) {
+			case 'good':
+				return 'badge-success';
+			case 'bad':
+				return 'badge-error';
+			default:
+				return 'badge-warning';
+		}
 	}
 
 	function formatSize(mb: number | undefined): string {
@@ -35,7 +48,7 @@
 			<div class="flex flex-wrap gap-2">
 				{#each Object.entries(metrics.component_status) as [component, status]}
 					<div class="flex items-center gap-1.5 bg-base-100 border border-base-content/10 rounded-sm px-2 py-1">
-						<span class="h-2 w-2 rounded-full {getStatusBadge(status).replace('badge-', 'bg-')}"></span>
+						<HealthBadge health={statusHealth(status)} label={status} showWord={false} />
 						<span class="text-xs capitalize">{component}</span>
 						<span class="badge badge-xs {getStatusBadge(status)}">{status}</span>
 					</div>

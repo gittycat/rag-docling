@@ -35,7 +35,7 @@ dropping to a terminal.
 `GET /eval/runs/active`, and a cancel button.
 **Where.** `services/webapp/src/lib/components/analytics/ExperimentsTab.svelte`,
 `services/evals/api/routes.py`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). `RunEvalPanel.svelte` in the Experiments tab: trigger form (name, tier, datasets, samples, seed, judge), live progress poll against `GET /eval/runs/active`, and a cancel button. Smoke-testing the trigger surfaced a backend defect, fixed in the same pass: `JobManager.trigger` claimed the single active-job slot *before* validating datasets and tier, so a rejected request (422) left the service permanently believing a job was queued and every later trigger returned 409 until someone called `DELETE /eval/runs/active`. Validation now happens before the slot is claimed, and a failure to start the thread releases it.
 
 ### 1.2 Weighted score is shown without its breakdown
 **What.** The API returns `weighted_score` with `weights`, `contributions`, and
@@ -47,7 +47,7 @@ contributions makes an opinionated aggregate look like a measurement, and gives 
 user no way to see that, say, latency contributed almost nothing.
 **Effort.** S — the data is already in the response.
 **Where.** `services/webapp/src/lib/components/analytics/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). `WeightedScoreBreakdown.svelte` renders weights, effective share after redistribution, per-objective score, contribution, and share of the total, plus the objectives that had no data.
 
 ### 1.3 Standard deviation is dropped for most metric groups
 **What.** `MetricResult.details.std_dev` is computed for every metric. The UI
@@ -59,7 +59,7 @@ in three of four groups. Combined with 1.4 and section 2, this is why the tuning
 workflow has to be done by hand.
 **Effort.** S.
 **Where.** `services/webapp/src/lib/components/analytics/MetricBreakdown.svelte`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). `MetricBreakdown` shows `std_dev` (and sample size) for every group.
 
 ### 1.4 Per-sample distributions are never surfaced
 **What.** `details.individual_scores` carries per-question scores. Nothing displays
@@ -69,7 +69,7 @@ of 0.7 from half scoring 1.0 and half scoring 0.4 are different systems needing
 different fixes. A distribution view would make that visible immediately.
 **Effort.** M.
 **Where.** As above.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). `ScoreDistribution.svelte` — per-metric histogram plus min/p25/median/p75/max, expandable from each metric row.
 
 ### 1.5 Config diff ignores all but two selected runs
 **What.** The comparison UI lets a user select up to four runs; `ConfigDiff` only
@@ -78,12 +78,11 @@ ever compares baseline-A against run-B.
 the user believes they are comparing four runs.
 **Effort.** S to disable the extra selection, M to support n-way diffing.
 **Where.** `services/webapp/src/lib/components/ConfigDiff.svelte`.
-**Status.** Open. (The related snapshot defect **2.1** is fixed, including the
-`diff.ts` half of it, but `ConfigDiff` still compares only two runs.)
+**Status.** ✅ Done (2026-08-02). `diffConfigs` is now n-way and `ConfigDiff` renders one column per selected run, baseline first, marking cells that differ from the baseline.
 
-> **Note:** config diffing is currently unreliable for a deeper reason — see
-> **2.1**. Fixing the UI without fixing the snapshot produces a confident diff of
-> fabricated values.
+> **Note:** the snapshot defect behind this (**2.1**) is fixed, so the diff now
+> reflects real values. Settings the runner never captured render as `Unknown` and
+> are never reported as a change.
 
 ### 1.6 Endpoints the webapp never calls
 **What.** `/models/info` (per-model cost rates) and `/config` (max upload size) are
@@ -93,7 +92,7 @@ alongside results. The upload-size limit is currently a number the user discover
 by exceeding it.
 **Effort.** S each.
 **Where.** `services/webapp/src/lib/api/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). `/models/info` cost rates show in the "Config under test" panel (only when the run's LLM matches the current one); `/config` max upload size is shown on the upload page and enforced client-side.
 
 ### 1.7 Chat citations show a filename and nothing else
 **What.** Each source carries `score`, `full_text`, and `path`. The chat UI renders
@@ -103,7 +102,7 @@ from. Users currently have to trust the citation or go and find the document
 themselves — which undercuts the product's central claim.
 **Effort.** M — an expandable source panel with the retrieval score.
 **Where.** `services/webapp/src/routes/chat/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). Sources are an expandable list with retrieval score, path, and the full retrieved passage; dedupe is by passage rather than document, so distinct chunks are no longer dropped.
 
 ### 1.8 Settings load failures are invisible
 **What.** A failed settings fetch is caught and passed to `console.error`. No error
@@ -113,7 +112,7 @@ failure in a settings screen leads directly to users believing they changed
 something they did not.
 **Effort.** S.
 **Where.** `services/webapp/src/routes/settings/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). Load and update failures render an error with a retry; the toggle reverts and says the change was not saved.
 
 ### 1.9 Documents table caps at 15 rows client-side
 **What.** The full document list is fetched and then truncated to 15 rows in the
@@ -123,7 +122,7 @@ fetch cost grows with the corpus while the display does not.
 **Effort.** M for real server-side pagination, S for client-side paging over the
 fetched list.
 **Where.** `services/webapp/src/routes/documents/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). Client-side paging over the fetched list (15/25/50/100 rows). Server-side pagination remains unimplemented — the API still returns the whole list.
 
 ### 1.10 Bulk delete has no partial-failure handling
 **What.** Deleting several documents at once does not report which deletions
@@ -132,7 +131,7 @@ succeeded when some fail.
 after a partial failure.
 **Effort.** S.
 **Where.** `services/webapp/src/routes/documents/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). `Promise.allSettled`: failures stay selected and are named individually, with a count of what succeeded.
 
 ### 1.11 Upload progress is simulated before task IDs exist
 **What.** Progress is animated with a timer until real task IDs arrive, then
@@ -141,7 +140,7 @@ switches to real polling.
 where an upload is most likely to fail. A stalled upload shows a healthy bar.
 **Effort.** S — an indeterminate state until real progress is available.
 **Where.** `services/webapp/src/routes/upload/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). The simulated timer is gone. Hashing and uploading render an indeterminate bar; a determinate bar appears only once the server reports chunk counts.
 
 ### 1.12 Status is conveyed by colour alone
 **What.** Outside the `HealthBadge` component, status indicators are coloured dots
@@ -150,15 +149,14 @@ with no text or shape distinction.
 substantial fraction of users.
 **Effort.** S.
 **Where.** `services/webapp/src/lib/components/analytics/`.
-**Status.** Open.
+**Status.** ✅ Done (2026-08-02). `HealthBadge` gained an icon-only mode and is now used for component/system status dots and metric pills, so every band carries a shape.
 
 ### 1.13 Dead client code
 **What.** `fetchEvalDatasets` is defined and never called; `clearChatSession` is
 imported and unused.
 **Effort.** S.
 **Where.** `services/webapp/src/lib/`.
-**Status.** Open — both still present (`api/evals.ts:181`, `api.ts:477` imported at
-`routes/chat/+page.svelte:8`).
+**Status.** ✅ Done (2026-08-02). `fetchEvalDatasets` is used by the new run form; `clearChatSession` and its unused import are removed.
 
 ---
 
@@ -691,12 +689,17 @@ If picking a handful, these give the most value per unit of effort.
 3. ~~**3.2** — provider keys with no supported path.~~ ✅
 4. ~~**4.2** — the broken CI eval job.~~ ✅ (also **3.3**, which was not on this list)
 
+**Done (2026-08-02, dashboard pass):**
+
+5. ~~**1.1** — starting and cancelling an eval run from the dashboard.~~ ✅ (all of
+   section 1 landed in the same pass)
+
 **Still the top of the queue:**
 
-5. **1.1** — starting an eval run from the dashboard. The largest reachable gap
-   between capability and usability.
 6. **2.2** — bootstrap confidence intervals in `compare`. The largest improvement to
-   the quality of conclusions users can draw.
+   the quality of conclusions users can draw. The UI now shows per-metric std dev
+   and per-question distributions (**1.3**, **1.4**), so significance testing is the
+   remaining gap.
 7. **4.8** — the eleven skipped citation-extraction tests. S, and it restores
    coverage of what the citation metrics depend on; **4.4** is the same shape.
 8. **3.1** — chunk size and overlap in `config.yml`. S, and it is the one documented

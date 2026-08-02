@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { SystemMetrics } from '$lib/api';
+	import { fetchModelsInfo, type ModelsInfo, type SystemMetrics } from '$lib/api';
 	import {
 		fetchEvalRuns,
 		fetchEvalRun,
@@ -21,6 +21,7 @@
 	import LatencyPanel from './LatencyPanel.svelte';
 	import MetricBreakdown from './MetricBreakdown.svelte';
 	import ConfigContext from './ConfigContext.svelte';
+	import WeightedScoreBreakdown from './WeightedScoreBreakdown.svelte';
 
 	interface Props {
 		metrics: SystemMetrics;
@@ -30,6 +31,7 @@
 	let { metrics, refreshTick = 0 }: Props = $props();
 
 	let detail = $state<EvalRunDetail | null>(null);
+	let modelsInfo = $state<ModelsInfo | null>(null);
 	let prev = $state<EvalRunSummary | null>(null);
 	let hasRuns = $state<boolean | null>(null); // null = not yet loaded
 	let firstLoad = $state(true);
@@ -43,6 +45,11 @@
 	async function load() {
 		error = null;
 		try {
+			// Cost rates are supplementary — never fail the panel over them.
+			fetchModelsInfo()
+				.then((info) => (modelsInfo = info))
+				.catch(() => (modelsInfo = null));
+
 			const res = await fetchEvalRuns(2);
 			if (res.runs.length === 0) {
 				hasRuns = false;
@@ -65,7 +72,7 @@
 
 	let verdict = $derived.by(() => {
 		if (!detail?.scorecard?.metrics?.length) {
-			return 'No eval runs yet — run an eval to populate these panels. Trigger one via POST /api/eval/runs or the evals CLI.';
+			return 'No eval runs yet — start one from the Experiments tab to populate these panels.';
 		}
 		return weakestLinkVerdict(detail, bracketHealth, weakest);
 	});
@@ -211,8 +218,11 @@
 		/>
 	</div>
 
+	<!-- How the headline number was reached -->
+	<WeightedScoreBreakdown weighted={detail?.weighted_score} />
+
 	<!-- Config context: what is being measured (system config exists even with no runs) -->
-	<ConfigContext config={detail?.config ?? {}} {metrics} />
+	<ConfigContext config={detail?.config ?? {}} {metrics} {modelsInfo} />
 
 	<!-- Latency distribution (honest degrade of the "waterfall") -->
 	<LatencyPanel {detail} />

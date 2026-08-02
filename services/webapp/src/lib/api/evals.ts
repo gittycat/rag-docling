@@ -24,9 +24,67 @@ async function fetchJson<T>(url: string, timeoutMs: number = DEFAULT_TIMEOUT_MS)
 	}
 }
 
+async function postJson<T>(url: string, body: unknown, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
+	return sendJson<T>('POST', url, body, timeoutMs);
+}
+
+async function sendJson<T>(
+	method: string,
+	url: string,
+	body: unknown,
+	timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<T> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const response = await fetch(url, {
+			method,
+			headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+			body: body === undefined ? undefined : JSON.stringify(body),
+			signal: controller.signal
+		});
+		if (!response.ok) {
+			// FastAPI puts the useful message in `detail`; fall back to raw text.
+			const text = await response.text();
+			let detail = text;
+			try {
+				const parsed = JSON.parse(text);
+				if (typeof parsed?.detail === 'string') detail = parsed.detail;
+				else if (parsed?.detail) detail = JSON.stringify(parsed.detail);
+			} catch {
+				/* keep raw text */
+			}
+			throw new Error(detail || `Request failed (${response.status} ${response.statusText})`);
+		}
+		return (await response.json()) as T;
+	} catch (e) {
+		if (e instanceof DOMException && e.name === 'AbortError') {
+			throw new Error(`Request timed out after ${timeoutMs / 1000}s: ${url}`);
+		}
+		throw e;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 // ============================================================================
 // Types — mirror services/evals/api/schemas.py
 // ============================================================================
+
+export interface TriggerEvalRunRequest {
+	name?: string | null;
+	tier: string;
+	datasets: string[];
+	samples: number;
+	seed: number | null;
+	judge_enabled: boolean;
+}
+
+export interface JobCreatedResponse {
+	job_id: string;
+	status: string;
+	created_at: string;
+}
 
 export interface ProgressInfo {
 	current_question: number;
@@ -180,4 +238,13 @@ export function fetchActiveEvalJob(): Promise<ActiveEvalJob | null> {
 
 export function fetchEvalDatasets(): Promise<EvalDatasetInfo[]> {
 	return fetchJson<EvalDatasetInfo[]>(`${API_BASE}/datasets`);
+}
+
+// Triggering a run only queues it; the runner itself can take many minutes.
+export function triggerEvalRun(req: TriggerEvalRunRequest): Promise<JobCreatedResponse> {
+	return postJson<JobCreatedResponse>(`${API_BASE}/runs`, req);
+}
+
+export function cancelActiveEvalJob(): Promise<{ status: string }> {
+	return sendJson<{ status: string }>('DELETE', `${API_BASE}/runs/active`, undefined);
 }

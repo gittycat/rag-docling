@@ -50,6 +50,26 @@ export function thresholdColorClass(metricName: string, value: number | null | u
 	return '';
 }
 
+/**
+ * Threshold band as a value rather than a color class, so components can pair the
+ * color with a shape or word instead of relying on color alone.
+ */
+export function thresholdBand(
+	metricName: string,
+	value: number | null | undefined
+): 'good' | 'warn' | 'bad' | 'unknown' {
+	switch (thresholdColorClass(metricName, value)) {
+		case 'text-success':
+			return 'good';
+		case 'text-warning':
+			return 'warn';
+		case 'text-error':
+			return 'bad';
+		default:
+			return 'unknown';
+	}
+}
+
 /** Delta color class: green if the change is an improvement for this metric, red if a regression. */
 export function deltaColorClass(metricName: string, delta: number | null | undefined): string {
 	if (delta === null || delta === undefined || delta === 0) return '';

@@ -94,6 +94,11 @@ class JobManager:
         rag_server_url: str = "http://rag-server:8001",
     ) -> str:
         """Start a new eval job. Returns job_id. Raises if one is already running."""
+        # Validate before claiming the slot: a rejected request must not leave the
+        # manager thinking a job is queued, which would block every later trigger.
+        dataset_names = [DatasetName(d) for d in (datasets or ["ragbench"])]
+        eval_tier = EvalTier(tier)
+
         with self._lock:
             if self._active_job_id and self._active_status in ("queued", "running"):
                 raise RuntimeError("An eval job is already running")
@@ -105,26 +110,32 @@ class JobManager:
             self._active_created_at = datetime.now()
             self._cancelled.clear()
 
-        dataset_names = [DatasetName(d) for d in (datasets or ["ragbench"])]
+        try:
+            config = EvalConfig(
+                datasets=dataset_names,
+                samples_per_dataset=samples,
+                seed=seed,
+                rag_server_url=rag_server_url,
+                runs_dir=self.runs_dir,
+                tier=eval_tier,
+                judge=JudgeConfig(enabled=judge_enabled),
+            )
 
-        config = EvalConfig(
-            datasets=dataset_names,
-            samples_per_dataset=samples,
-            seed=seed,
-            rag_server_url=rag_server_url,
-            runs_dir=self.runs_dir,
-            tier=EvalTier(tier),
-            judge=JudgeConfig(enabled=judge_enabled),
-        )
+            run_name = name or f"eval-{job_id}"
 
-        run_name = name or f"eval-{job_id}"
+            self._thread = threading.Thread(
+                target=self._run_job,
+                args=(job_id, config, run_name),
+                daemon=True,
+            )
+            self._thread.start()
+        except Exception:
+            # Release the slot rather than wedging the service on a job that never ran.
+            with self._lock:
+                self._active_job_id = None
+                self._active_status = "failed"
+            raise
 
-        self._thread = threading.Thread(
-            target=self._run_job,
-            args=(job_id, config, run_name),
-            daemon=True,
-        )
-        self._thread.start()
         return job_id
 
     def _run_job(self, job_id: str, config: EvalConfig, run_name: str) -> None:

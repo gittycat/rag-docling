@@ -1,63 +1,72 @@
 <script lang="ts">
 	import type { EvalRunConfig } from '$lib/api/evals';
-	import { diffConfigs, getDiffLineClasses, getDiffPrefix } from '$lib/utils/diff';
+	import { diffConfigs, getDiffCellClasses } from '$lib/utils/diff';
 
 	interface Props {
-		configA: EvalRunConfig | null | undefined;
-		configB: EvalRunConfig | null | undefined;
-		labelA?: string;
-		labelB?: string;
+		/** One entry per selected run, baseline first. */
+		configs: (EvalRunConfig | null | undefined)[];
+		labels: string[];
 		showUnchanged?: boolean;
 	}
 
-	let {
-		configA,
-		configB,
-		labelA = 'Before',
-		labelB = 'After',
-		showUnchanged = true
-	}: Props = $props();
+	let { configs, labels, showUnchanged = true }: Props = $props();
 
-	let diff = $derived(diffConfigs(configA, configB));
-
-	let filteredDiff = $derived(
-		showUnchanged ? diff : diff.filter((line) => line.type !== 'same')
-	);
-
-	let hasChanges = $derived(diff.some((line) => line.type !== 'same'));
+	let rows = $derived(diffConfigs(configs));
+	let visibleRows = $derived(showUnchanged ? rows : rows.filter((r) => r.varies));
+	let hasChanges = $derived(rows.some((r) => r.varies));
 </script>
 
 <div class="term-panel">
-	<div class="flex items-center gap-2 mb-2 text-xs text-base-content/70">
-		<span class="badge badge-ghost badge-sm">{labelA}</span>
-		<span>→</span>
-		<span class="badge badge-ghost badge-sm">{labelB}</span>
-		{#if !hasChanges}
-			<span class="badge badge-success badge-sm ml-auto">No changes</span>
+	<div class="flex items-center gap-2 mb-2 text-xs text-base-content/70 flex-wrap">
+		<span class="term-label">Config</span>
+		{#each labels as label, i}
+			{#if i > 0}<span class="text-base-content/30">·</span>{/if}
+			<span class="badge badge-ghost badge-sm">{label}</span>
+		{/each}
+		{#if configs.length >= 2 && !hasChanges}
+			<span class="badge badge-success badge-sm ml-auto">Identical</span>
 		{/if}
 	</div>
 
-	{#if !configA && !configB}
+	{#if configs.length === 0 || rows.length === 0}
 		<div class="text-center py-4 text-base-content/50 text-xs">
-			Select two runs to compare configurations
+			Select at least two runs to compare configurations
 		</div>
 	{:else}
-		<div class="font-mono text-xs overflow-x-auto">
-			{#each filteredDiff as line}
-				<div class="py-0.5 px-2 rounded-sm {getDiffLineClasses(line.type)}">
-					<span class="opacity-50 mr-1">{getDiffPrefix(line.type)}</span>
-					<span class="font-semibold">{line.key}:</span>
-					<span class="ml-1">{line.value}</span>
-					{#if line.type === 'changed' && line.oldValue}
-						<span class="text-base-content/50 line-through ml-2">{line.oldValue}</span>
-					{/if}
-				</div>
-			{/each}
+		<div class="overflow-x-auto">
+			<table class="table table-xs term-table font-mono">
+				<thead>
+					<tr>
+						<th>Setting</th>
+						{#each labels as label, i}
+							<th class="text-right">
+								{label}
+								{#if i === 0}<div class="text-[10px] font-normal text-base-content/40 normal-case">baseline</div>{/if}
+							</th>
+						{/each}
+					</tr>
+				</thead>
+				<tbody>
+					{#each visibleRows as row}
+						<tr class="hover">
+							<td class="font-semibold">{row.key}</td>
+							{#each row.cells as cell}
+								<td class="text-right">
+									<span class="px-1 rounded-sm {getDiffCellClasses(cell)}">
+										{#if cell.changed}<span class="opacity-60 mr-0.5" aria-label="differs from baseline">~</span>{/if}
+										{cell.value}
+									</span>
+								</td>
+							{/each}
+						</tr>
+					{/each}
+				</tbody>
+			</table>
 		</div>
 
-		{#if !showUnchanged && diff.length > filteredDiff.length}
+		{#if !showUnchanged && rows.length > visibleRows.length}
 			<div class="text-center py-1 text-base-content/50 text-xs mt-2">
-				{diff.length - filteredDiff.length} unchanged fields hidden
+				{rows.length - visibleRows.length} unchanged setting{rows.length - visibleRows.length === 1 ? '' : 's'} hidden
 			</div>
 		{/if}
 	{/if}

@@ -53,12 +53,18 @@ delta comparison) and the full detail of the latest one.
   number per query, not a retrieval-vs-generation breakdown: the eval harness
   only times one `perf_counter` span around the whole query, so there is no
   stage-level timing data to draw a waterfall from.
+- **Weighted score breakdown** — the objectives behind the headline number: each
+  objective's configured weight, its effective share after weights for
+  objectives with no data are redistributed, its score, its contribution, and
+  that contribution as a share of the total. Objectives the run produced no data
+  for are listed underneath.
 - **Metric breakdown** — the full per-group metric list (retrieval,
   generation, citation, abstention), each metric shown as a percentage with a
-  threshold-tinted color. For the **generation** group only, a metric also
-  shows a `± std_dev` figure next to its value, when that field is present. See
-  "What the dashboard cannot do today" below for why the other three groups
-  never show this.
+  threshold band (shape plus color) and, where present, `± std_dev` and the
+  sample size `n`. Metrics that carry per-question scores get a **dist** toggle
+  that expands a histogram of those scores with min/p25/median/p75/max — an
+  average of 0.7 from every question scoring 0.7 looks different here from one
+  where half score 1.0 and half score 0.4.
 
 ## Experiments tab
 
@@ -79,21 +85,18 @@ This combines a trend view and a run-comparison view.
   everything else is shown as a delta from A, regardless of the order you
   clicked runs in. A "hide unchanged rows" checkbox filters out rows where every
   selected run is within a small threshold of A.
-- **Config diff** — a git-style +/-/~ line diff of run configuration. This
-  compares exactly two runs: baseline A against the second run you selected
-  ("B"). If you've selected 3 or 4 runs, the extra runs (C, D) appear as
-  additional columns in the comparison table above, but they get **no config
-  diff at all** — there is no way, from this UI, to diff A against C or D, or
-  B against C.
+- **Config diff** — one column per selected run, baseline A first. Cells that
+  differ from A are marked with `~` and highlighted; settings the runner never
+  captured render as `Unknown` and are never reported as a change. Unchanged
+  settings are hidden by default.
 - **Export** — the currently selected runs (and the comparison result) can be
   exported as CSV or JSON. The JSON export is the one place where fields the
   on-screen panels drop — like `total_cost_usd`, `cost_model`, per-run
   `dashboard_metrics` — do reach you, since it dumps the full API response
   objects verbatim.
-- The tab's own empty state, when no runs exist yet, tells you directly how to
-  produce one: *"run an evaluation to compare configurations. Trigger one via
-  `POST /api/eval/runs` or the evals CLI."* — this is the dashboard admitting,
-  in its own copy, that it has no button to do this itself.
+- **Run evaluation panel** — starts and cancels runs from the UI; see
+  [chapter 5](05-running-evals.md#from-the-dashboard). When no runs exist yet,
+  the tab's empty state points at this panel.
 
 ## System tab
 
@@ -124,60 +127,33 @@ interpretation/reference URL per known metric), and the server's own response
 
 Be aware of these limits before you go looking for a control that isn't there:
 
-- **No way to start an eval run from the UI.** `POST /eval/runs` has no caller
-  anywhere in the webapp. You must use the CLI (`just eval ...`) or call the
-  eval service's API directly.
-- **No way to cancel a running eval from the UI**, even though the header shows
-  a live progress indicator while one is running. `DELETE /eval/runs/active`
-  exists on the API but nothing in the webapp calls it. Cancelling requires a
-  direct API call.
-- **`std_dev` is only ever shown for generation-group metrics.** The backend
-  attaches the same `std_dev` field to retrieval, citation, and abstention
-  metrics too, but the component that renders the metric breakdown only reads
-  it for the generation group — for the other three groups the field is
-  fetched and silently dropped. If you need variance for a retrieval or
-  citation metric, read the run's raw JSON (or the API response) instead of
-  the dashboard.
-- **The weighted score's contributing weights are never displayed.** The API
-  computes a full breakdown — `weighted_score.weights`, `.objectives`, and
-  `.contributions` (how much each objective moved the final number) — but only
-  the final `.score` is ever read client-side. If you need to understand *why*
-  a weighted score changed between two runs, the dashboard cannot tell you;
-  you need to pull the run detail via the API/CLI and read the weighted-score
-  object yourself.
-- **Config diff only ever compares baseline A against run B**, even when you
-  have 3 or 4 runs selected in the comparison view. The metrics table itself
-  does show all selected runs side by side, so numeric comparison across more
-  than two runs works — only the git-style config diff is limited to the
-  first pair.
-- Other things fetched by the API but never surfaced anywhere in the webapp,
-  worth knowing about if you go looking for them and can't find them: per-run
-  `sample_size` per metric (you can't tell from the UI whether a metric is
-  based on 5 questions or 500), the run's `metadata.seed` (reproducibility
-  info), per-question `individual_scores` (no distribution/drill-down view of
-  a single question's result), and dataset descriptions from
-  `GET /eval/datasets` (the endpoint exists but nothing in the webapp calls
-  it).
+- **No significance testing.** The comparison table shows deltas and the metric
+  breakdown shows variance, but nothing tells you whether a difference between
+  two runs is larger than the noise. That judgement is still yours to make from
+  the std dev and the per-question distributions.
+- **No stage-level latency.** The eval harness times one span around the whole
+  query, so there is no retrieval-vs-generation breakdown to draw.
+- **No search or filtering in the run selector** — you scroll a list of the 50
+  most recent runs.
+- Other things fetched by the API but never surfaced anywhere in the webapp:
+  the run's `metadata.seed` (reproducibility info), and the descriptive fields
+  on the System tab's models and pipeline objects (`reference_url`,
+  `description`, `pipeline_description`, the `evaluation_metrics` glossary).
 
 ## When to drop to the CLI
 
 Use the `evals` CLI (via `docker compose exec evals ...`, or the `just eval*`
 recipes) rather than the dashboard whenever you need to:
 
-- **Start a new eval run.** `just eval --tier <tier> --datasets <names> --samples <n>`,
-  or the shorthand recipes `just test-eval` / `just test-eval-full`. There is
-  no dashboard button for this.
-- **Cancel a stuck or wrong run.** Call `DELETE /eval/runs/active` on the eval
-  service directly (`curl -X DELETE http://localhost:8002/eval/runs/active`) —
-  the dashboard has no cancel affordance even while showing the run as active.
-- **Understand why a weighted score moved.** Pull the run detail
-  (`GET /eval/runs/{id}` on the eval service, or `just eval-compare <id> <id>`)
-  and read `weighted_score.contributions`/`.weights` directly — the dashboard
-  never shows this breakdown.
-- **Inspect per-question results or variance for anything outside the
-  generation group.** The dashboard's aggregate percentages hide both
-  `individual_scores` and (for non-generation groups) `std_dev`; the raw JSON
-  or API response has both.
+- **Run a tier, dataset mix, or judge setting the panel does not expose**, or
+  script a sweep of runs: `just eval --tier <tier> --datasets <names> --samples <n>`,
+  or the shorthand recipes `just test-eval` / `just test-eval-full`.
+- **Run against a YAML config file** (`--config`) — the dashboard form only
+  covers the flags listed in chapter 5.
+- **Inspect an individual question's response**, not just the score
+  distribution: read the run JSON in `data/eval_runs`.
+- **Diff runs that are not in the 50 most recent**, or filter by dataset/tier —
+  the run selector has neither.
 - **Compare more than two runs' configuration.** `just eval-compare <run_id> <run_id>`
   works pairwise; for three-plus runs, fetch each run's `config` object via the
   API and diff them yourself — the dashboard's config diff is hardcoded to

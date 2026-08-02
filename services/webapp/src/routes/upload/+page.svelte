@@ -5,10 +5,10 @@
 	import {
 		uploadFiles,
 		fetchBatchProgress,
+		fetchAppConfig,
 		computeFileHash,
 		checkDuplicateFiles,
 		type BatchProgressResponse,
-		type TaskStatus,
 		type FileCheckItem
 	} from '$lib/api';
 
@@ -16,41 +16,53 @@
 		id: string;
 		filename: string;
 		size: number;
-		uploadProgress: number;
-		processingProgress: number;
-		status: 'uploading' | 'processing' | 'done' | 'error' | 'skipped';
+		/**
+		 * Fraction of chunks indexed, 0–100. Null means the server has not reported
+		 * a chunk count yet — the bar stays indeterminate rather than inventing one.
+		 */
+		processingProgress: number | null;
+		status: 'hashing' | 'uploading' | 'processing' | 'done' | 'error' | 'skipped';
 		error?: string;
 		skipReason?: string;
 		taskId?: string;
 		batchId?: string;
 	}
 
-	// Weight constants for combined progress
-	const UPLOAD_WEIGHT = 0.1; // 10% for upload
-	const PROCESSING_WEIGHT = 0.9; // 90% for processing
-
-	function calculateOverallProgress(item: UploadItem): number {
-		if (item.status === 'skipped') return 0;
-		if (item.status === 'done') return 100;
-
-		// Upload contributes 10%, processing contributes 90%
-		const uploadContribution = item.uploadProgress * UPLOAD_WEIGHT;
-		const processingContribution = item.processingProgress * PROCESSING_WEIGHT;
-
-		return Math.round(uploadContribution + processingContribution);
+	// Phases before the server reports chunk counts have no measurable progress.
+	function isIndeterminate(item: UploadItem): boolean {
+		return (
+			item.status === 'hashing' ||
+			item.status === 'uploading' ||
+			(item.status === 'processing' && item.processingProgress === null)
+		);
 	}
+
+	const PHASE_LABEL: Record<UploadItem['status'], string> = {
+		hashing: 'Hashing',
+		uploading: 'Uploading',
+		processing: 'Processing',
+		done: 'Done',
+		error: 'Error',
+		skipped: 'Skipped'
+	};
 
 	let uploads = $state<UploadItem[]>([]);
 	let fileInput: HTMLInputElement;
 	let dirInput: HTMLInputElement;
 	let isUploading = $state(false);
 	let ollamaError = $state<string | null>(null);
+	let maxUploadSizeMb = $state<number | null>(null);
 
 	// Active batches being polled
 	let activeBatches = $state<Set<string>>(new Set());
 
 	// Auto-trigger file picker based on query parameter
 	onMount(async () => {
+		// Advisory limit from the server, so oversized files fail before the upload.
+		fetchAppConfig()
+			.then((cfg) => (maxUploadSizeMb = cfg.max_upload_size_mb))
+			.catch(() => (maxUploadSizeMb = null));
+
 		await tick();
 		const trigger = $page.url.searchParams.get('trigger');
 
@@ -99,41 +111,55 @@
 			id: `upload-${Date.now()}-${idx}`,
 			filename: file.webkitRelativePath || file.name,
 			size: file.size,
-			uploadProgress: 0,
-			processingProgress: 0,
-			status: 'uploading' as const
+			processingProgress: null,
+			status: 'hashing' as const
 		}));
 
 		uploads = [...newItems, ...uploads];
+
+		// Reject files above the server's limit before spending time hashing them.
+		const limitBytes = maxUploadSizeMb != null ? maxUploadSizeMb * 1024 * 1024 : null;
+		const oversized = new Set<string>();
+		if (limitBytes != null) {
+			for (const item of newItems) {
+				if (item.size > limitBytes) oversized.add(item.id);
+			}
+			if (oversized.size > 0) {
+				uploads = uploads.map((item) =>
+					oversized.has(item.id)
+						? {
+								...item,
+								status: 'error' as const,
+								error: `File is ${formatSize(item.size)} — over the ${maxUploadSizeMb} MB upload limit`
+							}
+						: item
+				);
+			}
+		}
+
+		const acceptedItems = newItems.filter((n) => !oversized.has(n.id));
+		const acceptedFiles = files.filter((_, idx) => !oversized.has(newItems[idx].id));
+		if (acceptedFiles.length === 0) {
+			isUploading = false;
+			return;
+		}
 
 		try {
 			// Step 1: Compute hashes for all files
 			const fileChecks: FileCheckItem[] = [];
 			const fileMap = new Map<string, File>();
 
-			for (let i = 0; i < files.length; i++) {
-				const file = files[i];
+			for (let i = 0; i < acceptedFiles.length; i++) {
+				const file = acceptedFiles[i];
 				const filename = file.webkitRelativePath || file.name;
-
-				// Show progress for hashing
-				uploads = uploads.map((item) => {
-					if (item.id === newItems[i].id) {
-						return { ...item, uploadProgress: 10 };
-					}
-					return item;
-				});
 
 				const hash = await computeFileHash(file);
 				fileChecks.push({ filename, size: file.size, hash });
 				fileMap.set(filename, file);
 
-				// Update progress after hashing
-				uploads = uploads.map((item) => {
-					if (item.id === newItems[i].id) {
-						return { ...item, uploadProgress: 30 };
-					}
-					return item;
-				});
+				uploads = uploads.map((item) =>
+					item.id === acceptedItems[i].id ? { ...item, status: 'uploading' as const } : item
+				);
 			}
 
 			// Step 2: Check for duplicates
@@ -149,7 +175,7 @@
 					skippedFiles.add(filename);
 					// Mark as skipped immediately
 					uploads = uploads.map((item) => {
-						if (newItems.some((n) => n.id === item.id && n.filename === filename)) {
+						if (acceptedItems.some((n) => n.id === item.id && n.filename === filename)) {
 							return {
 								...item,
 								status: 'skipped' as const,
@@ -170,31 +196,16 @@
 				return;
 			}
 
-			// Simulate upload progress for files being uploaded
-			const uploadProgressInterval = setInterval(() => {
-				uploads = uploads.map((item) => {
-					if (
-						newItems.some((n) => n.id === item.id) &&
-						item.status === 'uploading' &&
-						!skippedFiles.has(item.filename)
-					) {
-						const newProgress = Math.min(item.uploadProgress + 20, 90);
-						return { ...item, uploadProgress: newProgress };
-					}
-					return item;
-				});
-			}, 100);
-
+			// No byte-level upload progress is available from fetch(), so the bar stays
+			// indeterminate until the server hands back task IDs and real chunk counts.
 			const response = await uploadFiles(filesToUpload);
-
-			clearInterval(uploadProgressInterval);
 
 			// Mark upload as complete, update with task IDs, start processing
 			// Track matched tasks to avoid duplicate assignments
 			const matchedTaskIds = new Set<string>();
 
 			uploads = uploads.map((item) => {
-				if (!newItems.some((n) => n.id === item.id)) {
+				if (!acceptedItems.some((n) => n.id === item.id)) {
 					return item;
 				}
 
@@ -213,7 +224,6 @@
 					matchedTaskIds.add(matchingTask.task_id);
 					return {
 						...item,
-						uploadProgress: 100,
 						status: 'processing' as const,
 						taskId: matchingTask.task_id,
 						batchId: response.batch_id
@@ -223,7 +233,6 @@
 					console.warn(`No matching task found for file: ${item.filename}`);
 					return {
 						...item,
-						uploadProgress: 100,
 						status: 'error' as const,
 						error: 'Failed to match upload task'
 					};
@@ -241,7 +250,7 @@
 
 			// Mark all non-skipped items as error
 			uploads = uploads.map((item) => {
-				if (newItems.some((n) => n.id === item.id) && item.status !== 'skipped') {
+				if (acceptedItems.some((n) => n.id === item.id) && item.status !== 'skipped') {
 					return {
 						...item,
 						status: 'error' as const,
@@ -296,10 +305,9 @@
 			} else if (taskStatus.total_chunks && taskStatus.completed_chunks !== undefined) {
 				const pct = Math.round((taskStatus.completed_chunks / taskStatus.total_chunks) * 100);
 				return { ...item, processingProgress: pct };
-			} else if (taskStatus.status === 'processing') {
-				// Indeterminate progress
-				return { ...item, processingProgress: Math.min(item.processingProgress + 5, 90) };
 			}
+			// Server has no chunk counts yet — leave the bar indeterminate rather
+			// than inventing progress for a task that may be stalled.
 			return item;
 		});
 	}
@@ -310,6 +318,7 @@
 
 	function getStatusBadgeClass(status: UploadItem['status']): string {
 		switch (status) {
+			case 'hashing':
 			case 'uploading':
 				return 'badge-info';
 			case 'processing':
@@ -369,6 +378,9 @@
 	<!-- Supported formats info -->
 	<div class="text-xs text-base-content/50">
 		Supported formats: PDF, DOCX, PPTX, XLSX, HTML, TXT, MD, AsciiDoc
+		{#if maxUploadSizeMb != null}
+			· max {maxUploadSizeMb} MB per file
+		{/if}
 	</div>
 
 	<!-- Upload Progress Table -->
@@ -394,16 +406,25 @@
 								<span class="text-xs text-base-content/40">—</span>
 							{:else if upload.status === 'error'}
 								<span class="text-xs text-error">Failed</span>
+							{:else if upload.status === 'done'}
+								<div class="flex items-center gap-2">
+									<progress class="progress progress-success w-32" value="100" max="100"></progress>
+									<span class="text-xs text-base-content/60">100%</span>
+								</div>
+							{:else if isIndeterminate(upload)}
+								<!-- No real progress signal yet: never fake a percentage. -->
+								<div class="flex items-center gap-2">
+									<progress class="progress progress-info w-32"></progress>
+									<span class="text-xs text-base-content/60">{PHASE_LABEL[upload.status]}…</span>
+								</div>
 							{:else}
-								{@const overallProgress = calculateOverallProgress(upload)}
-								{@const progressClass = upload.status === 'done' ? 'progress-success' : overallProgress < 10 ? 'progress-info' : 'progress-warning'}
 								<div class="flex items-center gap-2">
 									<progress
-										class="progress {progressClass} w-32"
-										value={overallProgress}
+										class="progress progress-warning w-32"
+										value={upload.processingProgress}
 										max="100"
 									></progress>
-									<span class="text-xs text-base-content/60">{overallProgress}%</span>
+									<span class="text-xs text-base-content/60">{upload.processingProgress}%</span>
 								</div>
 							{/if}
 						</td>
@@ -422,15 +443,7 @@
 								</div>
 							{:else}
 								<span class="badge badge-sm {getStatusBadgeClass(upload.status)}">
-									{upload.status === 'done'
-										? 'Done'
-										: upload.status === 'error'
-											? 'Error'
-											: upload.status === 'uploading'
-												? 'Uploading'
-												: upload.status === 'skipped'
-													? 'Skipped'
-													: 'Processing'}
+									{PHASE_LABEL[upload.status]}
 								</span>
 							{/if}
 						</td>

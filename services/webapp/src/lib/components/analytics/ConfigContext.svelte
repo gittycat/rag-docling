@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { EvalRunConfig } from '$lib/api/evals';
-	import type { SystemMetrics } from '$lib/api';
+	import type { ModelsInfo, SystemMetrics } from '$lib/api';
 	import InfoTip from './InfoTip.svelte';
 	import { panelDescription } from '$lib/utils/metricInfo';
 
@@ -8,9 +8,21 @@
 		config: EvalRunConfig;
 		/** Current system config — fills in chunking / RRF params the run config omits. */
 		metrics?: SystemMetrics | null;
+		/** Per-token cost rates from /models/info. */
+		modelsInfo?: ModelsInfo | null;
 	}
 
-	let { config, metrics = null }: Props = $props();
+	let { config, metrics = null, modelsInfo = null }: Props = $props();
+
+	// Rates describe the currently configured LLM. Showing them next to a run that
+	// used a different model would misattribute the cost, so require a match.
+	let rates = $derived.by(() => {
+		if (!modelsInfo) return null;
+		if (config.llm_model && config.llm_model !== modelsInfo.llm_model) return null;
+		const { cost_per_1m_input_tokens: input, cost_per_1m_output_tokens: output } = modelsInfo;
+		if (input === 0 && output === 0) return 'free (local)';
+		return `$${input.toFixed(2)} in · $${output.toFixed(2)} out / 1M tok`;
+	});
 
 	function shortModel(name: string | null | undefined): string {
 		if (!name) return '—';
@@ -64,4 +76,11 @@
 			<span class="ml-1">{chip.value}</span>
 		</span>
 	{/each}
+	{#if rates}
+		<span class="text-xs font-mono tabular-nums inline-flex items-center gap-1">
+			<span class="text-base-content/50">rates</span>
+			<span>{rates}</span>
+			<InfoTip text="Published token rates for the currently configured LLM, from /models/info. Multiply by the run's token counts to sanity-check cost per query." />
+		</span>
+	{/if}
 </div>

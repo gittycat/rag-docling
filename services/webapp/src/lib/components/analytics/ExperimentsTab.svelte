@@ -12,6 +12,7 @@
 	import ConfigDiff from '$lib/components/ConfigDiff.svelte';
 	import InfoTip from './InfoTip.svelte';
 	import MetricSparkline from './MetricSparkline.svelte';
+	import RunEvalPanel from './RunEvalPanel.svelte';
 	import { getMetricThreshold, deltaColorClass } from '$lib/utils/thresholds';
 	import { metricDescription, metricLabel, formatDelta, panelDescription, type DeltaFormat } from '$lib/utils/metricInfo';
 
@@ -213,9 +214,11 @@
 
 	{#if !isLoading && runs.length === 0}
 		<div class="term-panel border-l-4 border-l-base-content/20 text-sm">
-			No eval runs yet — run an evaluation to compare configurations. Trigger one via POST /api/eval/runs or the evals CLI.
+			No eval runs yet — start one below to compare configurations.
 		</div>
 	{/if}
+
+	<RunEvalPanel onRunFinished={loadRuns} />
 
 	<!-- Layout always rendered (scaffold shows even with no runs) -->
 	<!-- Trends: metric history across all runs -->
@@ -320,14 +323,12 @@
 						{/if}
 					</div>
 
-					<!-- Config diff between baseline A and B -->
+					<!-- Config diff across every selected run, baseline A first -->
 					{#if compareResult.runs.length >= 2}
 						<div class="mt-3">
 							<ConfigDiff
-								configA={compareResult.runs[0].config}
-								configB={compareResult.runs[1].config}
-								labelA={`A · ${compareResult.runs[0].name}`}
-								labelB={`B · ${compareResult.runs[1].name}`}
+								configs={compareResult.runs.map((r) => r.config)}
+								labels={compareResult.runs.map((r, i) => `${RUN_LETTERS[i] ?? i + 1} · ${r.name}`)}
 								showUnchanged={false}
 							/>
 						</div>
