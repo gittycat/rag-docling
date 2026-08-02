@@ -15,9 +15,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class _TestSettings:
     OPENAI_API_KEY = SecretStr("test-openai-key")
     ANTHROPIC_API_KEY = SecretStr("test-anthropic-key")
-    GOOGLE_API_KEY = SecretStr("test-google-key")
-    DEEPSEEK_API_KEY = SecretStr("test-deepseek-key")
-    MOONSHOT_API_KEY = SecretStr("test-moonshot-key")
     RAG_SERVER_DB_USER = SecretStr("raguser")
     RAG_SERVER_DB_PASSWORD = SecretStr("ragpass")
 

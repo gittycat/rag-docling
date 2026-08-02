@@ -26,6 +26,7 @@ from infrastructure.database.documents import SORT_COLUMNS
 from infrastructure.database import jobs as db_jobs
 from app.settings import get_shared_upload_dir
 from infrastructure.config.models_config import get_models_config
+from services import document_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -244,7 +245,7 @@ async def get_batch_status(batch_id: str):
 async def delete_document_by_id(document_id: str):
     try:
         async with get_session() as session:
-            deleted = await db_docs.delete_document(session, uuid.UUID(document_id))
+            deleted = await document_service.delete_document(session, uuid.UUID(document_id))
 
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Document {document_id} not found")

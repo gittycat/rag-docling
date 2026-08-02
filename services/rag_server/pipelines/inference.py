@@ -28,7 +28,7 @@ from llama_index.postprocessor.sbert_rerank import SentenceTransformerRerank
 from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 
-from infrastructure.config.models_config import get_models_config
+from infrastructure.config.models_config import get_models_config, effective_reranker_top_n
 from infrastructure.llm.prompts import get_system_prompt, get_context_prompt, get_condense_prompt
 from infrastructure.pii.config import get_pii_config
 from infrastructure.pii.service import get_pii_service, mask_text, unmask_text, TokenMapping
@@ -368,7 +368,7 @@ def create_reranker_postprocessor() -> Optional[List]:
 
     logger.info(f"[RERANKER] Initializing reranker: {config['reranker_model']}")
 
-    top_n = max(5, config['retrieval_top_k'] // 2)
+    top_n = effective_reranker_top_n(config['reranker_top_n'], config['retrieval_top_k'])
     logger.info(f"[RERANKER] Returning top {top_n} nodes after reranking")
 
     _cached_reranker = [

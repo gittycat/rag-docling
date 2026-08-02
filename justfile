@@ -136,6 +136,20 @@ eval-compare +ARGS: up
     docker compose exec evals .venv/bin/python -m evals.cli compare {{ARGS}}
 
 # ============================================================================
+# Maintenance
+# ============================================================================
+
+# Report ChromaDB vectors with no matching Postgres document (dry run, no deletions)
+[group('maintenance')]
+reconcile-vectors: up
+    docker compose exec rag-server .venv/bin/python scripts/reconcile_vectors.py
+
+# Delete orphaned ChromaDB vectors reported by `just reconcile-vectors`
+[group('maintenance')]
+reconcile-vectors-apply: up
+    docker compose exec rag-server .venv/bin/python scripts/reconcile_vectors.py --apply
+
+# ============================================================================
 # Config
 # ============================================================================
 

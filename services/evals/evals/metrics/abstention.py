@@ -4,6 +4,7 @@ Measures how well the RAG system handles questions that cannot be answered
 from the available context.
 """
 
+import logging
 from typing import Any
 
 from evals.metrics.base import BaseMetric
@@ -14,8 +15,11 @@ from evals.schemas import (
     MetricGroup,
 )
 
+logger = logging.getLogger(__name__)
 
-# Default phrases indicating abstention
+
+# Fallback phrases indicating abstention, used only if config.yml's
+# eval.abstention_phrases cannot be loaded (e.g. config.yml missing).
 DEFAULT_ABSTENTION_PHRASES = [
     "i don't have enough information",
     "i do not have enough information",
@@ -35,6 +39,45 @@ DEFAULT_ABSTENTION_PHRASES = [
 ]
 
 
+_cached_phrases: list[str] | None = None
+
+
+def get_configured_abstention_phrases() -> list[str]:
+    """Read eval.abstention_phrases from config.yml, falling back to the hardcoded defaults."""
+    global _cached_phrases
+    if _cached_phrases is not None:
+        return _cached_phrases
+
+    # Read the YAML directly rather than through get_models_config(): that path
+    # validates the active provider's API key and raises without one, which would
+    # silently swap in a different phrase list — i.e. change eval scores — on any
+    # host where secrets are not mounted.
+    try:
+        from infrastructure.config.models_config import load_raw_config
+
+        phrases = (load_raw_config().get("eval") or {}).get("abstention_phrases")
+        if phrases:
+            _cached_phrases = list(phrases)
+            return _cached_phrases
+        logger.warning(
+            "[ABSTENTION] eval.abstention_phrases is empty in config.yml — "
+            "using built-in defaults; abstention scores reflect the defaults, not your config"
+        )
+    except Exception as e:
+        logger.warning(
+            f"[ABSTENTION] Could not read eval.abstention_phrases ({e}) — "
+            "using built-in defaults; abstention scores reflect the defaults, not your config"
+        )
+
+    _cached_phrases = DEFAULT_ABSTENTION_PHRASES
+    return _cached_phrases
+
+
+def reset_abstention_phrases_cache() -> None:
+    global _cached_phrases
+    _cached_phrases = None
+
+
 def is_abstention(answer: str, phrases: list[str] | None = None) -> bool:
     """Check if an answer is an abstention (refusal to answer).
 
@@ -49,7 +92,7 @@ def is_abstention(answer: str, phrases: list[str] | None = None) -> bool:
         return True
 
     answer_lower = answer.lower().strip()
-    phrases = phrases or DEFAULT_ABSTENTION_PHRASES
+    phrases = phrases or get_configured_abstention_phrases()
 
     for phrase in phrases:
         if phrase.lower() in answer_lower:
@@ -68,7 +111,7 @@ class UnanswerableAccuracy(BaseMetric):
     """
 
     def __init__(self, abstention_phrases: list[str] | None = None):
-        self.abstention_phrases = abstention_phrases or DEFAULT_ABSTENTION_PHRASES
+        self.abstention_phrases = abstention_phrases or get_configured_abstention_phrases()
 
     @property
     def name(self) -> str:
@@ -168,7 +211,7 @@ class FalsePositiveRate(BaseMetric):
     """
 
     def __init__(self, abstention_phrases: list[str] | None = None):
-        self.abstention_phrases = abstention_phrases or DEFAULT_ABSTENTION_PHRASES
+        self.abstention_phrases = abstention_phrases or get_configured_abstention_phrases()
 
     @property
     def name(self) -> str:
@@ -219,7 +262,7 @@ class FalseNegativeRate(BaseMetric):
     """
 
     def __init__(self, abstention_phrases: list[str] | None = None):
-        self.abstention_phrases = abstention_phrases or DEFAULT_ABSTENTION_PHRASES
+        self.abstention_phrases = abstention_phrases or get_configured_abstention_phrases()
 
     @property
     def name(self) -> str:

@@ -3,16 +3,23 @@
 # Triggers:
 #   - On every push to any branch
 #   - On pull requests
-#   - Manual workflow dispatch (with eval option)
+#   - Manual workflow dispatch
 #
-# Jobs:
-#   - test: Run core pytest tests (33 tests)
-#   - test-eval: Run evaluation tests (27 tests) - OPTIONAL, off by default
-#   - docker-build: Verify Docker images build successfully
+# Jobs (all always-on — nothing here is gated):
+#   - test-rag-server: rag_server hermetic unit tests (tests/, excluding
+#     tests/integration, which self-skips without --run-integration)
+#   - test-evals: services/evals hermetic unit tests (tests/, excluding
+#     eval-marked tests, which self-skip without --run-eval — those need
+#     network access for HuggingFace dataset downloads and/or API keys)
+#   - docker-build: verify the rag-server and webapp Docker images build
 #
-# Eval tests are triggered by:
-#   - Manual workflow dispatch with run_eval=true
-#   - Including '[eval]' in commit message
+# There is no CI job for the real end-to-end eval — that's `just test-eval`,
+# which needs docker compose plus a running rag-server and isn't something
+# a stateless CI runner can do without a lot more setup than this file has.
+# The previous "test-eval" job here didn't do that anyway: it ran a since-
+# deleted rag_server test file with a since-deleted dependency group, so it
+# was broken as committed and always failed or was skipped. Removed rather
+# than fixed — see docs/suggestions.md #4.2.
 
 name: CI
 
@@ -22,17 +29,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      run_eval:
-        description: 'Run evaluation tests (requires ANTHROPIC_API_KEY)'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
-  # Core tests - always run
-  test:
-    name: Core Tests
+  # rag_server unit tests
+  test-rag-server:
+    name: RAG Server Tests
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
@@ -45,36 +46,30 @@ jobs:
         run: |
           uv sync
 
-      - name: Run core tests
+      - name: Run tests
         working-directory: services/rag_server
         run: |
-          uv run pytest tests/ -v --ignore=tests/evaluation --ignore=tests/test_rag_eval.py --tb=short
+          uv run pytest tests/ -v --tb=short
 
-  # Evaluation tests - optional, off by default
-  test-eval:
-    name: Evaluation Tests
+  # services/evals unit tests (plain unit tests — no API key, no eval run needed)
+  test-evals:
+    name: Evals Tests
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
-    # Only run if: (1) manual dispatch with run_eval=true, OR (2) [eval] in commit message
-    if: |
-      github.event.inputs.run_eval == 'true' ||
-      contains(github.event.head_commit.message, '[eval]')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies with eval group
-        working-directory: services/rag_server
+      - name: Install dependencies
+        working-directory: services/evals
         run: |
-          uv sync --group eval
+          uv sync
 
-      - name: Run evaluation tests
-        working-directory: services/rag_server
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Run tests
+        working-directory: services/evals
         run: |
-          uv run pytest tests/test_rag_eval.py --run-eval --eval-samples=5 -v --tb=short
+          uv run pytest tests/ -v --tb=short
 
   # Docker build verification
   docker-build:

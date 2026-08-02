@@ -152,6 +152,12 @@ class RAGClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_retrieval_config(self) -> dict[str, Any]:
+        """Get the active retrieval pipeline configuration."""
+        response = await self._client.get(f"{self.base_url}/metrics/retrieval")
+        response.raise_for_status()
+        return response.json()
+
     async def health_check(self) -> bool:
         """Check if the RAG server is healthy."""
         try:
@@ -355,7 +361,19 @@ class EvaluationRunner:
             rag_config = {}
             self._model_config = {}
 
-        config_snapshot = self._create_config_snapshot(rag_config)
+        # Retrieval settings live on a separate endpoint from /models/info. Without
+        # them the run is still usable, but its config is only partly known — record
+        # that rather than substituting defaults that look like real measurements.
+        try:
+            retrieval_config = await self.client.get_retrieval_config()
+        except Exception as e:
+            logger.warning(
+                f"[EVAL] Could not get retrieval config: {e} — "
+                "top_k, hybrid search and contextual retrieval will be recorded as unknown"
+            )
+            retrieval_config = {}
+
+        config_snapshot = self._create_config_snapshot(rag_config, retrieval_config)
 
         # Warn if citation metrics are enabled but the RAG server won't produce explicit citations
         if self.config.metrics.citation:
@@ -587,18 +605,26 @@ class EvaluationRunner:
         else:
             logger.info(f"[EVAL] Deleted {len(rag_doc_ids)} documents")
 
-    def _create_config_snapshot(self, rag_config: dict) -> ConfigSnapshot:
+    def _create_config_snapshot(
+        self, rag_config: dict, retrieval_config: dict | None = None
+    ) -> ConfigSnapshot:
         """Create a snapshot of the current RAG configuration."""
-        # /models/info returns flat structure now
+        # /models/info returns flat structure now; retrieval settings come from
+        # /metrics/retrieval. A missing value stays None ("unknown") — a run whose
+        # config is guessed cannot be compared against one whose config is real.
+        retrieval_config = retrieval_config or {}
+        hybrid = retrieval_config.get("hybrid_search") or {}
+        contextual = retrieval_config.get("contextual_retrieval") or {}
+
         return ConfigSnapshot(
             llm_model=rag_config.get("llm_model", "unknown"),
             llm_provider=rag_config.get("llm_provider", "unknown"),
             embedding_model=rag_config.get("embedding_model", "unknown"),
             reranker_model=rag_config.get("reranker_model"),
-            retrieval_top_k=10,  # Not available in /models/info
-            hybrid_search_enabled=False,  # Not available in /models/info
-            contextual_retrieval_enabled=False,  # Not available in /models/info
-            additional=rag_config,
+            retrieval_top_k=retrieval_config.get("retrieval_top_k"),
+            hybrid_search_enabled=hybrid.get("enabled"),
+            contextual_retrieval_enabled=contextual.get("enabled"),
+            additional={**rag_config, "retrieval": retrieval_config},
         )
 
     async def _compute_metrics(
@@ -834,6 +860,9 @@ class EvaluationRunner:
                 "retrieval_top_k": run.config.retrieval_top_k,
                 "hybrid_search_enabled": run.config.hybrid_search_enabled,
                 "contextual_retrieval_enabled": run.config.contextual_retrieval_enabled,
+                # Full server response: rrf_k, reranker top_n, final_top_n and the
+                # rest of the tuning surface a later comparison may need
+                "additional": run.config.additional,
             },
             "datasets": run.datasets,
             "scorecard": self._scorecard_to_dict(run.scorecard) if run.scorecard else None,

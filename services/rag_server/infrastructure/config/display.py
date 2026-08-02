@@ -1,6 +1,6 @@
 """Config display utilities for CLI tools."""
 
-from infrastructure.config.models_config import get_models_config
+from infrastructure.config.models_config import get_models_config, effective_reranker_top_n
 
 
 def print_config_banner(compact: bool = True) -> None:
@@ -36,7 +36,8 @@ def _print_compact_banner(config) -> None:
 
     # Reranker
     if config.reranker.enabled:
-        rerank_info = f"{config.reranker.model} (top_n={config.reranker.top_n})"
+        top_n = effective_reranker_top_n(config.reranker.top_n, config.retrieval.top_k)
+        rerank_info = f"{config.reranker.model} (top_n={top_n})"
         print(f"  Reranker:         {rerank_info}")
     else:
         print(f"  Reranker:         disabled")
@@ -75,8 +76,10 @@ def _print_full_banner(config) -> None:
     print("\nReranker:")
     print(f"  Enabled:     {config.reranker.enabled}")
     if config.reranker.enabled:
+        top_n = effective_reranker_top_n(config.reranker.top_n, config.retrieval.top_k)
+        configured = config.reranker.top_n if config.reranker.top_n is not None else "unset (derived)"
         print(f"  Model:       {config.reranker.model}")
-        print(f"  Top N:       {config.reranker.top_n}")
+        print(f"  Top N:       {top_n}  (configured: {configured})")
 
     # Retrieval section
     print("\nRetrieval:")

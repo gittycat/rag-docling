@@ -2,25 +2,25 @@
 
 RAGBench runs its own CI on a self-hosted Forgejo instance, and deploys via Docker Compose
 overlays rather than a separate deployment tool. This document covers the CI pipeline as it
-actually exists today (including a broken job), the five compose files and what each is for, the
-deploy and release recipes, and what operational concerns are simply not addressed anywhere in
-the repo.
+actually exists today, the five compose files and what each is for, the deploy and release
+recipes, and what operational concerns are simply not addressed anywhere in the repo.
 
 ## Forgejo CI pipeline
 
-The pipeline is a single workflow file, `.forgejo/workflows/ci.yml`.
+The pipeline is a single workflow file, `.forgejo/workflows/ci.yml`. Every job in it is always-on;
+there is no gated/opt-in job.
 
 **Triggers:**
 - `push` on every branch (`branches: ['**']`)
 - `pull_request` targeting `main`
-- `workflow_dispatch`, with a boolean `run_eval` input (default `false`)
+- `workflow_dispatch` (manual, no inputs)
 
 **Jobs:**
 
 | Job | Runs when | Container | What it does |
 |---|---|---|---|
-| `test` ("Core Tests") | always | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | Checks out the repo, `uv sync` in `services/rag_server`, then `uv run pytest tests/ -v --ignore=tests/evaluation --ignore=tests/test_rag_eval.py --tb=short` |
-| `test-eval` ("Evaluation Tests") | `workflow_dispatch` with `run_eval: true`, or a commit message containing `[eval]` | same base image | `uv sync --group eval`, then `uv run pytest tests/test_rag_eval.py --run-eval --eval-samples=5 -v --tb=short`, with `ANTHROPIC_API_KEY` from repo secrets |
+| `test-rag-server` ("RAG Server Tests") | always | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | Checks out the repo, `uv sync` in `services/rag_server`, then `uv run pytest tests/ -v --tb=short`. `tests/integration` self-skips without `--run-integration`. |
+| `test-evals` ("Evals Tests") | always | same base image | Checks out the repo, `uv sync` in `services/evals`, then `uv run pytest tests/ -v --tb=short`. Dataset-loader/integration tests marked `eval` self-skip without `--run-eval`. |
 | `docker-build` ("Docker Build") | always | — | Builds the `rag-server` and `webapp` Docker images (tagged with the commit SHA) and prints their sizes; does not push either image anywhere |
 
 Forgejo branch protection (which jobs are required to pass before a merge) is configured in the
@@ -28,35 +28,27 @@ Forgejo instance itself, not as code in this repository, so it is not visible he
 file itself does not mark any job `required` — that gating, if it exists, lives entirely in
 Forgejo's own server-side settings.
 
-### Known breakage: the eval job targets a path that no longer exists
+### History: the eval job used to target a path that no longer existed
 
-The `test-eval` job and the core `test` job's `--ignore` flags both assume the eval tests still
-live under `services/rag_server/tests/`. They don't anymore — the eval framework was extracted
-into its own service, and its tests now live at `services/evals/tests/test_rag_eval.py`. As a
-result:
+Previously this workflow had a gated `test-eval` job (`workflow_dispatch` with `run_eval: true`,
+or `[eval]` in the commit message) plus stale `--ignore` flags on the core job. Both referenced
+`services/rag_server/tests/test_rag_eval.py` and a `--group eval` dependency group, none of which
+existed anymore — the eval framework had been extracted into `services/evals/`, and its tests
+moved wholesale to `services/evals/tests/`. The job was broken as committed and never actually
+ran anything real. The root `Makefile` had the identical stale reference and has since been
+deleted (`just` was already a strict superset of its targets).
 
-- The core `test` job's `--ignore=tests/evaluation --ignore=tests/test_rag_eval.py` flags are
-  no-ops: neither path exists under `services/rag_server/tests` today, so nothing is actually
-  being excluded.
-- The `test-eval` job runs `uv sync --group eval` inside `services/rag_server`, but that
-  dependency group no longer exists in `services/rag_server/pyproject.toml` (only `dev` and
-  `bench` remain there) — this step is expected to fail.
-- Even if dependency sync somehow succeeded, the job's `pytest tests/test_rag_eval.py` target
-  does not exist under `services/rag_server/tests` — it was moved wholesale to
-  `services/evals/tests/`.
-
-The `Makefile` has the identical stale reference (`test-eval`/`test-eval-full` targets
-`services/rag_server/tests/test_rag_eval.py`, and `test-unit` carries the same dead `--ignore`
-flags), so this isn't unique to CI — both were written against the pre-extraction layout and
-never updated.
-
-**This job is broken as currently committed.** Treat "Evaluation Tests" in Forgejo as
-non-functional until the workflow is repointed at `services/evals` and given that service's own
-sync/test invocation; don't rely on a green run of this job for anything.
-
-There is also no CI job that builds or tests the `evals` service itself, and no image-push step
-anywhere in `.forgejo/` — `docker-build` verifies that the `rag-server` and `webapp` images still
-build, nothing more.
+That job has been **removed**, not repaired — the real end-to-end eval (`just test-eval`) needs
+docker compose plus a running rag-server, which a stateless CI runner isn't set up for here.
+`services/evals/tests/` is genuinely a hermetic unit-test suite (no API key, no eval run needed)
+distinct from that end-to-end path, so it was promoted into the always-on `test-evals` job
+instead of staying tied to the removed eval-run job. Two test classes in that suite —
+`TestCitationExtraction` and `TestQueryEndpointIncludeChunks` in
+`services/evals/tests/test_rag_eval.py` — are skipped with an explicit reason: they import
+`pipelines.inference` from `services/rag_server`, which is not installed in the `evals` service's
+own virtualenv, so they fail with `ModuleNotFoundError` regardless of any flag. That's a real,
+separate defect (tests exercising the wrong service from the wrong service) recorded in
+`docs/suggestions.md`, not something this CI fix addressed.
 
 ## Compose environments
 

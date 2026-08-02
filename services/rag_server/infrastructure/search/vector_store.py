@@ -59,3 +59,41 @@ def reset_vector_store() -> None:
     global _vector_store, _vector_index
     _vector_store = None
     _vector_index = None
+
+
+def delete_document_vectors(document_id: str) -> None:
+    """Delete all ChromaDB vectors for a document, keyed on the "document_id"
+    metadata field written by add_document_metadata_to_chunks() during ingestion.
+
+    Chroma's delete(where=...) is idempotent: a document with no vectors (already
+    deleted, or never indexed) is a silent no-op, not an error. Connection/HTTP
+    errors from the Chroma client propagate to the caller.
+    """
+    get_vector_store().delete(ref_doc_id=document_id)
+
+
+def list_chroma_document_ids() -> set[str]:
+    """Return the distinct document_id values present in the Chroma collection.
+
+    Used by the vector-reconciliation recipe to find vectors whose owning
+    document no longer exists in Postgres (e.g. deleted before this fix shipped).
+    """
+    collection = get_chroma_client().get_or_create_collection(
+        get_models_config().chromadb.collection
+    )
+    document_ids: set[str] = set()
+    offset = 0
+    page_size = 1000
+    while True:
+        page = collection.get(include=["metadatas"], limit=page_size, offset=offset)
+        metadatas = page.get("metadatas") or []
+        if not metadatas:
+            break
+        for md in metadatas:
+            doc_id = (md or {}).get("document_id")
+            if doc_id:
+                document_ids.add(doc_id)
+        if len(metadatas) < page_size:
+            break
+        offset += page_size
+    return document_ids

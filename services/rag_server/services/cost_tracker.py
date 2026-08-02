@@ -31,17 +31,8 @@ TOKEN_PRICING: dict[str, dict[str, float]] = {
     "claude-3-opus": {"input": 15.00, "output": 75.00},
     "claude-3-sonnet": {"input": 3.00, "output": 15.00},
     "claude-3-haiku": {"input": 0.25, "output": 1.25},
-    # Google models
-    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
-    "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
-    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
-    # DeepSeek models
-    "deepseek-chat": {"input": 0.14, "output": 0.28},
-    "deepseek-coder": {"input": 0.14, "output": 0.28},
-    # Moonshot models
-    "moonshot-v1-8k": {"input": 0.012, "output": 0.012},
-    "moonshot-v1-32k": {"input": 0.024, "output": 0.024},
-    "moonshot-v1-128k": {"input": 0.06, "output": 0.06},
+    # Google, DeepSeek, and Moonshot providers are not currently supported
+    # (no Docker secret declared) — see infrastructure/llm/config.py.
     # Ollama models (local, free)
     "gemma3": {"input": 0.0, "output": 0.0},
     "gemma2": {"input": 0.0, "output": 0.0},

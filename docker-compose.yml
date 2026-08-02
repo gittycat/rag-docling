@@ -86,6 +86,8 @@ services:
       - ./services/postgres/00-roles.sh:/docker-entrypoint-initdb.d/00-roles.sh:ro
       - ./services/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./services/postgres/02-grants.sh:/docker-entrypoint-initdb.d/02-grants.sh:ro
+    # This is the real max_connections setting — config.yml's database.max_connections
+    # key was never read by the application and has been removed.
     command: postgres -c max_connections=200
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $(cat /run/secrets/POSTGRES_SUPERUSER) -d ragbench"]
@@ -204,6 +206,9 @@ volumes:
     driver: local
 
 secrets:
+  # To add a new cloud LLM provider: declare its secret here, add it to the
+  # `secrets:` list of each service that needs it below, and see
+  # services/rag_server/infrastructure/llm/config.py for the rest of the wiring.
   OPENAI_API_KEY:
     file: secrets/OPENAI_API_KEY
   ANTHROPIC_API_KEY:

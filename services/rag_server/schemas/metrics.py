@@ -164,7 +164,7 @@ class ConfigSnapshot(BaseModel):
     """
 
     # LLM Configuration
-    llm_provider: str = Field(..., description="LLM provider (ollama, openai, anthropic, google, deepseek, moonshot)")
+    llm_provider: str = Field(..., description="LLM provider (ollama, openai, anthropic, vllm)")
     llm_model: str = Field(..., description="LLM model name (e.g., 'gpt-4o', 'claude-sonnet-4', 'gemma3:4b')")
     llm_base_url: Optional[str] = Field(None, description="Custom LLM endpoint URL")
 

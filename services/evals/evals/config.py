@@ -71,12 +71,8 @@ MODEL_COSTS = {
     "gpt-5-mini": {"input": 0.15, "output": 0.60},   # placeholder, matches gpt-4o-mini tier
     "gpt-5.2": {"input": 2.50, "output": 10.00},
     "gpt-4-turbo": {"input": 10.00, "output": 30.00},
-    # Google
-    "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
-    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
-    # DeepSeek
-    "deepseek-chat": {"input": 0.14, "output": 0.28},
-    "deepseek-reasoner": {"input": 0.55, "output": 2.19},
+    # Google, DeepSeek, and Moonshot providers are not currently supported
+    # (no Docker secret declared) — see rag_server/infrastructure/llm/config.py.
     # Local/Ollama - free
     "ollama/*": {"input": 0.0, "output": 0.0},
 }

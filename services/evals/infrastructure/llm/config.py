@@ -16,13 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 class LLMProvider(str, Enum):
-    """Supported LLM providers."""
+    """Supported LLM providers.
+
+    To add a new provider: enum value here, a key field in BOTH
+    services/evals/infrastructure/settings.py and services/rag_server/app/settings.py,
+    an import mapping in infrastructure/llm/factory.py, a Docker secret declaration in
+    the compose files, and a cost-table entry.
+    """
     OLLAMA = "ollama"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
-    GOOGLE = "google"
-    DEEPSEEK = "deepseek"
-    MOONSHOT = "moonshot"
 
 
 @dataclass

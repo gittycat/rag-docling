@@ -20,6 +20,7 @@ from infrastructure.search.vector_store import get_vector_index
 from infrastructure.database.postgres import get_session
 from infrastructure.database import jobs as db_jobs
 from infrastructure.database import documents as db_docs
+from services import document_service
 
 # Persistent document storage path
 DOCUMENT_STORAGE_PATH = Path("/app/documents")
@@ -77,10 +78,12 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
         # Extract file metadata for Document record
         metadata = extract_file_metadata(file_path)
 
-        # Reset any partial state from a previous failed retry attempt
+        # Reset any partial state from a previous failed retry attempt (Postgres
+        # row + any ChromaDB vectors a prior attempt managed to index before
+        # failing later in the pipeline).
         logger.info(f"[TASK {task_id}] Preparing document record in database...")
         async with get_session() as session:
-            await db_docs.delete_document(session, UUID(doc_id))
+            await document_service.delete_document(session, UUID(doc_id))
             await db_docs.create_document(
                 session,
                 file_name=filename,

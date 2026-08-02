@@ -133,9 +133,9 @@ class ConfigSnapshot:
         llm_provider: LLM provider (ollama, anthropic, etc.)
         embedding_model: Embedding model name
         reranker_model: Reranker model (if enabled)
-        retrieval_top_k: Number of chunks to retrieve
-        hybrid_search_enabled: Whether hybrid search was used
-        contextual_retrieval_enabled: Whether contextual retrieval was used
+        retrieval_top_k: Number of chunks to retrieve (None if not captured)
+        hybrid_search_enabled: Whether hybrid search was used (None if not captured)
+        contextual_retrieval_enabled: Whether contextual retrieval was used (None if not captured)
         additional: Any additional config parameters
     """
 
@@ -143,9 +143,12 @@ class ConfigSnapshot:
     llm_provider: str
     embedding_model: str
     reranker_model: str | None = None
-    retrieval_top_k: int = 10
-    hybrid_search_enabled: bool = True
-    contextual_retrieval_enabled: bool = False
+    # None means "not captured from the server", not a default setting. These are
+    # the axes runs get compared on, so a fabricated value silently corrupts every
+    # comparison it takes part in.
+    retrieval_top_k: int | None = None
+    hybrid_search_enabled: bool | None = None
+    contextual_retrieval_enabled: bool | None = None
     additional: dict[str, Any] = field(default_factory=dict)
 
 

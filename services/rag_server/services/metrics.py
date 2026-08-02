@@ -26,6 +26,7 @@ from schemas.metrics import (
 )
 from core.config import get_optional_env
 from app.settings import has_anthropic_key
+from infrastructure.config.models_config import effective_reranker_top_n
 from pipelines.inference import get_inference_config
 from pipelines.ingestion import get_ingestion_config
 
@@ -296,7 +297,11 @@ def get_retrieval_config() -> RetrievalConfig:
     )
 
     top_k = inference_config["retrieval_top_k"]
-    top_n = max(5, top_k // 2) if inference_config["reranker_enabled"] else top_k
+    top_n = (
+        effective_reranker_top_n(inference_config["reranker_top_n"], top_k)
+        if inference_config["reranker_enabled"]
+        else top_k
+    )
 
     reranker_cfg = RerankerConfig(
         enabled=inference_config["reranker_enabled"],

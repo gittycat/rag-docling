@@ -92,13 +92,11 @@ just down    # stop the stack
 | `deploy-down ENV="server"` | Tears down a deployed overlay | — | Stop a deployed overlay |
 | `release VERSION` | Tags `vVERSION`, bumps `services/rag_server/pyproject.toml` and `services/webapp/package.json` versions, commits, pushes `main` with tags | — | Cut a release |
 
-### The Makefile is stale — use `just`
+### `just` is the only supported interface
 
-A `Makefile` also exists at the repo root, but it predates the eval service's extraction into `services/evals/` and was never updated. Its `test-eval` and `test-eval-full` targets invoke pytest against `services/rag_server/tests/test_rag_eval.py`, which no longer exists (the eval test suite now lives under `services/evals/tests/`). Its `test-unit` target also passes `--ignore=tests/evaluation --ignore=tests/test_rag_eval.py` flags that are no-ops, since neither path exists under `services/rag_server/tests` any more. Its `test-integration` target additionally runs pytest directly against the host venv rather than inside the `rag-server` container the way the justfile's equivalent does.
+A root `Makefile` used to exist alongside the justfile, but it predated the eval service's extraction into `services/evals/` and was never updated — its eval targets pointed at `services/rag_server/tests/test_rag_eval.py`, which no longer exists, and its `test-unit` target carried the same dead `--ignore` flags. It has been deleted; `just` was already a strict superset of everything it did.
 
-The Forgejo CI workflow (`.forgejo/workflows/ci.yml`) has the same stale-path problem in its own eval-test job — it targets the same nonexistent `services/rag_server/tests/test_rag_eval.py`.
-
-**Use `just` as the supported interface.** It correctly targets the separate `evals` service and its CLI for anything eval-related, and it runs integration tests inside a disposable container built from the `rag-server` service definition rather than against the host venv — avoiding the config-drift risk of a second, hand-maintained test-runner environment.
+`just` correctly targets the separate `evals` service and its CLI for anything eval-related, and it runs integration tests inside a disposable container built from the `rag-server` service definition rather than against the host venv — avoiding the config-drift risk of a second, hand-maintained test-runner environment.
 
 ## Config inspection
 
@@ -124,6 +122,6 @@ Both recipes call `print_config_banner()`, which renders from the `ModelsConfig`
 - **Docker build fails** on the PyTorch CPU wheel: the Dockerfile needs `--index-strategy unsafe-best-match` for `uv`'s PyTorch CPU index resolution — this is already set, but if you're modifying dependency resolution, keep it.
 - **Reranker slow on first query:** it downloads its model weights (tens of MB) into the bind-mounted Hugging Face cache on first use unless pre-fetched with `just init`.
 - **`task-worker` looks stuck:** check `docker compose logs task-worker` — it auto-restarts, and stuck tasks are reset after an hour by the worker's own claim-timeout logic.
-- **Eval-related `just`/`make`/CI commands fail with a missing-file error:** you've hit the stale Makefile/CI path described above — use the equivalent `just eval*` recipe instead.
+- **Eval-related commands fail with a missing-file error:** you're likely running something by hand against a stale path — use the `just eval*` recipes, which target the current `services/evals` layout.
 - **Ollama unreachable at `up`/`deploy`:** `preflight` should catch this before the stack starts, but if you bypass it, uploads will surface a dedicated "Ollama unreachable" error in the webapp; chat queries surface only a generic connection-interrupted error for the same underlying cause.
 - **Config change not taking effect:** `config.yml` is bind-mounted read-write into `rag-server`/`task-worker` and read-only into `evals`; most values are picked up via mtime-based auto-reload, but check `configuration-reference.md` for the handful of values that require a restart.

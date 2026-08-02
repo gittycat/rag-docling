@@ -11,8 +11,6 @@ dependencies = [
     "llama-index-llms-ollama>=0.8.3",
     "llama-index-llms-openai>=0.3.33",
     "llama-index-llms-anthropic>=0.6.10",
-    "llama-index-llms-google-genai>=0.1.0",
-    "llama-index-llms-deepseek>=0.1.0",
     "anthropic>=0.75.0",
     "datasets>=3.2.0",
     "fastapi>=0.115.0",
@@ -29,3 +27,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "eval: dataset-loader/integration tests that hit the network (HuggingFace downloads) or require API keys — skipped by default, use --run-eval",
+]
+addopts = "--strict-markers"

@@ -186,13 +186,16 @@ Carried forward honestly rather than fixed or hidden:
 - **The golden dataset has no gold passages at all.** Retrieval and citation
   metrics are meaningless against it; an operator building their own golden set
   gets generation-only coverage unless they extend the loader themselves.
-- **`ConfigSnapshot` fields are partly hardcoded.** Several fields recorded on
-  every saved run (retrieval `top_k`, hybrid-search enabled, contextual-retrieval
-  enabled) are fixed defaults in code with comments admitting the real values
-  aren't available from the RAG server's info endpoint — every saved run reports
-  these as the same constants regardless of what the RAG server was actually
-  configured with at the time, which undermines any comparison that assumes
-  config varies meaningfully across runs.
+- **`ConfigSnapshot` records "unknown" rather than guessing.** Retrieval `top_k`,
+  hybrid-search enabled and contextual-retrieval enabled are read from the RAG
+  server's `/metrics/retrieval` endpoint at run start, alongside the model fields
+  from `/models/info`. If that call fails the three fields are stored as `null`
+  and reports render them as "Unknown" — deliberately, so a run whose config was
+  never captured cannot be mistaken for one that really ran with those settings.
+  (They were previously hardcoded to `top_k=10` / hybrid off / contextual off on
+  every saved run, which silently corrupted every comparison.) The full endpoint
+  response is also kept under `config.additional.retrieval`, so `rrf_k`, the
+  reranker `top_n` and `final_top_n` are recoverable from a saved run.
 - **Richer exporters are orphaned.** A per-question/response review exporter
   (JSON/CSV/Markdown, including a manual-review CSV with blank reviewer columns)
   exists as library code but is not called from the CLI's `export` subcommand or

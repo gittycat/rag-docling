@@ -163,6 +163,19 @@ server-side via `get_inference_config()`.
 **Where.** `services/evals/evals/runner.py`,
 `services/rag_server/api/routes/health.py`, `services/rag_server/schemas/health.py`.
 
+**✅ FIXED (2026-08-02).** No `/models/info` change was needed — `GET
+/metrics/retrieval` already returned all three values. `RAGClient.get_retrieval_config()`
+now fetches it at run start. When that call fails the fields are stored as `null`
+and render as "Unknown" rather than falling back to defaults: a guessed value is
+indistinguishable from a measurement once written to disk, so `ConfigSnapshot`'s
+three retrieval fields are now `int | None` / `bool | None`. `_run_to_dict` was
+also silently dropping `config.additional`, so saved runs now carry the full
+retrieval response (`rrf_k`, reranker `top_n`, `final_top_n`). Two places that
+re-introduced the same lie downstream were fixed with it: `export.py` rendered
+`None` as "Disabled", and `webapp/src/lib/utils/diff.ts` rendered an uncaptured
+value as an added/removed diff line, i.e. reporting a config change that never
+happened. Covered by `services/evals/tests/test_config_snapshot.py`.
+
 ### 2.2 ★ No statistical significance testing anywhere
 **What.** `compare` reports raw arithmetic deltas plus strict Pareto dominance. No
 confidence intervals, no paired tests, no variance accounting. The per-metric
@@ -288,6 +301,16 @@ without hand-editing compose.
 **Effort.** S.
 **Where.** `docker-compose.yml`, `config.yml`.
 
+**✅ FIXED (2026-08-02).** Removed, per the owner's call that none of the three are
+in use. Gone from both `Settings` classes, the `LLMProvider` enum, the key
+validators and their dispatch, the factory provider map, all three cost tables, and
+`config.yml`. The now-unused `llama-index-llms-google-genai` and
+`llama-index-llms-deepseek` dependencies were dropped from both `pyproject.toml`
+files. `config.yml` keeps a commented example entry, and the enum, both settings
+classes and the compose `secrets:` block carry a checklist of everything a future
+provider must touch — enum value, key field in both settings classes, validator +
+dispatch entry, factory entry, compose secret, cost-table entry.
+
 ### 3.3 Six config keys are parsed and never acted on
 | Key | What actually happens |
 |---|---|
@@ -304,6 +327,33 @@ experiment "tuning" one of these measures nothing while appearing to work.
 configured value — actively telling the user a number that is not in use.
 **Effort.** S each — either wire them up or remove them. `reranker.top_n` should be
 wired up; the rest are probably removals.
+
+**✅ FIXED (2026-08-02).** `reranker.top_n` and `eval.abstention_phrases` wired up;
+the other four removed from `config.yml` and their schema models, with a pointer
+left at the real `max_connections` in `docker-compose.yml`. `top_n` now resolves
+through `effective_reranker_top_n(configured, top_k)` — configured value when set,
+`max(5, top_k // 2)` otherwise — used by the reranker, `/metrics/retrieval` and both
+config banners, so the displayed number is the one in use (this also closes the
+`show-config-full` half of **3.7**). With the shipped config the effective value is
+unchanged at 5, so no existing scores move.
+
+Two traps worth recording, because both would have shipped a knob that only *looked*
+wired:
+- `config.yml` held six **exact sentences** where the metric used fifteen lenient
+  **substrings**. Making the config authoritative as-written would have silently
+  narrowed abstention detection ("I don't know", "I cannot answer that" would stop
+  counting) and depressed `UnanswerableAccuracy` / `FalseNegativeRate` with nothing
+  about the model having changed. The config list is now the substring fragments,
+  which subsume the six sentences, so scores are preserved.
+- The reader first went through `get_models_config()`, which validates the active
+  provider's API key and **raises without one** — so on any host with no secrets
+  mounted it silently fell back to the hardcoded list, once per answer scored.
+  Reading an eval setting must not depend on model credentials; there is now a
+  `load_raw_config()` that parses `config.yml` with no validation or secret
+  injection, the result is cached, and the fallback logs that scores no longer
+  reflect config. Covered by `services/evals/tests/test_abstention_config.py`,
+  which asserts the result is *not* the fallback object so a silent regression
+  fails rather than passing vacuously.
 
 ### 3.4 RRF source weights are not exposed
 **What.** `bm25_weight` and `vector_weight` are hardcoded to `1.0`; the factory never
@@ -353,6 +403,25 @@ compliance problem for anyone relying on deletion.
 **Where.** `services/rag_server/infrastructure/database/documents.py`,
 `services/rag_server/infrastructure/search/vector_store.py`.
 
+**✅ FIXED (2026-08-02).** Vectors are keyed on the `document_id` metadata field
+written at `pipelines/ingestion.py:459` — which is also exactly what llama-index's
+`ChromaVectorStore.delete(ref_doc_id)` filters on (`collection.delete(where={"document_id": ...})`,
+verified in the installed package), so no ingestion change was needed. A new
+`services/document_service.py` is the single entry point used by both call sites
+(the HTTP route and the worker's pre-retry reset — the latter now also cleans up
+vectors a *failed* ingestion left behind, the same bug in another guise).
+
+**Ordering:** vectors first, then the Postgres row. If ChromaDB is unreachable the
+call raises before Postgres is touched, so the document stays visible and the delete
+is retryable, and the route returns 500 instead of "deleted successfully". The
+accepted tradeoff is that a Postgres failure after a successful vector delete leaves
+a listed document with no vectors — a silent dead entry, far less bad than a phantom
+retrievable one.
+
+**Pre-existing orphans** (anything deleted before this shipped) are not swept
+automatically: run `just reconcile-vectors` to see what would be deleted, then
+`just reconcile-vectors-apply`. Covered by `services/rag_server/tests/test_document_deletion.py`.
+
 ### 4.2 ★ CI and Makefile reference a test file that no longer exists
 **What.** Both the Forgejo CI eval job and the `Makefile` eval targets point at
 `services/rag_server/tests/test_rag_eval.py`, removed when evals moved to
@@ -362,6 +431,20 @@ longer exists.
 than no job — it either fails constantly and gets ignored, or passes vacuously.
 **Effort.** S.
 **Where.** `.forgejo/workflows/ci.yml`, `Makefile`.
+
+**✅ FIXED (2026-08-02).** The `Makefile` was deleted rather than repaired — the
+`justfile` already covered every target (the only difference: `make docker-logs`
+implied `docker-up`; `just logs` does not). The gated `test-eval` job was removed
+rather than repointed: the real end-to-end eval is `just test-eval`, which needs
+docker compose and a running rag-server. `test` became `test-rag-server`, the stale
+`--ignore` flags are gone, and a new always-on `test-evals` job was added.
+
+**The bigger finding:** `services/evals/tests/` (4 files, ~1,600 lines) ran in **no
+CI job at all**, and was not green — 19 of its tests failed on an unmodified tree.
+Adding it verbatim would have committed a red job, which is the exact failure this
+item is about. Both jobs now run commands verified to pass: rag_server **127 passed,
+38 skipped, 1 xfailed**; evals **103 passed, 31 skipped**. See **4.8** for what had
+to be deselected to get there.
 
 ### 4.3 `content_with_context` is always empty
 **What.** The BM25 retriever reads `content_with_context` and falls back to
@@ -418,6 +501,56 @@ whether to enable contextual retrieval with a cloud provider is reading the comm
 **Where.** `config.yml`,
 `services/rag_server/infrastructure/config/models_config.py`,
 `services/rag_server/pipelines/ingestion.py`.
+
+### 4.8 ★ Eleven eval tests import rag-server internals and fail everywhere
+**What.** `services/evals/tests/test_rag_eval.py` — `TestCitationExtraction` (8
+tests) and `TestQueryEndpointIncludeChunks` (3) — does
+`from pipelines.inference import extract_numeric_citations` / `extract_sources`.
+`pipelines` is a **rag-server** package, not installed in the evals service, so
+these fail with `ModuleNotFoundError` on any machine. They were left behind when
+evals moved out of `services/rag_server/`, and because the evals suite ran in no CI
+job (**4.2**), nobody saw it.
+**Why it matters.** Eleven tests covering citation extraction — which the citation
+metrics depend on — have not run since the move. They are currently
+`@pytest.mark.skip`-ped with the cause in the reason string so the suite is honestly
+green, but the coverage is simply absent.
+**Fix.** They test rag-server code, so move them to `services/rag_server/tests/`.
+**Effort.** S.
+**Where.** `services/evals/tests/test_rag_eval.py`.
+
+### 4.9 Importing the task worker performs live network I/O
+**What.** Importing `services/rag_server/infrastructure/tasks/task_worker.py`
+triggers a real `httpx.get()` Ollama reachability check at module scope. With no
+Ollama running this doesn't just fail a test — it crashes the whole pytest
+collection with `INTERNALERROR`/`SystemExit`, taking the entire rag-server suite
+with it. `config.yml`'s active embedding is `ollama` at `host.docker.internal:11434`,
+so a CI runner hits this too.
+**Why it matters.** Import-time side effects that reach the network make a module
+untestable and can take down an unrelated suite. Worked around at the test level
+(mocking `core.config.check_ollama_reachable`); the import-time call itself is
+untouched.
+**Fix.** Make the reachability check lazy, at first use rather than at import.
+**Effort.** S.
+**Where.** `services/rag_server/infrastructure/tasks/task_worker.py`,
+`services/rag_server/core/config.py`.
+
+### 4.10 `ConfigSnapshot` in the rag-server schemas is dead code
+**What.** `services/rag_server/schemas/metrics.py:159` defines a 15-field pydantic
+`ConfigSnapshot` — a richer model than the evals dataclass actually used, including
+`llm_base_url`, `rrf_k`, `reranker_top_n` and `citation_scope`. Nothing constructs
+it anywhere.
+**Why it matters.** It reads as the authoritative snapshot model and is not wired to
+anything, so a reader fixing snapshot behaviour may edit the wrong type. It is also
+a better shape than the one in use — worth harvesting rather than only deleting.
+**Effort.** S.
+**Where.** `services/rag_server/schemas/metrics.py`.
+
+> **Note on 4.4.** `test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries`
+> was failing on an unmodified tree (confirmed against a clean worktree at `HEAD`) —
+> the live retriever emits `to_bm25query`, the test asserts `bm25_search(`, exactly
+> as **4.4** describes. It is now `@pytest.mark.skip`-ped with a reason citing 4.4,
+> so the suite is green without the defect being papered over. The underlying fix —
+> delete the unused `search_chunks_bm25` and correct the test — is still open.
 
 ---
 

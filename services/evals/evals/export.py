@@ -28,6 +28,13 @@ from evals.schemas import (
 )
 
 
+# None is "we never captured this", which must not render as "Disabled"
+def _toggle_label(value: bool | None) -> str:
+    if value is None:
+        return "Unknown"
+    return "Enabled" if value else "Disabled"
+
+
 def export_for_review(
     questions: list[EvalQuestion],
     responses: list[EvalResponse],
@@ -391,9 +398,9 @@ def export_run_report(
         f"- **LLM:** {run.config.llm_provider}/{run.config.llm_model}",
         f"- **Embedding:** {run.config.embedding_model}",
         f"- **Reranker:** {run.config.reranker_model or 'Disabled'}",
-        f"- **Hybrid Search:** {'Enabled' if run.config.hybrid_search_enabled else 'Disabled'}",
-        f"- **Contextual Retrieval:** {'Enabled' if run.config.contextual_retrieval_enabled else 'Disabled'}",
-        f"- **Top-K:** {run.config.retrieval_top_k}",
+        f"- **Hybrid Search:** {_toggle_label(run.config.hybrid_search_enabled)}",
+        f"- **Contextual Retrieval:** {_toggle_label(run.config.contextual_retrieval_enabled)}",
+        f"- **Top-K:** {run.config.retrieval_top_k if run.config.retrieval_top_k is not None else 'Unknown'}",
         "",
         "## Datasets\n",
         ", ".join(run.datasets),

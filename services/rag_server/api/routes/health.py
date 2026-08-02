@@ -25,13 +25,8 @@ async def get_models_info():
         "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
         "claude-3-5-haiku-20241022": {"input": 0.80, "output": 4.0},
         "claude-3-opus-20240229": {"input": 15.0, "output": 75.0},
-        "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
-        "gemini-1.5-pro": {"input": 1.25, "output": 5.0},
-        "deepseek-chat": {"input": 0.27, "output": 1.10},
-        "deepseek-reasoner": {"input": 0.55, "output": 2.19},
-        "moonshot-v1-8k": {"input": 1.0, "output": 1.0},
-        "moonshot-v1-32k": {"input": 2.0, "output": 2.0},
-        "moonshot-v1-128k": {"input": 5.0, "output": 5.0},
+        # Google, DeepSeek, and Moonshot providers are not currently supported
+        # (no Docker secret declared) — see infrastructure/llm/config.py.
     }
 
     models_config = get_models_config()

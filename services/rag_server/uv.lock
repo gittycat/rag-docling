@@ -1214,25 +1214,6 @@ requests = [
 ]
 
 [[package]]
-name = "google-genai"
-version = "1.53.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "google-auth", extra = ["requests"] },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "requests" },
-    { name = "tenacity" },
-    { name = "typing-extensions" },
-    { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/de/b3/36fbfde2e21e6d3bc67780b61da33632f495ab1be08076cf0a16af74098f/google_genai-1.53.0.tar.gz", hash = "sha256:938a26d22f3fd32c6eeeb4276ef204ef82884e63af9842ce3eac05ceb39cbd8d", size = 260102, upload-time = "2025-12-03T17:21:23.233Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/40/f2/97fefdd1ad1f3428321bac819ae7a83ccc59f6439616054736b7819fa56c/google_genai-1.53.0-py3-none-any.whl", hash = "sha256:65a3f99e5c03c372d872cda7419f5940e723374bb12a2f3ffd5e3e56e8eb2094", size = 262015, upload-time = "2025-12-03T17:21:21.934Z" },
-]
-
-[[package]]
 name = "googleapis-common-protos"
 version = "1.72.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1704,32 +1685,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c2/9d/4dc2122a9973c689c1de1c5ecafc09d1bee872bc7d88be2a1d9246fdda3d/llama_index_llms_anthropic-0.10.4.tar.gz", hash = "sha256:24d0a37c8e32e92fa6842af1efc49c312ce38387256b8b35c1f4b88836d99be0", size = 14140, upload-time = "2025-12-23T20:25:43.22Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/76/bbe316c8389bbe58c7527d203c8adb829a60c82ab9c4824658621b6a9ac0/llama_index_llms_anthropic-0.10.4-py3-none-any.whl", hash = "sha256:d5e721ad188a27d1491f073941d5830b069640752dd9136f4683ac03c3ff89e4", size = 14594, upload-time = "2025-12-23T20:25:42.177Z" },
-]
-
-[[package]]
-name = "llama-index-llms-deepseek"
-version = "0.2.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "llama-index-llms-openai-like" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b6/fe/9d1bb5818142b4e4aed265a7d97b57e752ade86a53edf3ec11a1bd091669/llama_index_llms_deepseek-0.2.2.tar.gz", hash = "sha256:52bd4f9a493770cb84c62c288b72593ef4982c4e0c1f7d636f39f5d4f0b1d3d2", size = 3726, upload-time = "2025-09-16T01:53:26.43Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/8a/51b9e1dd13699ddc875966a4157ba941b4994aab1f2541edc0db2e3bd759/llama_index_llms_deepseek-0.2.2-py3-none-any.whl", hash = "sha256:81bf01d221a8f4b7a18db518af96219f79fae396e84ab102b9734b94695eebba", size = 3578, upload-time = "2025-09-16T01:53:25.615Z" },
-]
-
-[[package]]
-name = "llama-index-llms-google-genai"
-version = "0.8.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "google-genai" },
-    { name = "llama-index-core" },
-    { name = "pillow" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/d1/a8abf2d7cb1e742e95808bfcdda0cbd88395d14bc45a44ac6b72ee8695dc/llama_index_llms_google_genai-0.8.3.tar.gz", hash = "sha256:4c8ad48b6124534b09af6b15a16e0a415826045c2a6a6ec82094c38cf53f73ad", size = 13239, upload-time = "2025-12-26T16:14:40.28Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/0f/ca3c868f13b3f5071d18cb7b5d02fae035b95bca4b442ee1155568f68422/llama_index_llms_google_genai-0.8.3-py3-none-any.whl", hash = "sha256:ee906a92bbf579cac1411c062f66c624d211e4f64e34259f1da5504c36e24dab", size = 13815, upload-time = "2025-12-26T16:14:41.272Z" },
 ]
 
 [[package]]
@@ -3572,8 +3527,6 @@ dependencies = [
     { name = "llama-index-embeddings-ollama" },
     { name = "llama-index-embeddings-openai" },
     { name = "llama-index-llms-anthropic" },
-    { name = "llama-index-llms-deepseek" },
-    { name = "llama-index-llms-google-genai" },
     { name = "llama-index-llms-ollama" },
     { name = "llama-index-llms-openai" },
     { name = "llama-index-llms-openai-like" },
@@ -3629,8 +3582,6 @@ requires-dist = [
     { name = "llama-index-embeddings-ollama", specifier = ">=0.8.3" },
     { name = "llama-index-embeddings-openai", specifier = ">=0.6.0" },
     { name = "llama-index-llms-anthropic", specifier = ">=0.6.0" },
-    { name = "llama-index-llms-deepseek", specifier = ">=0.2.2" },
-    { name = "llama-index-llms-google-genai", specifier = ">=0.4.0" },
     { name = "llama-index-llms-ollama", specifier = ">=0.7.4" },
     { name = "llama-index-llms-openai", specifier = ">=0.3.0" },
     { name = "llama-index-llms-openai-like", specifier = ">=0.5.3" },

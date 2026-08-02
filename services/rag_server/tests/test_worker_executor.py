@@ -39,11 +39,12 @@ def test_ingest_document_runs_off_the_event_loop_thread(tmp_path):
          patch("infrastructure.tasks.worker.extract_file_metadata", return_value={}), \
          patch("infrastructure.tasks.worker.get_session", return_value=_FakeSessionCtx()), \
          patch("infrastructure.tasks.worker.db_docs") as mock_db_docs, \
+         patch("infrastructure.tasks.worker.document_service") as mock_document_service, \
          patch("infrastructure.tasks.worker.db_jobs") as mock_db_jobs, \
          patch("infrastructure.tasks.worker.ingest_document", side_effect=fake_ingest_document), \
          patch("infrastructure.tasks.worker._complete_task", new=AsyncMock()), \
          patch("infrastructure.tasks.worker._cleanup_temp_file"):
-        mock_db_docs.delete_document = AsyncMock()
+        mock_document_service.delete_document = AsyncMock()
         mock_db_docs.create_document = AsyncMock()
         mock_db_docs.add_chunks = AsyncMock()
         mock_db_jobs.set_task_total_chunks = AsyncMock()

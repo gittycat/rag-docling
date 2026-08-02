@@ -248,6 +248,35 @@ class PiiConfig(BaseModel):
     allow_cloud_judge: bool = False  # explicit opt-out of the gate below
 
 
+def resolve_config_path(config_path: str | Path | None = None) -> Path:
+    """Locate config.yml, checking the Docker path then the development checkout."""
+    if config_path is not None:
+        config_path = Path(config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        return config_path
+
+    possible_paths = [
+        Path("/app/config.yml"),  # Docker path
+        Path(__file__).parent.parent.parent.parent.parent / "config.yml",  # Development path
+    ]
+    resolved = next((p for p in possible_paths if p.exists()), None)
+    if resolved is None:
+        raise FileNotFoundError(f"config.yml not found in standard locations: {possible_paths}")
+    return resolved
+
+
+def load_raw_config(config_path: str | Path | None = None) -> dict[str, Any]:
+    """Parse config.yml with no validation or secret injection.
+
+    For settings that have nothing to do with model providers. get_models_config()
+    raises when the active provider's API key is absent, which must not decide
+    whether an unrelated key like eval.abstention_phrases is honoured.
+    """
+    with open(resolve_config_path(config_path)) as f:
+        return yaml.safe_load(f) or {}
+
+
 class ModelsConfig(BaseModel):
     """Root configuration for all models and retrieval settings."""
 
@@ -293,23 +322,7 @@ class ModelsConfig(BaseModel):
             FileNotFoundError: If config file is not found.
             ValueError: If required secrets are missing or invalid.
         """
-        # Determine config file path
-        if config_path is None:
-            # Try multiple standard locations
-            possible_paths = [
-                Path("/app/config.yml"),  # Docker path
-                Path(__file__).parent.parent.parent.parent.parent
-                / "config.yml",  # Development path
-            ]
-            config_path = next((p for p in possible_paths if p.exists()), None)
-            if config_path is None:
-                raise FileNotFoundError(
-                    f"config.yml not found in standard locations: {possible_paths}"
-                )
-        else:
-            config_path = Path(config_path)
-            if not config_path.exists():
-                raise FileNotFoundError(f"Config file not found: {config_path}")
+        config_path = resolve_config_path(config_path)
 
         # Load YAML config
         with open(config_path) as f:

@@ -16,19 +16,23 @@ from app import settings as app_settings
 class _FakeSettings:
     OPENAI_API_KEY = SecretStr("test-openai-key")
     ANTHROPIC_API_KEY = SecretStr("test-anthropic-key")
-    GOOGLE_API_KEY = SecretStr("test-google-key")
-    DEEPSEEK_API_KEY = SecretStr("test-deepseek-key")
-    MOONSHOT_API_KEY = SecretStr("test-moonshot-key")
     RAG_SERVER_DB_USER = SecretStr("raguser")
     RAG_SERVER_DB_PASSWORD = SecretStr("ragpass")
 
 
 app_settings.SETTINGS = _FakeSettings()
 
+# initialize_settings() also calls check_ollama_reachable(), which does a real
+# httpx.get() against the configured base_url and sys.exit(1)s if it fails —
+# there is no live Ollama in CI/unit-test environments, so this must be
+# no-op'd for the duration of the import too.
+_ollama_patch = patch("core.config.check_ollama_reachable")
 _chroma_patch = patch("infrastructure.search.vector_store.get_chroma_client", side_effect=ValueError("no chromadb in tests"))
+_ollama_patch.start()
 _chroma_patch.start()
 import infrastructure.tasks.task_worker  # noqa: E402  (trigger side-effecting import while patched)
 _chroma_patch.stop()
+_ollama_patch.stop()
 
 
 def test_default_worker_concurrency_is_two(monkeypatch):

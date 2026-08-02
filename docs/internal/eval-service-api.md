@@ -90,6 +90,14 @@ including `details.individual_scores` and `details.std_dev` per metric),
 `dict` on the Pydantic model — FastAPI validates that they're objects, not
 their internal keys.
 
+Inside `config`, the three retrieval fields (`retrieval_top_k`,
+`hybrid_search_enabled`, `contextual_retrieval_enabled`) are **nullable**:
+`null` means the runner could not reach `/metrics/retrieval` when the run
+started, so the setting was never captured. Clients must render that as unknown
+rather than coercing it to a default — see the eval-framework notes. `config.additional.retrieval`
+holds the full endpoint response (`rrf_k`, reranker `top_n`, `final_top_n`) when
+it was captured.
+
 `duration_seconds` is computed by `_extract_duration()`: it uses the stored
 `duration_seconds` field if present, otherwise falls back to
 `completed_at - created_at` from the run's own timestamps; if either timestamp

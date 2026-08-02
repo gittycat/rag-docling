@@ -147,7 +147,9 @@ class RerankerModelConfig(BaseModel):
     """Configuration for a reranker model (without enabled flag)."""
 
     model: str
-    top_n: int = 5
+    # None = not configured; effective value falls back to max(5, top_k // 2).
+    # See effective_reranker_top_n().
+    top_n: int | None = None
 
 
 class RerankerSettings(BaseModel):
@@ -161,13 +163,25 @@ class RerankerConfig(BaseModel):
 
     enabled: bool = True
     model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    top_n: int = 5
+    # None = not configured; effective value falls back to max(5, top_k // 2).
+    # See effective_reranker_top_n().
+    top_n: int | None = None
+
+
+def effective_reranker_top_n(configured_top_n: int | None, retrieval_top_k: int) -> int:
+    """Resolve the reranker's actual top_n: the configured value when set, else max(5, top_k // 2)."""
+    if configured_top_n is not None:
+        return configured_top_n
+    return max(5, retrieval_top_k // 2)
 
 
 class DatabaseConfig(BaseModel):
-    """Connection pool configuration for PostgreSQL."""
+    """Connection pool configuration for PostgreSQL.
 
-    max_connections: int = 200
+    The PostgreSQL server-side max_connections limit is not configured here —
+    it is set directly in docker-compose.yml's postgres service command.
+    """
+
     pool_size: int = 10
     max_overflow: int = 20
     pool_pre_ping: bool = True
@@ -225,8 +239,6 @@ class PiiValidationConfig(BaseModel):
     """Token-preservation validation settings for the unmask step."""
 
     enabled: bool = True
-    max_retries: int = 2
-    alert_on_failure: bool = True
 
 
 class PiiGuardrailsConfig(BaseModel):
@@ -323,7 +335,6 @@ class PiiConfig(BaseModel):
             "IP_ADDRESS",
         ]
     )
-    masking_strategy: Literal["tokens"] = "tokens"
     token_format: str = "[[[{entity_type}_{index}]]]"
     score_threshold: float = 0.5
     language: str = "en"

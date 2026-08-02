@@ -20,6 +20,16 @@ const CONFIG_KEYS: (keyof EvalRunConfig)[] = [
 	'contextual_retrieval_enabled'
 ];
 
+// For these, null means the runner never captured the setting — not that it was
+// off or absent. Showing them as added/removed would report a config change that
+// did not happen. `reranker_model` is deliberately excluded: there, null does
+// mean "no reranker".
+const UNKNOWN_WHEN_NULL = new Set<string>([
+	'retrieval_top_k',
+	'hybrid_search_enabled',
+	'contextual_retrieval_enabled'
+]);
+
 /**
  * Compare two eval run configs and return diff lines
  * Produces a git-style diff with additions, removals, and changes
@@ -35,8 +45,8 @@ export function diffConfigs(
 	const results: DiffLine[] = [];
 
 	for (const key of CONFIG_KEYS) {
-		const aVal = formatValue(configA[key]);
-		const bVal = formatValue(configB[key]);
+		const aVal = formatValue(configA[key], key);
+		const bVal = formatValue(configB[key], key);
 
 		if (aVal === '' && bVal === '') {
 			continue;
@@ -60,7 +70,7 @@ export function diffConfigs(
 function objectToDiff(config: EvalRunConfig, type: 'added' | 'removed'): DiffLine[] {
 	const results: DiffLine[] = [];
 	for (const key of CONFIG_KEYS) {
-		const value = formatValue(config[key]);
+		const value = formatValue(config[key], key);
 		if (value !== '') {
 			results.push({ key: formatKey(key), value, type });
 		}
@@ -81,8 +91,10 @@ function formatKey(key: string): string {
 /**
  * Format a config value for display
  */
-function formatValue(value: unknown): string {
-	if (value === undefined || value === null) return '';
+function formatValue(value: unknown, key?: string): string {
+	if (value === undefined || value === null) {
+		return key && UNKNOWN_WHEN_NULL.has(key) ? 'Unknown' : '';
+	}
 	if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled';
 	return String(value);
 }

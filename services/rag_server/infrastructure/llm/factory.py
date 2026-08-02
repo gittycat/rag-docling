@@ -39,21 +39,8 @@ _PROVIDER_CONFIG: dict[LLMProvider, tuple[str, str, dict[str, str | None]]] = {
         "Anthropic",
         {"model": None, "api_key": None, "timeout": None},
     ),
-    LLMProvider.GOOGLE: (
-        "llama_index.llms.google_genai",
-        "GoogleGenAI",
-        {"model": None, "api_key": None},
-    ),
-    LLMProvider.DEEPSEEK: (
-        "llama_index.llms.deepseek",
-        "DeepSeek",
-        {"model": None, "api_key": None},
-    ),
-    LLMProvider.MOONSHOT: (
-        "llama_index.llms.openai",
-        "OpenAI",  # Moonshot uses OpenAI-compatible API
-        {"model": None, "api_key": None, "base_url": "api_base", "timeout": None},
-    ),
+    # To add a new provider: an entry here (module path, class name, param mapping)
+    # plus everything listed in config.py's LLMProvider docstring.
     LLMProvider.VLLM: (
         "llama_index.llms.openai_like",
         "OpenAILike",
@@ -114,8 +101,6 @@ class LLMClientManager:
         # Provider-specific logging
         if config.provider == LLMProvider.OLLAMA:
             logger.info(f"[LLM] Ollama client initialized: keep_alive={config.keep_alive}")
-        elif config.provider == LLMProvider.MOONSHOT:
-            logger.info(f"[LLM] Moonshot (OpenAI-compatible) client initialized: base_url={config.base_url}")
         else:
             logger.info(f"[LLM] {config.provider.value.capitalize()} client initialized")
 
