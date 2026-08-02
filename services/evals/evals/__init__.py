@@ -28,11 +28,13 @@ CLI Usage:
     python -m evals.cli export --run-id abc123 --format markdown
 """
 
+from evals.cache import CacheConfig, ResponseCache
 from evals.config import (
     EvalConfig,
     DatasetName,
     MetricConfig,
     JudgeConfig,
+    ScoringConfig,
     DEFAULT_WEIGHTS,
     DATASET_ASPECTS,
     get_model_cost,
@@ -70,6 +72,14 @@ from evals.export import (
     export_scorecard,
     export_run_report,
 )
+from evals.samples import load_samples, save_samples
+from evals.stats import (
+    ComparisonReport,
+    MetricComparison,
+    compare_runs,
+    mcnemar_exact,
+    paired_bootstrap,
+)
 from evals.datasets.registry import (
     register as register_dataset,
     get_loader as get_dataset_loader,
@@ -88,6 +98,9 @@ __all__ = [
     "DatasetName",
     "MetricConfig",
     "JudgeConfig",
+    "ScoringConfig",
+    "CacheConfig",
+    "ResponseCache",
     "DEFAULT_WEIGHTS",
     "DATASET_ASPECTS",
     "get_model_cost",
@@ -120,6 +133,14 @@ __all__ = [
     "export_for_review",
     "export_scorecard",
     "export_run_report",
+    "load_samples",
+    "save_samples",
+    # Statistical comparison
+    "compare_runs",
+    "paired_bootstrap",
+    "mcnemar_exact",
+    "ComparisonReport",
+    "MetricComparison",
     # Dataset utilities
     "register_dataset",
     "get_dataset_loader",

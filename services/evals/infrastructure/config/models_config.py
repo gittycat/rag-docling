@@ -86,6 +86,42 @@ class EvalModelConfig(BaseModel):
             )
 
 
+class ScoringSettings(BaseModel):
+    """Weighted-score objective weights and normalization thresholds.
+
+    These decide what the headline number means. A latency-sensitive deployment
+    and a cost-sensitive one need different thresholds, so they belong in
+    config.yml rather than being constants in the runner.
+    """
+
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "accuracy": 0.30,
+            "faithfulness": 0.20,
+            "citation": 0.20,
+            "retrieval": 0.15,
+            "cost": 0.10,
+            "latency": 0.05,
+        }
+    )
+    # Latency at or above the threshold normalizes to 0.0, 0 ms to 1.0. Separate
+    # per tier: end-to-end pays retrieval and ingestion cost that generation does not.
+    latency_threshold_ms_generation: float = 5_000
+    latency_threshold_ms_end_to_end: float = 30_000
+    # Cost per query at or above this normalizes to 0.0 (USD)
+    max_cost_per_query_usd: float = 0.10
+
+    @field_validator("weights")
+    @classmethod
+    def weights_must_be_non_negative(cls, v: dict[str, float]) -> dict[str, float]:
+        negative = [k for k, w in v.items() if w < 0]
+        if negative:
+            raise ValueError(f"Objective weights cannot be negative: {negative}")
+        if not v or all(w == 0 for w in v.values()):
+            raise ValueError("At least one objective weight must be greater than zero")
+        return v
+
+
 class EvalSettings(BaseModel):
     """Evaluation settings (non-model-specific)."""
 
@@ -122,6 +158,7 @@ class EvalConfig(BaseModel):
             "Insufficient information to answer.",
         ]
     )
+    scoring: ScoringSettings = Field(default_factory=ScoringSettings)
 
     @field_validator("model")
     @classmethod
@@ -407,6 +444,8 @@ class ModelsConfig(BaseModel):
                     resolved["eval"]["abstention_phrases"] = eval_settings[
                         "abstention_phrases"
                     ]
+                if "scoring" in eval_settings:
+                    resolved["eval"]["scoring"] = eval_settings["scoring"]
         else:
             raise ValueError(
                 f"Active eval model '{eval_key}' not found in models.eval definitions"

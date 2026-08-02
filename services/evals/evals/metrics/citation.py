@@ -20,6 +20,41 @@ def _chunk_by_rank(response: EvalResponse) -> dict[int, Any]:
     return {c.rank: c for c in response.retrieved_chunks if c.rank is not None}
 
 
+def _doc_only_gold_ids(question: EvalQuestion) -> set[str]:
+    """Doc ids of gold passages annotated at document level (no passage text).
+
+    `gold_doc_ids` in a golden_qa.json entry produces these. They can only ever be
+    matched by document, so chunk-id and text comparison would score them 0.
+    """
+    return {p.doc_id for p in question.gold_passages if not p.text}
+
+
+def _cited_doc_ids(citation: Any, retrieved: Any) -> set[str]:
+    """Doc ids a citation resolves to, directly or via the chunk it points at."""
+    ids = set()
+    if citation.doc_id:
+        ids.add(citation.doc_id)
+    if retrieved and retrieved.doc_id:
+        ids.add(retrieved.doc_id)
+    return ids
+
+
+def _undefined(metric: "BaseMetric") -> MetricResult:
+    """Citation quality is undefined without gold passages to score against.
+
+    Previously these returned 1.0, so any dataset lacking retrieval annotations
+    (the golden set, until it gained optional gold_passages) displayed perfect
+    citation precision and recall that measured nothing at all.
+    """
+    return MetricResult(
+        name=metric.name,
+        value=None,
+        group=metric.group,
+        sample_size=0,
+        details={"note": "No gold passages defined — citation quality is undefined"},
+    )
+
+
 class CitationPrecision(BaseMetric):
     """Citation precision measures the fraction of citations that are relevant.
 
@@ -57,15 +92,10 @@ class CitationPrecision(BaseMetric):
             )
 
         if not question.gold_passages:
-            return MetricResult(
-                name=self.name,
-                value=1.0,
-                group=self.group,
-                sample_size=1,
-                details={"note": "No gold passages defined"},
-            )
+            return _undefined(self)
 
         gold_chunk_ids = {p.chunk_id for p in question.gold_passages}
+        doc_only_ids = _doc_only_gold_ids(question)
         chunk_by_rank = _chunk_by_rank(response)
 
         hits = 0
@@ -74,8 +104,12 @@ class CitationPrecision(BaseMetric):
             if citation.chunk_id and citation.chunk_id in gold_chunk_ids:
                 hits += 1
                 continue
-            # Look up the source chunk by rank and do text overlap
             retrieved = chunk_by_rank.get(citation.source_index)
+            # Document-level annotation: the only resolution available is the doc
+            if doc_only_ids and _cited_doc_ids(citation, retrieved) & doc_only_ids:
+                hits += 1
+                continue
+            # Look up the source chunk by rank and do text overlap
             if retrieved and retrieved.text:
                 for gold in question.gold_passages:
                     if gold.text and _token_overlap(retrieved.text, gold.text) >= 0.3:
@@ -124,13 +158,7 @@ class CitationRecall(BaseMetric):
         **kwargs: Any,
     ) -> MetricResult:
         if not question.gold_passages:
-            return MetricResult(
-                name=self.name,
-                value=1.0,
-                group=self.group,
-                sample_size=1,
-                details={"note": "No gold passages defined"},
-            )
+            return _undefined(self)
 
         citations = response.citations
         gold_chunk_ids = {p.chunk_id for p in question.gold_passages}
@@ -139,10 +167,12 @@ class CitationRecall(BaseMetric):
         # Collect texts of cited chunks (exact id + text fallback)
         cited_texts: list[str] = []
         cited_exact_ids: set[str] = set()
+        cited_doc_ids: set[str] = set()
         for citation in citations:
             if citation.chunk_id:
                 cited_exact_ids.add(citation.chunk_id)
             retrieved = chunk_by_rank.get(citation.source_index)
+            cited_doc_ids |= _cited_doc_ids(citation, retrieved)
             if retrieved and retrieved.text:
                 cited_texts.append(retrieved.text)
 
@@ -151,11 +181,15 @@ class CitationRecall(BaseMetric):
             if gold.chunk_id in cited_exact_ids:
                 hits += 1
                 continue
-            if gold.text:
-                for cited_text in cited_texts:
-                    if _token_overlap(cited_text, gold.text) >= 0.3:
-                        hits += 1
-                        break
+            if not gold.text:
+                # Document-level annotation — resolvable only by doc id
+                if gold.doc_id in cited_doc_ids:
+                    hits += 1
+                continue
+            for cited_text in cited_texts:
+                if _token_overlap(cited_text, gold.text) >= 0.3:
+                    hits += 1
+                    break
 
         recall = hits / len(question.gold_passages)
 
@@ -203,13 +237,7 @@ class SectionAccuracy(BaseMetric):
         gold_doc_ids = {p.doc_id for p in question.gold_passages}
 
         if not gold_passages:
-            return MetricResult(
-                name=self.name,
-                value=1.0,
-                group=self.group,
-                sample_size=1,
-                details={"note": "No gold passages defined"},
-            )
+            return _undefined(self)
 
         citations = response.citations
         if not citations:

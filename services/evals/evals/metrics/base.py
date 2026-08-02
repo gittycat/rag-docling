@@ -74,7 +74,11 @@ class BaseMetric(ABC):
                 sample_size=0,
             )
 
-        results: list[MetricResult] = []
+        # (question_id, per-question result) pairs. Keeping the id alongside the
+        # score is what makes runs pairable after the fact — a bare list of scores
+        # silently misaligns as soon as one question errors in one run only.
+        scored: list[tuple[str, MetricResult]] = []
+        not_applicable = 0
 
         if self.requires_judge:
             # Concurrent execution with semaphore for I/O-bound judge calls
@@ -104,46 +108,68 @@ class BaseMetric(ABC):
 
             tasks = [_run_one(q, r) for q, r in zip(questions, responses)]
             task_results = await asyncio.gather(*tasks)
-            results = [r for r in task_results if r is not None]
+            for q, result in zip(questions, task_results):
+                if result is None:
+                    continue
+                if result.value is None:
+                    not_applicable += 1
+                    continue
+                scored.append((q.id, result))
         else:
             # Sequential execution for CPU-bound metrics
             for i, (q, r) in enumerate(zip(questions, responses)):
                 try:
                     result = self.compute(q, r, **kwargs)
-                    results.append(result)
+                    if result.value is None:
+                        not_applicable += 1
+                    else:
+                        scored.append((q.id, result))
                 except Exception as e:
                     logger.warning(f"[METRIC] {self.name} failed for question {q.id}: {e}")
                 if progress_callback:
                     progress_callback(i + 1)
 
-        if not results:
+        if not scored:
+            # value=None is "undefined here", distinct from a measured 0.0. If every
+            # question was not-applicable (e.g. citation metrics with no gold data),
+            # reporting 0.0 or 1.0 would be a fabricated score.
+            note = (
+                "Not applicable — no question had the data this metric needs"
+                if not_applicable
+                else "All computations failed"
+            )
             return MetricResult(
                 name=self.name,
-                value=0.0,
+                value=None,
                 group=self.group,
                 sample_size=0,
-                details={"error": "All computations failed"},
+                details={"note": note, "not_applicable_count": not_applicable},
             )
 
-        avg_value = sum(r.value for r in results) / len(results)
+        values = [r.value for _, r in scored]
+        avg_value = sum(values) / len(values)
+
+        details: dict[str, Any] = {
+            "individual_scores": values,
+            "per_question": {qid: r.value for qid, r in scored},
+            "std_dev": self._compute_std(values),
+        }
+        if not_applicable:
+            details["not_applicable_count"] = not_applicable
 
         return MetricResult(
             name=self.name,
             value=avg_value,
             group=self.group,
-            sample_size=len(results),
-            details={
-                "individual_scores": [r.value for r in results],
-                "std_dev": self._compute_std(results),
-            },
+            sample_size=len(scored),
+            details=details,
         )
 
-    def _compute_std(self, results: list[MetricResult]) -> float:
-        """Compute standard deviation of metric values."""
-        if len(results) < 2:
+    def _compute_std(self, values: list[float]) -> float:
+        """Population standard deviation of the per-question values."""
+        if len(values) < 2:
             return 0.0
 
-        values = [r.value for r in results]
         mean = sum(values) / len(values)
         variance = sum((v - mean) ** 2 for v in values) / len(values)
         return variance ** 0.5

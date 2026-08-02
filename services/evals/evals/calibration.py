@@ -29,6 +29,36 @@ DEFAULT_OUTPUT_DIR = Path("data/calibration")
 
 
 @dataclass
+class DiscriminationResult:
+    """How well a judge prompt separates a known-good pairing from a known-bad one.
+
+    RAGBench carries no ground truth for answer correctness or answer relevancy, so
+    those two prompts had no evidence of agreeing with anything. What *is* known for
+    free is that an item's reference response is correct for its own question and
+    wrong for a different item's question. A judge that cannot separate those two
+    cases is not measuring what its name claims.
+
+    This is a floor, not a calibration: passing it says the prompt is not broken,
+    not that its mid-range scores track human judgement.
+    """
+
+    pair_count: int
+    mean_matched: float | None
+    mean_mismatched: float | None
+    accuracy: float | None       # fraction of pairs scored matched > mismatched
+    separation: float | None     # mean_matched - mean_mismatched
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pair_count": self.pair_count,
+            "mean_matched": self.mean_matched,
+            "mean_mismatched": self.mean_mismatched,
+            "accuracy": self.accuracy,
+            "separation": self.separation,
+        }
+
+
+@dataclass
 class CalibrationResult:
     """Aggregated judge-vs-ground-truth agreement."""
 
@@ -37,6 +67,8 @@ class CalibrationResult:
     adherence_rmse: float | None
     relevance_rmse: float | None
     judge_model: str
+    correctness_discrimination: DiscriminationResult | None = None
+    relevancy_discrimination: DiscriminationResult | None = None
     per_item: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -45,6 +77,26 @@ def _rmse(pairs: list[tuple[float, float]]) -> float | None:
     if not pairs:
         return None
     return math.sqrt(sum((a - b) ** 2 for a, b in pairs) / len(pairs))
+
+
+def _summarize_discrimination(
+    scores: list[tuple[float, float]],
+) -> DiscriminationResult:
+    """Aggregate (matched_score, mismatched_score) pairs."""
+    if not scores:
+        return DiscriminationResult(0, None, None, None, None)
+    matched = [m for m, _ in scores]
+    mismatched = [x for _, x in scores]
+    mean_m = sum(matched) / len(matched)
+    mean_x = sum(mismatched) / len(mismatched)
+    correct = sum(1 for m, x in scores if m > x)
+    return DiscriminationResult(
+        pair_count=len(scores),
+        mean_matched=mean_m,
+        mean_mismatched=mean_x,
+        accuracy=correct / len(scores),
+        separation=mean_m - mean_x,
+    )
 
 
 async def calibrate_judge(
@@ -130,12 +182,18 @@ async def calibrate_judge(
         if r["gt_relevance"] is not None
     ]
 
+    correctness, relevancy, discrimination_dropped = await _discrimination_checks(
+        judge, items, concurrency=concurrency
+    )
+
     return CalibrationResult(
         sample_count=len(results),
         adherence_accuracy=adherence_accuracy,
         adherence_rmse=_rmse(adherence_pairs),
         relevance_rmse=_rmse(relevance_pairs),
         judge_model=judge.config.model,
+        correctness_discrimination=correctness,
+        relevancy_discrimination=relevancy,
         per_item=results,
         metadata={
             "adherence_sample_count": len(adherence_pairs),
@@ -144,7 +202,85 @@ async def calibrate_judge(
             # rather than quietly computed over whatever happened to succeed.
             "items_requested": len(items),
             "dropped_judge_failures": dropped_judge_failures,
+            "discrimination_dropped": discrimination_dropped,
         },
+    )
+
+
+async def _discrimination_checks(
+    judge: LLMJudge,
+    items: list[dict[str, Any]],
+    concurrency: int = 10,
+) -> tuple[DiscriminationResult, DiscriminationResult, int]:
+    """Run the matched-vs-mismatched checks for correctness and relevancy.
+
+    Item i is paired with item i+1 (wrapping), giving each item one known-correct
+    and one known-incorrect comparison drawn from the same corpus, so the two
+    conditions differ only in whether the pairing is right.
+    """
+    usable = [
+        i for i in items
+        if i.get("question") and i.get("response")
+    ]
+    if len(usable) < 2:
+        empty = DiscriminationResult(0, None, None, None, None)
+        return (empty, empty, 0)
+
+    sem = asyncio.Semaphore(concurrency)
+    dropped = 0
+
+    async def _score_pair(idx: int) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
+        nonlocal dropped
+        item = usable[idx]
+        other = usable[(idx + 1) % len(usable)]
+        async with sem:
+            try:
+                results = await asyncio.gather(
+                    # Correctness: the response against its own reference, then
+                    # against an unrelated one
+                    judge.evaluate_correctness(
+                        answer=item["response"],
+                        expected_answer=item["response"],
+                        question=item["question"],
+                    ),
+                    judge.evaluate_correctness(
+                        answer=other["response"],
+                        expected_answer=item["response"],
+                        question=item["question"],
+                    ),
+                    # Relevancy: the response against its own question, then
+                    # against an unrelated question
+                    judge.evaluate_relevancy(
+                        answer=item["response"], question=item["question"]
+                    ),
+                    judge.evaluate_relevancy(
+                        answer=item["response"], question=other["question"]
+                    ),
+                    return_exceptions=True,
+                )
+            except Exception as e:
+                logger.warning(f"[CALIBRATION] Discrimination check failed: {e}")
+                dropped += 1
+                return (None, None)
+
+        if any(isinstance(r, BaseException) for r in results):
+            dropped += 1
+            return (None, None)
+
+        c_match, c_mismatch, r_match, r_mismatch = results
+        return (
+            (c_match.score, c_mismatch.score),
+            (r_match.score, r_mismatch.score),
+        )
+
+    pair_results = await asyncio.gather(*(_score_pair(i) for i in range(len(usable))))
+    correctness_pairs = [c for c, _ in pair_results if c is not None]
+    relevancy_pairs = [r for _, r in pair_results if r is not None]
+
+    return (
+        _summarize_discrimination(correctness_pairs),
+        _summarize_discrimination(relevancy_pairs),
+        dropped,
     )
 
 
@@ -159,6 +295,16 @@ def save_calibration(result: CalibrationResult, output_dir: Path = DEFAULT_OUTPU
                 "adherence_accuracy": result.adherence_accuracy,
                 "adherence_rmse": result.adherence_rmse,
                 "relevance_rmse": result.relevance_rmse,
+                "correctness_discrimination": (
+                    result.correctness_discrimination.to_dict()
+                    if result.correctness_discrimination
+                    else None
+                ),
+                "relevancy_discrimination": (
+                    result.relevancy_discrimination.to_dict()
+                    if result.relevancy_discrimination
+                    else None
+                ),
                 "metadata": result.metadata,
                 "per_item": result.per_item,
             },

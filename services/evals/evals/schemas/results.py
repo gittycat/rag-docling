@@ -22,14 +22,16 @@ class MetricResult:
 
     Attributes:
         name: Metric name (e.g., "recall_at_5", "faithfulness")
-        value: Computed metric value (typically 0-1 for ratios)
+        value: Computed metric value (typically 0-1 for ratios), or None when the
+            metric is undefined for the data it was given — no gold passages, no
+            applicable questions. None is not 0.0 and must never be rendered as one.
         group: Which metric group this belongs to
         details: Additional metric-specific details
         sample_size: Number of samples used to compute this metric
     """
 
     name: str
-    value: float
+    value: float | None
     group: MetricGroup
     details: dict[str, Any] = field(default_factory=dict)
     sample_size: int = 0
@@ -63,11 +65,11 @@ class Scorecard:
         return None
 
     def get_group_average(self, group: MetricGroup) -> float | None:
-        """Get average value for all metrics in a group."""
-        group_metrics = self.by_group.get(group, [])
-        if not group_metrics:
+        """Average value across a group, ignoring metrics that are undefined."""
+        values = [m.value for m in self.by_group.get(group, []) if m.value is not None]
+        if not values:
             return None
-        return sum(m.value for m in group_metrics) / len(group_metrics)
+        return sum(values) / len(values)
 
     def add_metric(self, metric: MetricResult) -> None:
         """Add a metric to the scorecard."""

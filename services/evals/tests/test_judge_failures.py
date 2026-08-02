@@ -135,4 +135,5 @@ class TestBatchExclusion:
         result = self._batch([None, None])
 
         assert result.sample_size == 0
-        assert result.details["error"] == "All computations failed"
+        assert result.value is None
+        assert result.details["note"] == "All computations failed"

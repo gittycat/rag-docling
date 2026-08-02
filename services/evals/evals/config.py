@@ -1,11 +1,16 @@
 """Evaluation configuration management."""
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from evals.cache import CacheConfig
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetName(str, Enum):
@@ -48,7 +53,8 @@ DATASET_ASPECTS = {
 }
 
 
-# Default objective weights for scoring
+# Fallback objective weights, used only when config.yml cannot be read. The
+# operator-facing source of truth is `eval.scoring` in config.yml.
 DEFAULT_WEIGHTS = {
     "accuracy": 0.30,  # Answer correctness
     "faithfulness": 0.20,  # Grounding in context
@@ -57,6 +63,46 @@ DEFAULT_WEIGHTS = {
     "cost": 0.10,  # Cost per query
     "latency": 0.05,  # Response time
 }
+
+# Same role for the normalization thresholds latency and cost are scored against.
+DEFAULT_LATENCY_THRESHOLD_MS = {
+    "generation": 5_000.0,
+    "end_to_end": 30_000.0,
+}
+DEFAULT_MAX_COST_PER_QUERY_USD = 0.10
+
+
+@dataclass
+class ScoringConfig:
+    """Weights and normalization thresholds for the weighted score."""
+
+    weights: dict[str, float] = field(default_factory=lambda: DEFAULT_WEIGHTS.copy())
+    latency_threshold_ms_generation: float = DEFAULT_LATENCY_THRESHOLD_MS["generation"]
+    latency_threshold_ms_end_to_end: float = DEFAULT_LATENCY_THRESHOLD_MS["end_to_end"]
+    max_cost_per_query_usd: float = DEFAULT_MAX_COST_PER_QUERY_USD
+
+    def latency_threshold_ms(self, tier: "EvalTier") -> float:
+        if tier == EvalTier.END_TO_END:
+            return self.latency_threshold_ms_end_to_end
+        return self.latency_threshold_ms_generation
+
+    @classmethod
+    def from_models_config(cls) -> "ScoringConfig":
+        """Read `eval.scoring` from config.yml, falling back to the constants above."""
+        try:
+            from infrastructure.config.models_config import get_models_config
+
+            scoring = get_models_config().eval.scoring
+        except Exception as e:  # config unavailable in unit tests / bare CLI use
+            logger.debug(f"[EVAL] Using default scoring config: {e}")
+            return cls()
+
+        return cls(
+            weights=dict(scoring.weights),
+            latency_threshold_ms_generation=scoring.latency_threshold_ms_generation,
+            latency_threshold_ms_end_to_end=scoring.latency_threshold_ms_end_to_end,
+            max_cost_per_query_usd=scoring.max_cost_per_query_usd,
+        )
 
 
 # Cost lookup table (USD per 1M tokens)
@@ -121,7 +167,7 @@ class EvalConfig:
         samples_per_dataset: Number of samples per dataset (None = all)
         metrics: Which metric groups to compute
         judge: LLM-as-judge configuration
-        weights: Objective weights for scoring
+        scoring: Objective weights and normalization thresholds
         rag_server_url: URL of the RAG server to evaluate
         runs_dir: Directory to store evaluation runs
         seed: Random seed for reproducibility
@@ -133,18 +179,27 @@ class EvalConfig:
     samples_per_dataset: int | None = 100
     metrics: MetricConfig = field(default_factory=MetricConfig)
     judge: JudgeConfig = field(default_factory=JudgeConfig)
-    weights: dict[str, float] = field(default_factory=lambda: DEFAULT_WEIGHTS.copy())
+    scoring: ScoringConfig = field(default_factory=ScoringConfig.from_models_config)
     rag_server_url: str = "http://localhost:8001"
     runs_dir: Path = field(default_factory=lambda: Path("data/eval_runs"))
     seed: int | None = 42
     tier: EvalTier = field(default_factory=lambda: EvalTier.END_TO_END)
+    cache: CacheConfig = field(default_factory=CacheConfig)
     cleanup_on_failure: bool = True
     query_concurrency: int = 10
     judge_concurrency: int = 10
 
+    @property
+    def weights(self) -> dict[str, float]:
+        return self.scoring.weights
+
     def __post_init__(self):
         if isinstance(self.runs_dir, str):
             self.runs_dir = Path(self.runs_dir)
+        if isinstance(self.scoring, dict):
+            self.scoring = ScoringConfig(**self.scoring)
+        if isinstance(self.cache, dict):
+            self.cache = CacheConfig(**self.cache)
         # Normalize dataset names
         normalized = []
         for ds in self.datasets:
@@ -178,6 +233,14 @@ class EvalConfig:
             data["metrics"] = MetricConfig(**data["metrics"])
         if "judge" in data and isinstance(data["judge"], dict):
             data["judge"] = JudgeConfig(**data["judge"])
+        if "scoring" in data and isinstance(data["scoring"], dict):
+            data["scoring"] = ScoringConfig(**data["scoring"])
+        # Legacy top-level `weights:` key folds into scoring
+        if "weights" in data:
+            weights = data.pop("weights")
+            scoring = data.get("scoring") or ScoringConfig.from_models_config()
+            scoring.weights = weights
+            data["scoring"] = scoring
 
         # Normalize tier from string
         if "tier" in data and isinstance(data["tier"], str):
@@ -209,11 +272,21 @@ class EvalConfig:
                 "temperature": self.judge.temperature,
                 "max_retries": self.judge.max_retries,
             },
-            "weights": self.weights,
+            "scoring": {
+                "weights": self.scoring.weights,
+                "latency_threshold_ms_generation": self.scoring.latency_threshold_ms_generation,
+                "latency_threshold_ms_end_to_end": self.scoring.latency_threshold_ms_end_to_end,
+                "max_cost_per_query_usd": self.scoring.max_cost_per_query_usd,
+            },
             "rag_server_url": self.rag_server_url,
             "runs_dir": str(self.runs_dir),
             "seed": self.seed,
             "tier": self.tier.value,
+            "cache": {
+                "judge": self.cache.judge,
+                "query": self.cache.query,
+                "dir": str(self.cache.dir),
+            },
             "cleanup_on_failure": self.cleanup_on_failure,
             "query_concurrency": self.query_concurrency,
             "judge_concurrency": self.judge_concurrency,

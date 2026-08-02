@@ -28,6 +28,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,10 +42,26 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from evals.cache import (
+    DEFAULT_CACHE_DIR,
+    CacheConfig,
+    clear_cache as clear_response_cache,
+)
 from evals.config import EvalConfig, DatasetName, EvalTier, DATASET_TIER_SUPPORT, JudgeConfig, MetricConfig
 from evals.datasets.registry import list_datasets, get_dataset, clear_cache, CACHE_DIR
+from evals.export import export_for_review, export_run_report, export_scorecard
+from evals.judges.llm_judge import warn_if_judge_not_independent
 from evals.runner import EvaluationRunner, run_evaluation, compute_pareto_frontier
-from evals.schemas import EvalRun
+from evals.samples import SAMPLES_SUFFIX, load_samples, samples_path_for
+from evals.schemas import (
+    ConfigSnapshot,
+    EvalRun,
+    MetricGroup,
+    MetricResult,
+    Scorecard,
+    WeightedScore,
+)
+from evals.stats import DEFAULT_BOOTSTRAP_SAMPLES, UNDERPOWERED_N, compare_runs
 from infrastructure.config.display import print_config_banner
 from infrastructure.settings import init_settings
 
@@ -118,6 +135,20 @@ def main():
         action="store_true",
         help="Bypass dataset cache (re-download from source)",
     )
+    eval_parser.add_argument(
+        "--no-judge-cache",
+        action="store_true",
+        help="Re-run every judge call instead of reusing identical cached ones",
+    )
+    eval_parser.add_argument(
+        "--cache-queries",
+        action="store_true",
+        help=(
+            "Reuse RAG answers cached from a previous run with the same server "
+            "configuration. The key does NOT cover the indexed corpus — do not use "
+            "this after re-ingesting documents."
+        ),
+    )
 
     # calibrate command — judge vs RAGBench TRACe ground-truth labels
     calibrate_parser = subparsers.add_parser(
@@ -149,9 +180,15 @@ def main():
     )
 
     # cache command
-    cache_parser = subparsers.add_parser("cache", help="Manage dataset cache")
+    cache_parser = subparsers.add_parser("cache", help="Manage dataset and response caches")
     cache_sub = cache_parser.add_subparsers(dest="cache_action")
-    cache_sub.add_parser("clear", help="Clear cached datasets")
+    clear_sub = cache_sub.add_parser("clear", help="Clear cached datasets and/or responses")
+    clear_sub.add_argument(
+        "--what",
+        choices=["datasets", "responses", "all"],
+        default="datasets",
+        help="Which cache to clear (default: datasets)",
+    )
     cache_sub.add_parser("status", help="Show cache status")
 
     # stats command
@@ -176,14 +213,32 @@ def main():
     export_parser.add_argument(
         "--format",
         type=str,
-        choices=["json", "csv"],
+        choices=[
+            "json",
+            "csv",
+            "review-json",
+            "review-csv",
+            "review-md",
+            "scorecard-csv",
+            "scorecard-md",
+            "report",
+        ],
         default="json",
-        help="Output format",
+        help=(
+            "json/csv: run metrics. review-*: per-question sheet with blank reviewer "
+            "columns (needs the run's samples sidecar). scorecard-*: metrics only. "
+            "report: full Markdown run report."
+        ),
     )
     export_parser.add_argument(
         "--output",
         type=str,
         help="Output file path",
+    )
+    export_parser.add_argument(
+        "--runs-dir",
+        type=str,
+        help=f"Directory holding run files (default: {RUNS_DIR})",
     )
 
     # compare command
@@ -197,6 +252,22 @@ def main():
         "--pareto",
         action="store_true",
         help="Show Pareto frontier analysis",
+    )
+    compare_parser.add_argument(
+        "--no-significance",
+        action="store_true",
+        help="Skip paired bootstrap / McNemar significance testing",
+    )
+    compare_parser.add_argument(
+        "--bootstrap-samples",
+        type=int,
+        default=None,
+        help=f"Bootstrap resamples (default {DEFAULT_BOOTSTRAP_SAMPLES})",
+    )
+    compare_parser.add_argument(
+        "--runs-dir",
+        type=str,
+        help=f"Directory holding run files (default: {RUNS_DIR})",
     )
 
     args = parser.parse_args()
@@ -238,6 +309,10 @@ def cmd_eval(args):
         # CLI --tier overrides YAML tier
         config.tier = tier
         print(f"Loaded config from: {args.config}")
+        if args.no_judge_cache:
+            config.cache.judge = False
+        if args.cache_queries:
+            config.cache.query = True
     else:
         # Parse datasets
         dataset_names = [
@@ -268,6 +343,10 @@ def cmd_eval(args):
                 runs_dir=Path(args.output),
                 judge=JudgeConfig(enabled=not args.no_judge),
                 tier=tier,
+                cache=CacheConfig(
+                    judge=not args.no_judge_cache,
+                    query=args.cache_queries,
+                ),
             )
         except ValueError as e:
             print(f"\nERROR: {e}")
@@ -293,6 +372,10 @@ def cmd_eval(args):
     console.print(f"Samples per dataset: {config.samples_per_dataset}")
     console.print(f"RAG server: {config.rag_server_url}")
     console.print(f"Judge enabled: {config.judge.enabled}")
+    if config.judge.enabled:
+        judge_warning = warn_if_judge_not_independent()
+        if judge_warning:
+            console.print(f"[yellow]WARNING:[/yellow] {judge_warning}")
     console.rule()
 
     progress = Progress(
@@ -445,30 +528,92 @@ def cmd_datasets(args):
         print(f"  URL: {ds.get('source_url', 'N/A')}")
 
 
+RUNS_DIR = Path(os.environ.get("EVAL_RUNS_DIR", "data/eval_runs"))
+
+
+def _runs_dir(args) -> Path:
+    return Path(getattr(args, "runs_dir", None) or RUNS_DIR)
+
+
+def _find_run_file(run_id: str, runs_dir: Path = RUNS_DIR) -> Path | None:
+    """Locate a run file by id prefix, ignoring its samples sidecar."""
+    for f in sorted(runs_dir.glob(f"{run_id}*.json")):
+        if f.name.endswith(SAMPLES_SUFFIX):
+            continue
+        return f
+    return None
+
+
+def _load_run(run_id: str, runs_dir: Path) -> tuple[Path, dict]:
+    run_file = _find_run_file(run_id, runs_dir)
+    if not run_file:
+        print(f"ERROR: Run {run_id} not found in {runs_dir}")
+        sys.exit(1)
+    with open(run_file) as f:
+        return run_file, json.load(f)
+
+
+def _run_from_dict(data: dict) -> EvalRun:
+    """Rebuild enough of an EvalRun for the Markdown report exporter."""
+    cfg = data.get("config", {})
+    scorecard = Scorecard()
+    for m in (data.get("scorecard") or {}).get("metrics", []):
+        scorecard.add_metric(
+            MetricResult(
+                name=m["name"],
+                value=m["value"],
+                group=MetricGroup(m["group"]),
+                sample_size=m.get("sample_size", 0),
+                details=m.get("details", {}),
+            )
+        )
+    ws = data.get("weighted_score") or {}
+    return EvalRun(
+        id=data["id"],
+        name=data.get("name", ""),
+        created_at=datetime.fromisoformat(data["created_at"]),
+        completed_at=(
+            datetime.fromisoformat(data["completed_at"])
+            if data.get("completed_at")
+            else None
+        ),
+        config=ConfigSnapshot(
+            llm_model=cfg.get("llm_model", "unknown"),
+            llm_provider=cfg.get("llm_provider", "unknown"),
+            embedding_model=cfg.get("embedding_model", "unknown"),
+            reranker_model=cfg.get("reranker_model"),
+            retrieval_top_k=cfg.get("retrieval_top_k"),
+            hybrid_search_enabled=cfg.get("hybrid_search_enabled"),
+            contextual_retrieval_enabled=cfg.get("contextual_retrieval_enabled"),
+            additional=cfg.get("additional", {}),
+        ),
+        datasets=data.get("datasets", []),
+        scorecard=scorecard,
+        weighted_score=WeightedScore(
+            score=ws.get("score", 0.0),
+            weights=ws.get("weights", {}),
+            contributions=ws.get("contributions", {}),
+            objectives=ws.get("objectives", {}),
+        ) if ws else None,
+        question_count=data.get("question_count", 0),
+        error_count=data.get("error_count", 0),
+        metadata=data.get("metadata", {}),
+    )
+
+
 def cmd_export(args):
     """Export results for manual review."""
-    runs_dir = Path("data/eval_runs")
+    run_file, run_data = _load_run(args.run_id, _runs_dir(args))
+    fmt = args.format
 
-    # Find the run file
-    run_file = None
-    for f in runs_dir.glob(f"{args.run_id}*.json"):
-        run_file = f
-        break
-
-    if not run_file:
-        print(f"ERROR: Run {args.run_id} not found in {runs_dir}")
-        sys.exit(1)
-
-    with open(run_file) as f:
-        run_data = json.load(f)
-
-    if args.format == "json":
+    if fmt == "json":
         output_path = args.output or f"export_{args.run_id}.json"
         with open(output_path, "w") as f:
             json.dump(run_data, f, indent=2)
         print(f"Exported to: {output_path}")
+        return
 
-    elif args.format == "csv":
+    if fmt == "csv":
         import csv
         output_path = args.output or f"export_{args.run_id}.csv"
 
@@ -481,7 +626,8 @@ def cmd_export(args):
                     "run_name": run_data["name"],
                     "metric_name": metric["name"],
                     "metric_group": metric["group"],
-                    "value": metric["value"],
+                    # Undefined metrics export blank, never 0
+                    "value": "" if metric["value"] is None else metric["value"],
                     "sample_size": metric.get("sample_size", ""),
                 })
 
@@ -492,21 +638,52 @@ def cmd_export(args):
                 writer.writerows(rows)
 
         print(f"Exported to: {output_path}")
+        return
+
+    if fmt.startswith("review-"):
+        questions, responses = load_samples(run_file)
+        if not questions:
+            print(
+                f"ERROR: No samples sidecar for run {args.run_id}. "
+                f"Expected {samples_path_for(run_file).name} — runs completed before "
+                "per-question samples were persisted cannot be exported for review."
+            )
+            sys.exit(1)
+        sub_format = {"review-json": "json", "review-csv": "csv", "review-md": "markdown"}[fmt]
+        ext = {"json": "json", "csv": "csv", "markdown": "md"}[sub_format]
+        output_path = Path(args.output or f"review_{args.run_id}.{ext}")
+        export_for_review(questions, responses, output_path, format=sub_format)
+        print(f"Exported {len(questions)} questions for review to: {output_path}")
+        return
+
+    run = _run_from_dict(run_data)
+
+    if fmt in ("scorecard-csv", "scorecard-md"):
+        sub_format = "csv" if fmt == "scorecard-csv" else "markdown"
+        ext = "csv" if fmt == "scorecard-csv" else "md"
+        output_path = Path(args.output or f"scorecard_{args.run_id}.{ext}")
+        export_scorecard(run.scorecard, output_path, format=sub_format)
+        print(f"Exported to: {output_path}")
+        return
+
+    if fmt == "report":
+        output_path = Path(args.output or f"report_{args.run_id}.md")
+        export_run_report(run, output_path)
+        print(f"Exported to: {output_path}")
 
 
 def cmd_compare(args):
     """Compare multiple evaluation runs."""
-    runs_dir = Path("data/eval_runs")
     runs = []
+    runs_dir = _runs_dir(args)
 
     for run_id in args.run_ids:
-        for f in runs_dir.glob(f"{run_id}*.json"):
-            with open(f) as fh:
-                run_data = json.load(fh)
-                runs.append(run_data)
-            break
-        else:
+        run_file = _find_run_file(run_id, runs_dir)
+        if run_file is None:
             print(f"WARNING: Run {run_id} not found")
+            continue
+        with open(run_file) as fh:
+            runs.append(json.load(fh))
 
     if not runs:
         print("ERROR: No runs found")
@@ -516,11 +693,14 @@ def cmd_compare(args):
     print("Run Comparison")
     print("=" * 80)
 
-    # Header
-    header = ["Metric"] + [r["name"][:15] for r in runs]
+    # Metric names get their own width: at 15 chars the two abstention rates
+    # truncate to the same string and become indistinguishable.
+    name_width = 30
     col_width = 15
-    print(" | ".join(h.ljust(col_width) for h in header))
-    print("-" * (col_width * len(header) + 3 * (len(header) - 1)))
+    header = ["Metric".ljust(name_width)] + [r["name"][:col_width].ljust(col_width) for r in runs]
+    rule = "-" * (name_width + col_width * len(runs) + 3 * len(runs))
+    print(" | ".join(header))
+    print(rule)
 
     # Collect all metric names
     all_metrics = set()
@@ -529,33 +709,44 @@ def cmd_compare(args):
             for m in run["scorecard"]["metrics"]:
                 all_metrics.add(m["name"])
 
-    # Print each metric
+    # Print each metric. "n/a" is a metric that was undefined for the dataset;
+    # "-" is a metric the run does not have at all.
     for metric_name in sorted(all_metrics):
-        row = [metric_name[:col_width]]
+        row = [metric_name[:name_width].ljust(name_width)]
         for run in runs:
             value = "-"
             if run.get("scorecard"):
                 for m in run["scorecard"]["metrics"]:
                     if m["name"] == metric_name:
-                        value = f"{m['value']:.3f}"
+                        value = "n/a" if m["value"] is None else f"{m['value']:.3f}"
                         break
-            row.append(value)
-        print(" | ".join(str(v).ljust(col_width) for v in row))
+            row.append(str(value).ljust(col_width))
+        print(" | ".join(row))
 
     # Weighted scores + duration
-    print("-" * (col_width * len(header) + 3 * (len(header) - 1)))
-    row = ["WEIGHTED SCORE"]
+    print(rule)
+    row = ["WEIGHTED SCORE".ljust(name_width)]
     for run in runs:
         ws = run.get("weighted_score", {})
         score = ws.get("score", 0)
-        row.append(f"{score:.3f}")
-    print(" | ".join(str(v).ljust(col_width) for v in row))
+        row.append(f"{score:.3f}".ljust(col_width))
+    print(" | ".join(row))
 
-    row = ["DURATION"]
+    row = ["DURATION".ljust(name_width)]
     for run in runs:
         dur = run.get("duration_seconds")
-        row.append(f"{dur:.1f}s" if dur is not None else "-")
-    print(" | ".join(str(v).ljust(col_width) for v in row))
+        row.append((f"{dur:.1f}s" if dur is not None else "-").ljust(col_width))
+    print(" | ".join(row))
+
+    # Significance: first run is the baseline, every later run is tested against it
+    if not args.no_significance and len(runs) > 1:
+        for run in runs[1:]:
+            report = compare_runs(
+                runs[0],
+                run,
+                n_resamples=args.bootstrap_samples or DEFAULT_BOOTSTRAP_SAMPLES,
+            )
+            _print_significance(report, runs[0]["name"], run["name"])
 
     # Pareto analysis
     if args.pareto and len(runs) > 1:
@@ -564,6 +755,64 @@ def cmd_compare(args):
         print("=" * 80)
         pareto_points = _compute_pareto_from_dicts(runs)
         _print_pareto_analysis(pareto_points)
+
+
+def _print_significance(report, name_a: str, name_b: str) -> None:
+    """Print paired significance results for one baseline/candidate pair."""
+    print("\n" + "=" * 96)
+    print(f"Significance: {name_b} vs {name_a}")
+    print(f"Baseline is {name_a}; a positive delta means {name_b} scored higher.")
+    print("=" * 96)
+
+    if not report.metrics:
+        print(
+            "No paired per-question data available. Both runs must have been produced "
+            "by a version that records per-question scores, and must share question IDs."
+        )
+        if report.skipped:
+            print(f"Skipped: {', '.join(report.skipped)}")
+        return
+
+    header = f"{'Metric':<28}{'n':>5}  {'delta':>9}  {'95% CI':>21}  {'p':>8}  verdict"
+    print(header)
+    print("-" * 96)
+
+    for m in sorted(report.metrics, key=lambda x: x.p_value):
+        ci = f"[{m.ci_low:+.4f}, {m.ci_high:+.4f}]"
+        if m.significant_corrected:
+            verdict = "significant"
+        elif m.significant:
+            verdict = "nominal (fails BH)"
+        else:
+            verdict = "not significant"
+        if m.underpowered:
+            verdict += " · underpowered"
+        print(
+            f"{m.metric[:28]:<28}{m.n_paired:>5}  {m.delta:>+9.4f}  {ci:>21}  "
+            f"{m.p_value:>8.4f}  {verdict}"
+        )
+        if m.discordant_b_better is not None:
+            print(
+                f"{'':<28}{'':>5}  McNemar: {m.discordant_b_better} questions improved, "
+                f"{m.discordant_a_better} regressed, "
+                f"{m.n_paired - m.discordant_b_better - m.discordant_a_better} unchanged"
+            )
+
+    print("-" * 96)
+    print(
+        f"{report.family_size} metrics tested at alpha={report.alpha}. Uncorrected, "
+        f"pure noise would produce {report.expected_false_positives:.1f} 'significant' "
+        f"movers on average ({report.any_spurious_probability:.0%} chance of at least one). "
+        f"'significant' below survives Benjamini-Hochberg at the same alpha."
+    )
+    underpowered = [m for m in report.metrics if m.underpowered]
+    if underpowered:
+        print(
+            f"{len(underpowered)} metric(s) below {UNDERPOWERED_N} paired questions — "
+            "indicative only; intervals at this size understate true uncertainty."
+        )
+    if report.skipped:
+        print(f"No per-question data (not tested): {', '.join(report.skipped)}")
 
 
 def _compute_pareto_from_dicts(runs: list[dict]) -> list[dict]:
@@ -717,10 +966,27 @@ def cmd_calibrate(args):
         console.print(f"Adherence RMSE: {result.adherence_rmse:.3f}")
     if result.relevance_rmse is not None:
         console.print(f"Context relevance RMSE: {result.relevance_rmse:.3f}")
+
+    for label, disc in (
+        ("answer_correctness", result.correctness_discrimination),
+        ("answer_relevancy", result.relevancy_discrimination),
+    ):
+        if disc and disc.pair_count:
+            console.print(
+                f"{label} discrimination: {disc.accuracy:.1%} of {disc.pair_count} pairs "
+                f"ranked correctly (matched {disc.mean_matched:.2f} vs "
+                f"mismatched {disc.mean_mismatched:.2f}, separation {disc.separation:+.2f})"
+            )
+
     console.print(f"Saved: {path}")
     console.print(
         "\n[dim]Lower RMSE / higher agreement = eval judge scores are more trustworthy. "
-        "RAGBench paper baselines: RAGAS/TruLens RMSE ~0.25-0.35.[/dim]"
+        "RAGBench paper baselines: RAGAS/TruLens RMSE ~0.25-0.35.\n"
+        "Discrimination is a floor check, not a calibration: RAGBench has no ground "
+        "truth for answer correctness or relevancy, so those two prompts are scored on "
+        "whether they can separate a correct pairing from a deliberately wrong one. "
+        "Accuracy well below 100% means the prompt is unreliable; near 100% only means "
+        "it is not broken.[/dim]"
     )
 
 
@@ -728,17 +994,29 @@ def cmd_cache(args):
     """Manage dataset cache."""
     action = getattr(args, "cache_action", None)
     if action == "clear":
-        count = clear_cache()
-        print(f"Cleared {count} cached dataset(s).")
+        what = getattr(args, "what", "datasets")
+        if what in ("datasets", "all"):
+            print(f"Cleared {clear_cache()} cached dataset(s).")
+        if what in ("responses", "all"):
+            print(f"Cleared {clear_response_cache(DEFAULT_CACHE_DIR)} cached response(s).")
     elif action == "status":
-        if not CACHE_DIR.exists():
-            print("No cache directory.")
-            return
-        files = list(CACHE_DIR.glob("*.json"))
-        total_bytes = sum(f.stat().st_size for f in files)
-        print(f"Cache: {CACHE_DIR}")
-        print(f"Files: {len(files)}")
-        print(f"Size:  {total_bytes / 1024:.0f} KB")
+        if CACHE_DIR.exists():
+            files = list(CACHE_DIR.glob("*.json"))
+            total_bytes = sum(f.stat().st_size for f in files)
+            print(f"Dataset cache: {CACHE_DIR}")
+            print(f"  Files: {len(files)}")
+            print(f"  Size:  {total_bytes / 1024:.0f} KB")
+        else:
+            print("Dataset cache: none")
+
+        if DEFAULT_CACHE_DIR.exists():
+            print(f"Response cache: {DEFAULT_CACHE_DIR}")
+            for namespace in sorted(p for p in DEFAULT_CACHE_DIR.iterdir() if p.is_dir()):
+                entries = list(namespace.glob("*.json"))
+                size = sum(f.stat().st_size for f in entries)
+                print(f"  {namespace.name}: {len(entries)} entries, {size / 1024:.0f} KB")
+        else:
+            print("Response cache: none")
     else:
         print("Usage: cache {clear,status}")
         sys.exit(1)
@@ -754,13 +1032,28 @@ def print_run_summary(run: EvalRun):
     print(f"Questions: {run.question_count} ({run.error_count} errors)")
     print(f"Success rate: {run.success_rate:.1%}")
 
+    warning = run.metadata.get("judge_independence_warning")
+    if warning:
+        print(f"\nWARNING: {warning}")
+
+    cache_stats = run.metadata.get("cache")
+    if cache_stats and cache_stats.get("hits"):
+        print(
+            f"Cache: {cache_stats['hits']} hits, {cache_stats['misses']} misses "
+            f"(judge={cache_stats['judge']}, query={cache_stats['query']})"
+        )
+
     if run.scorecard:
         print("\n" + "-" * 40)
         print("Metrics by Group:")
         for group, metrics in run.scorecard.by_group.items():
             print(f"\n  {group.value.upper()}:")
             for metric in metrics:
-                print(f"    {metric.name}: {metric.value:.3f}")
+                if metric.value is None:
+                    note = metric.details.get("note", "not applicable")
+                    print(f"    {metric.name}: n/a ({note})")
+                else:
+                    print(f"    {metric.name}: {metric.value:.3f}")
 
     if run.weighted_score:
         print("\n" + "-" * 40)

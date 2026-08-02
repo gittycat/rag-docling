@@ -125,7 +125,9 @@
 	function driverDelta(d: BandedMetric | null): number | null {
 		if (!d || !prev) return null;
 		const p = prev.metrics[d.metric.name];
-		return p != null ? d.metric.value - p : null;
+		const current = d.metric.value;
+		// Either side undefined means there is no delta to state, not a delta of 0
+		return p != null && current != null ? current - p : null;
 	}
 
 	let retrievalDriver = $derived(driver('retrieval'));

@@ -185,6 +185,31 @@ eval:
     - "not found"
     - "no relevant information"
 
+  # Weighted-score configuration. These decide what the single headline number
+  # rewards, so treat any edit here as a scoring change: run comparisons across a
+  # change to this block are not comparable.
+  scoring:
+    # Objective weights. Objectives with no data in a run are dropped and their
+    # weight redistributed, so these are relative, not required to sum to 1.
+    weights:
+      accuracy: 0.30        # answer correctness + abstention
+      faithfulness: 0.20    # grounding in the retrieved context
+      citation: 0.20        # citation precision / recall / section accuracy
+      retrieval: 0.15       # recall, precision, MRR, nDCG
+      cost: 0.10            # cost per query
+      latency: 0.05         # P50 latency
+
+    # Latency normalization: 0 ms scores 1.0, the threshold and above scores 0.0.
+    # End-to-end pays retrieval and generation; generation-tier runs skip retrieval,
+    # so they are held to a tighter bar. Lower these for a latency-sensitive
+    # deployment — leaving them at a profile you do not run to gives you a headline
+    # number that does not reflect your constraints.
+    latency_threshold_ms_generation: 5000
+    latency_threshold_ms_end_to_end: 30000
+
+    # Cost normalization: $0/query scores 1.0, this and above scores 0.0 (USD).
+    max_cost_per_query_usd: 0.10
+
 # ============================================================================
 # Reranker Settings (non-model-specific)
 # ============================================================================

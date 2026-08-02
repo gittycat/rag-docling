@@ -28,7 +28,9 @@ from evals.config import (
     DEFAULT_WEIGHTS,
 )
 from evals.datasets.registry import get_dataset, load_datasets
-from evals.judges.llm_judge import LLMJudge
+from evals.judges.llm_judge import LLMJudge, warn_if_judge_not_independent
+from evals.cache import ResponseCache, config_fingerprint
+from evals.samples import save_samples
 from evals.metrics import (
     METRIC_GROUPS,
     RecallAtK,
@@ -269,6 +271,12 @@ class EvaluationRunner:
         self._judge: LLMJudge | None = None
         self._metrics: dict[MetricGroup, list] = {}
         self._model_config: dict[str, Any] = {}  # Store model config from /models/info
+        self._cache = (
+            ResponseCache(self.config.cache.dir) if self.config.cache.enabled else None
+        )
+        # Set once the config snapshot exists — a cached query answer is only valid
+        # for the configuration that produced it.
+        self._query_cache_key: str | None = None
 
     @property
     def client(self) -> RAGClient:
@@ -284,7 +292,10 @@ class EvaluationRunner:
     def judge(self) -> LLMJudge:
         """Get or create the LLM judge."""
         if self._judge is None:
-            self._judge = LLMJudge(self.config.judge)
+            self._judge = LLMJudge(
+                self.config.judge,
+                cache=self._cache if self.config.cache.judge else None,
+            )
         return self._judge
 
     def _init_metrics(self) -> None:
@@ -302,12 +313,14 @@ class EvaluationRunner:
                 NDCG(k=10),
             ]
 
-        # Generation metrics (require judge)
+        # Generation metrics (require judge). The runner's judge is injected rather
+        # than letting each metric construct its own: three separate judges would
+        # each build their own LLM client and none would see the response cache.
         if self.config.metrics.generation and self.config.judge.enabled:
             self._metrics[MetricGroup.GENERATION] = [
-                Faithfulness(),
-                AnswerCorrectness(),
-                AnswerRelevancy(),
+                Faithfulness(judge=self.judge),
+                AnswerCorrectness(judge=self.judge),
+                AnswerRelevancy(judge=self.judge),
             ]
 
         # Citation metrics
@@ -375,6 +388,36 @@ class EvaluationRunner:
 
         config_snapshot = self._create_config_snapshot(rag_config, retrieval_config)
 
+        if self.config.cache.query:
+            if config_snapshot.retrieval_top_k is None:
+                # Without the retrieval settings the fingerprint cannot tell two
+                # configurations apart, so a cached answer might come from a
+                # different pipeline entirely. Refuse rather than serve it.
+                logger.warning(
+                    "[EVAL] Query cache disabled for this run: the server did not "
+                    "report its retrieval configuration, so cached answers could not "
+                    "be attributed to a specific pipeline."
+                )
+                self.config.cache.query = False
+            else:
+                self._query_cache_key = config_fingerprint(
+                    {
+                        "llm_model": config_snapshot.llm_model,
+                        "llm_provider": config_snapshot.llm_provider,
+                        "embedding_model": config_snapshot.embedding_model,
+                        "reranker_model": config_snapshot.reranker_model,
+                        "retrieval_top_k": config_snapshot.retrieval_top_k,
+                        "hybrid_search_enabled": config_snapshot.hybrid_search_enabled,
+                        "contextual_retrieval_enabled": config_snapshot.contextual_retrieval_enabled,
+                    }
+                )
+
+        # Recorded on the run, not just logged: whoever reads the scores later is
+        # the person who needs to know the judge wasn't neutral.
+        judge_warning = (
+            warn_if_judge_not_independent() if self.config.judge.enabled else None
+        )
+
         # Warn if citation metrics are enabled but the RAG server won't produce explicit citations
         if self.config.metrics.citation:
             try:
@@ -435,6 +478,7 @@ class EvaluationRunner:
         latencies: list[float] = []
         error_count = 0
 
+        query_phase_failed = False
         try:
             sem = asyncio.Semaphore(self.config.query_concurrency)
             completed_count = 0
@@ -445,19 +489,27 @@ class EvaluationRunner:
                     return None
                 async with sem:
                     try:
-                        start_time = time.perf_counter()
-                        if self.config.tier == EvalTier.GENERATION:
-                            # Inject the full original document set (gold + distractors)
-                            # so generation is evaluated under realistic noisy context
-                            raw_response = await self.client.query_with_context(
-                                question.question,
-                                question.gold_passages + question.context_passages,
-                            )
+                        cached = self._get_cached_query(question)
+                        if cached is not None:
+                            # Latency comes from the original call: reporting the
+                            # cache-hit time would show a "10 ms P50" that no user
+                            # would ever experience.
+                            raw_response, latency_ms = cached
                         else:
-                            raw_response = await self.client.query(
-                                question.question, include_chunks=True
-                            )
-                        latency_ms = (time.perf_counter() - start_time) * 1000
+                            start_time = time.perf_counter()
+                            if self.config.tier == EvalTier.GENERATION:
+                                # Inject the full original document set (gold + distractors)
+                                # so generation is evaluated under realistic noisy context
+                                raw_response = await self.client.query_with_context(
+                                    question.question,
+                                    question.gold_passages + question.context_passages,
+                                )
+                            else:
+                                raw_response = await self.client.query(
+                                    question.question, include_chunks=True
+                                )
+                            latency_ms = (time.perf_counter() - start_time) * 1000
+                            self._set_cached_query(question, raw_response, latency_ms)
                         response = parse_rag_response(
                             question_id=question.id,
                             raw_response=raw_response,
@@ -492,9 +544,21 @@ class EvaluationRunner:
             if cancelled and cancelled.is_set():
                 error_count = max(0, error_count - sum(1 for r in results if r is None))
 
+        except BaseException:
+            query_phase_failed = True
+            raise
         finally:
             if self.config.tier == EvalTier.END_TO_END and doc_id_map:
-                await self._cleanup_documents(list(doc_id_map.values()))
+                if query_phase_failed and not self.config.cleanup_on_failure:
+                    # Left in place deliberately: the ingested corpus is the only
+                    # way to reproduce what the failing queries actually saw.
+                    logger.warning(
+                        "[EVAL] Run failed and cleanup_on_failure is false — leaving "
+                        f"{len(doc_id_map)} ingested documents on the RAG server for "
+                        "inspection. Delete them manually when done."
+                    )
+                else:
+                    await self._cleanup_documents(list(doc_id_map.values()))
 
         logger.info(
             f"[EVAL] Completed {len(all_responses)} queries, {error_count} errors"
@@ -523,10 +587,33 @@ class EvaluationRunner:
                 "samples_per_dataset": self.config.samples_per_dataset,
                 "seed": self.config.seed,
                 "tier": self.config.tier.value,
+                "judge_model": self.config.judge.model if self.config.judge.enabled else None,
+                "judge_independence_warning": judge_warning,
+                "cache": (
+                    {
+                        "judge": self.config.cache.judge,
+                        "query": self.config.cache.query,
+                        **self._cache.stats(),
+                    }
+                    if self._cache
+                    else None
+                ),
+                "scoring": {
+                    "weights": self.config.scoring.weights,
+                    "latency_threshold_ms": self.config.scoring.latency_threshold_ms(
+                        self.config.tier
+                    ),
+                    "max_cost_per_query_usd": self.config.scoring.max_cost_per_query_usd,
+                },
             },
         )
 
-        self._save_run(eval_run)
+        run_path = self._save_run(eval_run)
+        try:
+            save_samples(run_path, eval_run.id, all_questions, all_responses)
+        except Exception as e:
+            # A failed sidecar costs the review exports, not the run itself
+            logger.warning(f"[EVAL] Could not save per-question samples: {e}")
         _report("complete", current_question=len(all_questions), total_questions=len(all_questions_to_run))
 
         logger.info(
@@ -534,6 +621,41 @@ class EvaluationRunner:
         )
 
         return eval_run
+
+    def _query_cache_parts(self, question: EvalQuestion) -> list[Any] | None:
+        """Cache key components for one query, or None if query caching is off."""
+        if self._cache is None or not self.config.cache.query or not self._query_cache_key:
+            return None
+        parts: list[Any] = [
+            self._query_cache_key,
+            self.config.tier.value,
+            question.question,
+        ]
+        if self.config.tier == EvalTier.GENERATION:
+            # The injected context is part of the input, so it is part of the key
+            parts.append(
+                [p.text for p in question.gold_passages + question.context_passages]
+            )
+        return parts
+
+    def _get_cached_query(self, question: EvalQuestion) -> tuple[dict[str, Any], float] | None:
+        parts = self._query_cache_parts(question)
+        if parts is None:
+            return None
+        entry = self._cache.get("query", parts)
+        if not entry:
+            return None
+        return (entry["response"], entry["latency_ms"])
+
+    def _set_cached_query(
+        self, question: EvalQuestion, raw_response: dict[str, Any], latency_ms: float
+    ) -> None:
+        parts = self._query_cache_parts(question)
+        if parts is None:
+            return
+        self._cache.set(
+            "query", parts, {"response": raw_response, "latency_ms": latency_ms}
+        )
 
     async def _ingest_documents(self, questions: list[EvalQuestion]) -> dict[str, str]:
         """Upload gold + distractor passage texts to the RAG server for END_TO_END eval.
@@ -675,7 +797,13 @@ class EvaluationRunner:
                         result = await metric.compute_batch(questions, responses, **kwargs)
 
                     scorecard.add_metric(result)
-                    logger.debug(f"[EVAL] {result.name}: {result.value:.3f}")
+                    if result.value is None:
+                        logger.info(
+                            f"[EVAL] {result.name}: undefined "
+                            f"({result.details.get('note', 'no applicable samples')})"
+                        )
+                    else:
+                        logger.debug(f"[EVAL] {result.name}: {result.value:.3f}")
 
                 except Exception as e:
                     logger.error(f"[EVAL] Failed to compute {metric.name}: {e}")
@@ -705,13 +833,18 @@ class EvaluationRunner:
                     sample_size=len(latencies),
                 ))
 
-                # Average latency
+                # Average latency. Per-question values are carried so a latency
+                # difference between two runs can be bootstrapped like any other
+                # metric instead of being eyeballed off two point estimates.
                 avg_latency = sum(latencies) / len(latencies) if latencies else 0
                 scorecard.add_metric(MetricResult(
                     name="latency_avg_ms",
                     value=avg_latency,
                     group=MetricGroup.PERFORMANCE,
                     sample_size=len(latencies),
+                    details={
+                        "per_question": dict(zip((q.id for q in questions), latencies)),
+                    },
                 ))
 
             # Cost metrics (if model config available)
@@ -769,6 +902,8 @@ class EvaluationRunner:
         for metric in scorecard.metrics:
             if metric.group == MetricGroup.PERFORMANCE:
                 continue  # Performance metrics handled separately
+            if metric.value is None:
+                continue  # Undefined for this dataset — contributes no evidence
 
             objective = metric_to_objective.get(metric.name)
             if objective and objective in objective_scores:
@@ -786,18 +921,21 @@ class EvaluationRunner:
 
         # Handle performance objectives (latency, cost) - invert since lower is better
         # For now, assume normalized values; could be enhanced with target thresholds
+        # Thresholds come from `eval.scoring` in config.yml — a deployment with a
+        # different latency or cost profile must be able to change what the
+        # headline score rewards without editing this file.
+        scoring = self.config.scoring
         latency_metric = scorecard.get_metric("latency_p50_ms")
-        if latency_metric and "latency" in weights:
-            # Normalize: END_TO_END tier has higher latency due to retrieval overhead
-            latency_threshold = 30000 if self.config.tier == EvalTier.END_TO_END else 5000
+        if latency_metric and latency_metric.value is not None and "latency" in weights:
+            latency_threshold = scoring.latency_threshold_ms(self.config.tier)
             normalized_latency = 1.0 - min(latency_metric.value / latency_threshold, 1.0)
             objectives["latency"] = normalized_latency
 
-        # Cost objective — invert cost: $0 = 1.0, $0.10+/query = 0.0
+        # Cost objective — invert cost: $0 = 1.0, threshold+/query = 0.0
         if "cost" in weights:
             cost_metric = scorecard.get_metric("cost_per_query")
-            if cost_metric and cost_metric.value > 0:
-                max_cost_per_query = 0.10  # USD threshold
+            if cost_metric and cost_metric.value:
+                max_cost_per_query = scoring.max_cost_per_query_usd
                 objectives["cost"] = 1.0 - min(cost_metric.value / max_cost_per_query, 1.0)
             else:
                 objectives["cost"] = 1.0  # Free/local models
@@ -838,9 +976,19 @@ class EvaluationRunner:
 
         # Convert to serializable dict
         run_dict = self._run_to_dict(run)
+        serialized = json.dumps(run_dict, indent=2, default=str)
 
         with open(filepath, "w") as f:
-            json.dump(run_dict, f, indent=2, default=str)
+            f.write(serialized)
+
+        # A run is hours of compute and API spend with no database behind it — one
+        # `rm` in data/eval_runs would otherwise be unrecoverable.
+        try:
+            backup_dir = self.config.runs_dir / "backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            (backup_dir / filename).write_text(serialized)
+        except Exception as e:
+            logger.warning(f"[EVAL] Could not write run backup: {e}")
 
         logger.info(f"[EVAL] Saved run to {filepath}")
         return filepath

@@ -214,24 +214,50 @@ provider, check your cloud API key/quota if it's a cloud model, or check
 
 ## Eval
 
-### Starting an eval run returns HTTP 409 "An eval job is already running"
+### Starting an eval run returns HTTP 429 "Eval queue is full"
 
-**Likely cause**: the eval service only allows one active job at a time. If a
-previous run is still `queued` or `running` (including one you forgot about,
-or one that's hung), a new `POST /eval/runs` call is rejected outright rather
-than queued.
+**Likely cause**: one eval runs at a time and the rest queue behind it. A `429`
+means the queue is at its depth limit (default 5, set by `EVAL_QUEUE_DEPTH`) —
+usually because an earlier job is hung and nothing behind it has advanced.
 
 **Check**:
 ```bash
-curl http://localhost:8002/eval/runs/active
+curl http://localhost:8002/eval/runs/active   # the running job
+curl http://localhost:8002/eval/queue         # what is waiting
 ```
-This tells you the currently active job's id and status.
 
-**Fix**: wait for the active job to finish, or cancel it first:
+**Fix**: drop queued jobs you no longer want, or cancel the active one so the
+queue advances:
 ```bash
+curl -X DELETE http://localhost:8002/eval/queue/<job_id>
 curl -X DELETE http://localhost:8002/eval/runs/active
 ```
-then retry your run.
+
+### A comparison reports "No paired per-question data available"
+
+**Likely cause**: one or both runs predate per-question score capture, so there is
+nothing to pair on. Significance testing needs `details.per_question` in the
+scorecard, and the framework will not invent statistics without it.
+
+**Check**:
+```bash
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); \
+  print([m['name'] for m in d['scorecard']['metrics'] if m.get('details',{}).get('per_question')])" \
+  data/eval_runs/<file>.json
+```
+
+**Fix**: re-run both configurations. The point deltas in the table above the
+significance block are still correct; they just carry no uncertainty estimate.
+
+### A metric shows "n/a" instead of a number
+
+**Not a fault.** The metric was undefined for that run's data — most often
+citation or retrieval metrics on a dataset with no gold passages. It reports `n/a`
+rather than 0.0 or 1.0 because either number would be a fabricated score.
+
+**Fix**, if you want it measured: annotate `gold_passages` or `gold_doc_ids` in
+`golden_qa.json` (see chapter 5), or run against a dataset that ships
+annotations.
 
 ### An eval run's judge-dependent metrics look sparse or incomplete
 

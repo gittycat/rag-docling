@@ -169,6 +169,9 @@ services:
       - ./config.yml:/app/config.yml:ro
       - ./services/evals/evals/data:/app/evals/data
       - ./data/eval_runs:/app/data/eval_runs
+      # Calibration results are evidence about how much the judge scores can be
+      # trusted; without this mount they vanish when the container is recreated.
+      - ./data/calibration:/app/data/calibration
       - ./.cache/huggingface:/home/appuser/.cache/huggingface
       - ./.cache/datasets:/app/data/dataset_cache
     secrets:

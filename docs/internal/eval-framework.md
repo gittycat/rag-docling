@@ -28,17 +28,27 @@ raises a config error rather than silently running.
 | Dataset | What it tests | Tier support | Notes |
 |---|---|---|---|
 | `ragbench` | Multi-domain RAG benchmark with TRACe annotations (adherence, relevance, utilization, completeness), 12 industry subsets | generation, end_to_end | Default dataset; default subset mix is a curated four-subset sample |
-| `qasper` | QA over scientific papers with evidence spans | end_to_end only | citation + generation focus; documented in-repo as broken under `datasets>=4.0` |
+| `qasper` | QA over scientific papers with evidence spans | end_to_end only | citation + generation focus; loads via the `refs/convert/parquet` revision and handles both the dict-of-lists and list-of-dicts `qas` shapes. Verified working on `datasets` 4.5 — the in-repo "broken under `datasets>=4.0`" note was stale |
 | `squad_v2` | Reading comprehension including unanswerable questions | generation only | abstention focus; naturally ~50% unanswerable, ratio adjustable |
 | `hotpotqa` | Multi-hop QA requiring reasoning across documents | end_to_end only | retrieval + generation; gold passages built from supporting-fact sentence indices |
 | `msmarco` | Large-scale reading comprehension for retrieval ranking | end_to_end only | retrieval only |
-| `golden` | Local curated Q&A pairs authored against the operator's own documents | generation, end_to_end (nominally) | No network access — reads a local JSON file. Currently 10 entries. **No `gold_passages` are ever populated for this dataset**, so retrieval and citation metrics against it are meaningless regardless of declared tier support — it effectively only exercises generation-quality judging |
+| `golden` | Local curated Q&A pairs authored against the operator's own documents | generation | No network access — reads a local JSON file. Currently 10 entries, none annotated. Accepts optional `gold_passages` (full dicts or bare strings), `gold_doc_ids` (document-level shorthand) and `context_passages` per entry; without them retrieval and citation metrics report `None` (undefined) rather than 0.0 or a fabricated 1.0 |
 
 All loaders normalize into a common schema (question, expected answer, gold
 passages, distractor context passages, query type, difficulty, domain). Dataset
 loads are cached to disk keyed by dataset name, split, sample count, and seed;
-`--no-cache` bypasses this. There is no caching of RAG server responses or judge
-calls — every eval run re-executes every query and every judge call from scratch.
+`--no-cache` bypasses this.
+
+RAG-server responses and judge calls have their own content-addressed disk cache
+(`evals/cache.py`, under `data/eval_cache/`), keyed by a hash of everything that
+determines the answer. The judge cache is **on** by default — the judge runs at
+temperature 0, so an identical prompt is an identical call — and disabled with
+`--no-judge-cache`. The query cache is **off** by default (`--cache-queries`)
+because its key covers the server's reported configuration but *not the indexed
+corpus*: after a re-ingest a cached answer is stale while looking fresh. It also
+self-disables when the server did not report its retrieval configuration, since
+the fingerprint then cannot distinguish two pipelines. A cache hit replays the
+originally measured latency, not the hit time, so latency metrics stay honest.
 
 ## Metric catalogue
 
@@ -67,7 +77,64 @@ abstention, and performance metrics are computed by direct matching or arithmeti
 
 Retrieved-chunk matching against gold passages, and citation matching, both use the
 same exact-ID-first, Jaccard-overlap-fallback logic — there is one shared matching
-implementation behind both metric groups.
+implementation behind both metric groups. Citation matching adds a document-level
+path for gold passages that carry no text (produced by `gold_doc_ids`), which
+would otherwise be unmatchable and score a spurious 0.
+
+### `None` is not `0.0`
+
+`MetricResult.value` is `float | None`. `None` means the metric is **undefined for
+the data it was given**, and it is never rendered as a number: the CLI and exports
+print `n/a`, the API serializes `null`, the dashboard shows a muted `n/a`, and the
+weighted score drops the objective and redistributes its weight.
+
+Cases that produce it:
+
+| Case | Previously | Why the old value was wrong |
+|---|---|---|
+| Citation metrics, no gold passages | `1.0` | A golden-set run displayed perfect citation scores that measured nothing |
+| Retrieval metrics, no gold passages | `0.0` | A dataset without retrieval annotations looked like a retrieval regression |
+| `abstention_false_positive_rate` on an unanswerable question | `0.0` | Counted as "did not falsely abstain", pulling the rate down by however many unanswerable questions happened to be present |
+| `abstention_false_negative_rate` on an answerable question | `0.0` | Same, mirrored |
+| Every sample failed or was inapplicable | `0.0` | Indistinguishable from a genuinely zero score |
+
+`BaseMetric.compute_batch` excludes `None` results from the average and counts
+them under `details.not_applicable_count`, so `sample_size` reflects what was
+actually measured.
+
+### Per-question scores
+
+`compute_batch` records `details.per_question` — a `{question_id: score}` map —
+alongside the aggregate. Question ids rather than a bare list, because a list
+misaligns as soon as one question errors in one run only, and pairing two runs by
+position would then compare different questions. This map is what makes
+significance testing possible; the metrics that override `compute_batch`
+(`unanswerable_accuracy`, `cost_per_query`) populate it too, and the runner adds
+it for `latency_avg_ms`.
+
+## Statistical comparison
+
+`evals/stats.py` turns per-question scores into interval estimates. Reached from
+`python -m evals.cli compare` (on by default, `--no-significance` to skip) and
+`GET /eval/runs/compare?ids=a,b` (`significance` field). The first run is the
+baseline; every later run is compared against it.
+
+| Component | Choice | Why |
+|---|---|---|
+| Interval | Percentile paired bootstrap, B = 10,000, seeded | Works identically for continuous judge scores and binary hit/miss metrics; makes no normality assumption, which matters because judge scores cluster on rubric points. The seed is fixed so two invocations on unchanged inputs cannot disagree |
+| Binary metrics | McNemar's exact test + discordant counts | Exact rather than chi-square because discordant counts on a 100-question eval are routinely under 25. The counts ("38 improved, 18 regressed") are usually more informative than the rate delta |
+| Family correction | Benjamini-Hochberg at the same alpha | Scanning ~20 metrics uncorrected gives ~64% chance of at least one spurious mover. The uncorrected arithmetic is also printed, so the correction is auditable rather than magic |
+| Underpowered flag | n < 100 paired questions | Normal-approximation-scale intervals substantially understate uncertainty below a few hundred datapoints |
+
+Only questions present in **both** runs for a given metric are paired; a question
+that errored in one run is dropped from that metric rather than scored zero.
+Metrics with no per-question data on either side — aggregate-only metrics like
+`latency_p50_ms`, or runs saved before per-question capture existed — are listed
+under `skipped` rather than being given invented statistics.
+
+`numpy` is a direct dependency for this: a vectorized bootstrap keeps a 20-metric
+comparison well under a second, where a pure-Python resample loop would make the
+API endpoint unusable.
 
 ## The LLM judge
 
@@ -110,11 +177,21 @@ context retrieved (`faithfulness`) or no expected answer defined
 
 ## Weighted score
 
-A single weighted score combines metric groups using fixed objective weights:
-accuracy 0.30, faithfulness 0.20, citation 0.20, retrieval 0.15, cost 0.10,
-latency 0.05. These are the framework's own defaults, not user-tunable per run
-via any exposed flag today (they live as a dataclass default in the eval config
-module). The weighted score is also the basis for Pareto-frontier comparisons
+A single weighted score combines metric groups using objective weights read from
+`eval.scoring` in the repo-root `config.yml`: accuracy 0.30, faithfulness 0.20,
+citation 0.20, retrieval 0.15, cost 0.10, latency 0.05 by default. The latency and
+cost normalization thresholds live there too
+(`latency_threshold_ms_generation` / `latency_threshold_ms_end_to_end`,
+`max_cost_per_query_usd`) — they used to be constants in the runner, so a
+latency-sensitive deployment could not change what the headline number rewarded
+without editing code. `ScoringConfig.from_models_config()` reads them, falling
+back to the module constants when the config is unavailable. The resolved values
+are recorded in each run's `metadata.scoring`, so an old run stays interpretable
+after the thresholds change.
+
+A metric whose value is `None` (undefined for the dataset) contributes nothing:
+its objective is dropped and the weight redistributed, rather than the objective
+being scored 0. The weighted score is also the basis for Pareto-frontier comparisons
 across runs — a run "dominates" another if it is at least as good on every
 objective and strictly better on at least one; this is a strict dominance check,
 not a statistical test (see Known gaps).
@@ -132,11 +209,18 @@ prompts:
 - **Context relevance vs. relevance**: judge context-relevance score compared
   against the RAGBench `relevance_score` ground-truth label (RMSE).
 
-**`answer_correctness` and `answer_relevancy` are never calibrated against any
-ground truth** — there is no RAGBench label that corresponds to either, so no
-calibration procedure exists for them. This is a real limitation, not an oversight
-to be quietly worked around: those two metrics' scores rest entirely on the
-judge's own rubric-following, with no external check on agreement.
+`answer_correctness` and `answer_relevancy` have **no corresponding RAGBench
+label**, so they get a weaker check rather than none: a **discrimination test**.
+Each item's reference response is scored against its own reference/question (known
+correct) and against a neighbouring item's (known wrong), and the result reports
+mean matched score, mean mismatched score, separation, and the fraction of pairs
+ranked correctly.
+
+This is a floor, not a calibration. Passing it says the prompt distinguishes an
+obviously-right pairing from an obviously-wrong one; it says nothing about whether
+mid-range scores track human judgement. Reported as
+`correctness_discrimination` / `relevancy_discrimination` in the saved result, and
+the CLI prints the caveat alongside the numbers.
 
 Calibration runs on RAGBench items with TRACe fields, dropping any item where a
 judge call fails outright rather than scoring it, and reports the drop count
@@ -154,9 +238,15 @@ flat JSON files on disk:
   rebuilt by scanning the run-file directory at process startup — it is a cache
   over the JSON files, not a source of truth, and is lost (until reindexed) on
   every restart.
-- Exactly one eval job can be active at a time, tracked via in-memory state guarded
-  by a lock; a second trigger while one is running gets a conflict response rather
-  than queuing.
+- Each run also writes a per-question sidecar, `{run}_samples.json`, holding the
+  question/response pairs the review exporters need. The run index skips these when
+  scanning, and every run is additionally copied to `eval_runs/backup/` — a run is
+  hours of compute with no database behind it.
+- Exactly one eval job runs at a time, tracked via in-memory state guarded by a
+  lock. Further triggers **queue** (FIFO, depth `EVAL_QUEUE_DEPTH`, default 5) and
+  the head is promoted when the active job finishes; only a full queue returns
+  `429`. `GET /eval/queue` lists pending jobs and `DELETE /eval/queue/{job_id}`
+  drops one. The queue is in-memory: a service restart loses it.
 
 ## In-house vs. third-party
 
@@ -174,18 +264,18 @@ the full three-part rationale and what would justify revisiting it.
 
 Carried forward honestly rather than fixed or hidden:
 
-- **No statistical significance testing anywhere.** Run comparison does raw
-  per-metric value diffs and strict Pareto dominance checks only — no confidence
-  intervals, no paired significance test, no accounting for the per-metric
-  standard deviation that is computed internally but never surfaced in
-  comparisons. A one-question swing can look identical in the comparison output
-  to a thousand-question swing.
 - **Single judge model, no ensemble or inter-rater agreement.** Exactly one LLM
   scores every generation metric on every run; there is no multi-judge consensus
-  or human-in-the-loop cross-check wired into the pipeline.
-- **The golden dataset has no gold passages at all.** Retrieval and citation
-  metrics are meaningless against it; an operator building their own golden set
-  gets generation-only coverage unless they extend the loader themselves.
+  or human-in-the-loop cross-check wired into the pipeline. The runner does warn
+  when the judge shares a provider with `active.inference` — self-preference bias
+  is documented to extend across a model family, which makes the shipped
+  all-OpenAI default a non-neutral referee for local-versus-cloud comparisons —
+  and records the warning in `metadata.judge_independence_warning`, but a warning
+  is not an ensemble.
+- **The bootstrap resamples questions, not judge calls.** Judge variance on
+  identical inputs is invisible to the intervals `compare` reports.
+- **The dashboard shows point deltas only.** The significance data is on the API
+  response (`significance`) but the analytics UI does not render it yet.
 - **`ConfigSnapshot` records "unknown" rather than guessing.** Retrieval `top_k`,
   hybrid-search enabled and contextual-retrieval enabled are read from the RAG
   server's `/metrics/retrieval` endpoint at run start, alongside the model fields
@@ -196,15 +286,7 @@ Carried forward honestly rather than fixed or hidden:
   every saved run, which silently corrupted every comparison.) The full endpoint
   response is also kept under `config.additional.retrieval`, so `rrf_k`, the
   reranker `top_n` and `final_top_n` are recoverable from a saved run.
-- **Richer exporters are orphaned.** A per-question/response review exporter
-  (JSON/CSV/Markdown, including a manual-review CSV with blank reviewer columns)
-  exists as library code but is not called from the CLI's `export` subcommand or
-  from the API — the CLI has its own simpler inline export logic instead. The
-  manual-review workflow the richer exporter was built for is effectively
-  unreachable from any documented entry point today.
-- **Stale artifacts from the earlier deepeval-era framework remain in the data
-  directory.** A leftover baseline file and at least one old run result reference
-  metric names (e.g. contextual precision, hallucination as a named metric) that
-  don't exist anywhere in the current metrics package and aren't read by any code
-  path — they're dead files that could mislead anyone browsing the data
-  directory into thinking those metrics still exist.
+- **Review exports need a samples sidecar.** `export --format review-csv|review-md|
+  review-json` reconstructs question/response pairs from `{run}_samples.json`.
+  Runs completed before that sidecar existed cannot be exported for review; the
+  command says so rather than emitting an empty sheet.

@@ -93,7 +93,7 @@ class TestRecallAtK:
         assert result.details["gold_count"] == 4
 
     def test_no_gold_passages(self):
-        """No gold passages should score 0.0 (cannot evaluate recall without ground truth)."""
+        """No gold passages leaves recall undefined (None), not zero."""
         from evals.metrics.retrieval import RecallAtK
         from evals.schemas import EvalQuestion, EvalResponse, RetrievedChunk
 
@@ -116,7 +116,8 @@ class TestRecallAtK:
 
         result = metric.compute(question, response)
 
-        assert result.value == 0.0
+        assert result.value is None
+        assert result.sample_size == 0
         assert "No gold passages" in result.details.get("note", "")
 
     def test_k_limit_applied(self):
@@ -343,7 +344,7 @@ class TestMRR:
         assert result.details["first_relevant_rank"] is None
 
     def test_no_gold_passages(self):
-        """No gold passages should score 0.0 (cannot evaluate MRR without ground truth)."""
+        """No gold passages leaves MRR undefined (None), not zero."""
         from evals.metrics.retrieval import MRR
         from evals.schemas import EvalQuestion, EvalResponse, RetrievedChunk
 
@@ -366,7 +367,8 @@ class TestMRR:
 
         result = metric.compute(question, response)
 
-        assert result.value == 0.0
+        assert result.value is None
+        assert result.sample_size == 0
         assert "No gold passages" in result.details.get("note", "")
 
 
@@ -439,7 +441,7 @@ class TestNDCG:
         assert result.value > 0.0
 
     def test_no_gold_passages(self):
-        """No gold passages should score 0.0 (cannot evaluate NDCG without ground truth)."""
+        """No gold passages leaves NDCG undefined (None), not zero."""
         from evals.metrics.retrieval import NDCG
         from evals.schemas import EvalQuestion, EvalResponse, RetrievedChunk
 
@@ -462,7 +464,8 @@ class TestNDCG:
 
         result = metric.compute(question, response)
 
-        assert result.value == 0.0
+        assert result.value is None
+        assert result.sample_size == 0
 
 
 # =============================================================================
@@ -690,7 +693,7 @@ class TestCitationRecall:
         assert result.value == 0.5
 
     def test_no_gold_passages(self):
-        """No gold passages should default to recall of 1.0."""
+        """No gold passages leaves citation recall undefined (None), not a perfect 1.0."""
         from evals.metrics.citation import CitationRecall
         from evals.schemas import EvalQuestion, EvalResponse, Citation
 
@@ -713,7 +716,8 @@ class TestCitationRecall:
 
         result = metric.compute(question, response)
 
-        assert result.value == 1.0
+        assert result.value is None
+        assert result.sample_size == 0
 
 
 class TestSectionAccuracy:

@@ -28,9 +28,6 @@ just eval-datasets
 Invalid tier/dataset combinations are rejected before the run starts rather than
 producing a meaningless result.
 
-**A known issue:** the `qasper` loader is documented in the source as broken with
-recent versions of the `datasets` library. If it fails to load, that is why.
-
 Datasets other than `golden` are downloaded from HuggingFace on first use and
 cached to disk. Manage that cache with:
 
@@ -69,6 +66,10 @@ example entries. Each entry:
 | `document` | No | Source filename. Used for grouping and readability. **Not validated** — nothing checks that this file was ever ingested. |
 | `context_hint` | No | A note to yourself. Carried in metadata; not scored. |
 | `query_type` | No | Classifies the question. Defaults to `factual`. |
+| `gold_passages` | No | The passages that should be retrieved. Makes retrieval and citation metrics measurable — see below. |
+| `gold_doc_ids` | No | Document-level shorthand for the same thing. |
+| `context_passages` | No | Distractor passages, injected alongside the gold ones in `generation` tier. |
+| `is_unanswerable` | No | Marks a question the corpus genuinely cannot answer. Feeds the abstention metrics. |
 
 Accepted `query_type` values: `factual` (or `factoid`), `reasoning` (or
 `multi_hop`), `summary`, `procedural`, `comparison`, and `unanswerable`. Anything
@@ -79,28 +80,49 @@ Edit the file, save, and re-run. There is no import step and no rebuild needed �
 live immediately. Add `--no-cache` to your next run if you changed the set and
 want to be certain you are not reading a cached copy.
 
-### The limitation you must know about
+### Annotating gold passages
 
-**The golden loader never populates gold passages.** It sets that list empty
-unconditionally.
+Without annotations a golden entry measures **answer quality** only: faithfulness,
+correctness, relevancy, abstention. That is genuinely valuable — it is the part
+users experience — but it is not a retrieval measurement, and retrieval and
+citation metrics will report **`n/a`** rather than a number.
 
-Three consequences, all of which will otherwise mislead you:
+They report `n/a` rather than 0.0 or 1.0 deliberately. Citation precision and
+recall used to return a perfect **1.0** with no gold passages, so an unannotated
+golden run displayed flawless citation scores that measured nothing.
 
-1. **Retrieval metrics are meaningless on a golden set.** Recall, precision, MRR,
-   and NDCG have nothing to compare against.
-2. **Citation metrics return a perfect 1.0.** When no gold passages are defined,
-   citation precision and recall are defined to be 1.0. You will see flawless
-   citation scores that mean nothing.
-3. **The golden dataset only supports the `generation` tier.**
+To make them measurable, add gold passages. The richest form carries the text:
 
-So a golden set measures **answer quality**: faithfulness, correctness,
-relevancy, and abstention. That is genuinely valuable — it is the part users
-experience — but it is not a retrieval measurement. For retrieval, use
-`end_to_end` runs against `ragbench`, `hotpotqa`, or `msmarco`, and accept that
-you are measuring on somebody else's documents.
+```json
+{
+  "question": "What is the retention period for audit logs?",
+  "answer": "Audit logs are retained for 18 months.",
+  "document": "security-policy.pdf",
+  "gold_passages": [
+    {
+      "doc_id": "3f2a...",
+      "chunk_id": "3f2a...:7",
+      "text": "Audit logs are retained for a period of eighteen (18) months..."
+    }
+  ]
+}
+```
 
-This asymmetry is recorded as a gap in
-[`docs/suggestions.md`](../suggestions.md).
+Two shorthands, in decreasing fidelity:
+
+- `"gold_passages": ["the passage text", ...]` — ids are derived from `document`.
+  Text overlap still resolves citations, so the citation metrics work.
+- `"gold_doc_ids": ["3f2a..."]` — document level only. Retrieval and citation
+  metrics resolve by document; nothing can resolve to a specific chunk.
+
+**`doc_id` must be the id the RAG server uses**, not your filename. Get it from
+`GET /documents`. A filename here matches nothing and scores zero.
+
+The golden dataset still only supports the `generation` tier: the passages are
+injected as context rather than ingested, so an annotated golden set measures how
+well the pipeline uses the right passages, not whether retrieval finds them. For
+that, use `end_to_end` runs against `ragbench`, `hotpotqa`, or `msmarco`, and
+accept that you are measuring on somebody else's documents.
 
 ### Choosing questions
 
@@ -229,11 +251,16 @@ curl -X POST http://localhost:8002/eval/runs \
 
 curl http://localhost:8002/eval/runs/active     # progress
 curl -X DELETE http://localhost:8002/eval/runs/active   # cancel
+curl http://localhost:8002/eval/queue           # jobs waiting behind it
+curl -X DELETE http://localhost:8002/eval/queue/<job_id>   # drop a queued job
 curl http://localhost:8002/eval/runs            # list past runs
 ```
 
-**Only one evaluation can run at a time.** A second request returns `409`. This
-is process-wide, not per-user.
+**Only one evaluation runs at a time**, process-wide — they saturate the RAG
+server. Further requests are **queued** rather than rejected: `POST /eval/runs`
+returns `202` with a `queue_position` (0 means it started immediately). Only when
+the queue is full does it return `429`; depth defaults to 5 and is set by
+`EVAL_QUEUE_DEPTH`.
 
 ### From the dashboard
 
@@ -244,8 +271,7 @@ posts it. While a run is active the panel replaces the form with live progress
 (phase, current dataset, question counter, elapsed time) and a **Cancel** button.
 The run list refreshes on its own when the run finishes.
 
-The same one-at-a-time rule applies: starting a run while one is active surfaces
-the service's `409` as an error in the panel.
+Starting a run while one is active queues it behind the current one.
 
 ---
 
@@ -299,13 +325,33 @@ Prints each metric side by side, plus the weighted score and duration. Adding
 `--pareto` reports which runs are not dominated by any other across all
 objectives.
 
-**Understand what this does not do.** It reports raw arithmetic differences. There
-is no significance testing, no confidence interval, and no variance accounting
-anywhere in it. A difference of 0.02 across 10 questions and a difference of 0.02
-across 1000 questions are displayed identically. The per-metric standard deviation
-*is* computed and stored — and is never shown in any comparison.
+Below the table it reports, for every metric both runs scored, a **paired
+bootstrap 95% confidence interval** on the per-question difference:
 
-Chapter 6 is about how to make decisions anyway.
+```
+Metric                          n      delta                 95% CI         p  verdict
+faithfulness                  120    +0.0956     [+0.0643, +0.1263]    0.0001  significant
+recall_at_5                   120    +0.1667     [+0.0500, +0.2833]    0.0105  significant
+                                   McNemar: 38 questions improved, 18 regressed, 64 unchanged
+```
+
+How to read it:
+
+- **The interval, not the delta, is the result.** An interval spanning zero means
+  the run did not establish a difference — regardless of how large the delta looks.
+- **`significant`** survived Benjamini-Hochberg across the whole metric family.
+  **`nominal (fails BH)`** means the interval excluded zero but the correction
+  rejected it; scanning twenty metrics produces roughly one of those by chance.
+- **`underpowered`** marks fewer than 100 paired questions. The interval is still
+  computed, but treat it as indicative.
+- Binary metrics get McNemar's exact test and the discordant counts, which is
+  usually more informative than the rate: "38 improved, 18 regressed" says more
+  than "+0.17".
+- Metrics listed as *not tested* have no per-question data to pair on — aggregate
+  metrics like P50 latency, or runs saved before the framework recorded them.
+
+`--no-significance` skips it. Chapter 6 covers making decisions when the intervals
+are wide.
 
 ### Exporting
 
@@ -314,10 +360,21 @@ docker compose exec evals .venv/bin/python -m evals.cli export \
   --run-id <run_id> --format csv --output results.csv
 ```
 
-`json` dumps the run unchanged; `csv` flattens to one row per metric. Note that
-richer per-question exporters exist in the source — including a manual-review
-format with blank reviewer columns — but they are not wired to the CLI or the API
-and cannot currently be reached.
+| `--format` | Output |
+|---|---|
+| `json` | The run JSON, unchanged. |
+| `csv` | One row per metric. Undefined metrics export blank, never 0. |
+| `review-csv` / `review-md` / `review-json` | One row or section **per question** — question, reference answer, generated answer, citations, retrieved chunks — with blank reviewer columns to fill in. |
+| `scorecard-csv` / `scorecard-md` | Metrics only. |
+| `report` | Full Markdown run report: config, weighted score breakdown, all metrics. |
+
+The `review-*` formats read the run's samples sidecar
+(`data/eval_runs/{run}_samples.json`), written alongside every run. Runs completed
+before that sidecar existed cannot be exported for review.
+
+Human review is the only check on the judge that does not itself involve an LLM.
+If a judged metric moves and you cannot explain why, export the review sheet and
+read twenty answers.
 
 ---
 
@@ -330,7 +387,10 @@ Everything is flat files, not a database:
 | Runs | `/app/data/eval_runs/` | `./data/eval_runs/` — bind-mounted |
 | Golden set | `/app/evals/data/` | `./services/evals/evals/data/` — bind-mounted |
 | Dataset cache | `/app/data/dataset_cache/` | `./.cache/datasets/` — bind-mounted |
-| Calibration | `/app/data/calibration/` | **not mounted** — stays inside the container |
+| Calibration | `/app/data/calibration/` | `./data/calibration/` — bind-mounted |
+| Per-question samples | `/app/data/eval_runs/{run}_samples.json` | alongside the run |
+| Run backups | `/app/data/eval_runs/backup/` | `./data/eval_runs/backup/` |
+| Response cache | `/app/data/eval_cache/` | not mounted — rebuilt on demand |
 
 So run JSON is directly readable from your repository root:
 
@@ -338,17 +398,16 @@ So run JSON is directly readable from your repository root:
 ls data/eval_runs/
 ```
 
-Calibration output is not. To read it, either exec into the container or copy it
-out:
+So is calibration output:
 
 ```bash
-docker compose exec evals ls data/calibration
+ls data/calibration/
 ```
 
 The eval service builds an in-memory index of runs by scanning the runs directory
-at startup. Restarting rebuilds it; deleting a file removes the run permanently.
-There is no backup, and calibration results are lost when the container is
-recreated.
+at startup, skipping the `_samples.json` sidecars. Restarting rebuilds it. Every
+run is also copied to `data/eval_runs/backup/`, so deleting a run file is
+recoverable — deleting both is not.
 
 ---
 

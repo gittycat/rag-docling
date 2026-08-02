@@ -13,6 +13,9 @@ dependencies = [
     "llama-index-llms-anthropic>=0.6.10",
     "anthropic>=0.75.0",
     "datasets>=3.2.0",
+    # Used directly by evals/stats.py for the paired bootstrap — vectorized
+    # resampling keeps a 20-metric comparison well under a second.
+    "numpy>=2.1.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "rich>=14.0.0",
@@ -26,6 +29,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The service is run as a source tree, not an installed package, so `uv run pytest`
+# cannot import `evals`/`api`/`infrastructure` without this. Two test modules
+# worked around it with a sys.path insert; the rest failed at collection.
+pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "eval: dataset-loader/integration tests that hit the network (HuggingFace downloads) or require API keys — skipped by default, use --run-eval",

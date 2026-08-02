@@ -78,8 +78,12 @@ export function computeBracketHealth(detail: EvalRunDetail | null | undefined): 
 		const bracketMetrics = metrics.filter((m) => bracketForGroup(m.group) === bracket);
 		const banded: BandedMetric[] = bracketMetrics
 			.map((metric) => {
-				const band = bandMetric(metric.name, metric.value);
-				return band ? { metric, band, deviation: deviation(metric.name, metric.value) } : null;
+				// An undefined metric (null value) has no band and is dropped here,
+				// rather than being banded as if it had scored zero.
+				const value = metric.value;
+				if (value === null) return null;
+				const band = bandMetric(metric.name, value);
+				return band ? { metric, band, deviation: deviation(metric.name, value) } : null;
 			})
 			.filter((b): b is BandedMetric => b !== null);
 		result[bracket] = {
@@ -129,7 +133,8 @@ export function computeWeakestLink(health: Record<Bracket, BracketHealth>): Weak
 	return {
 		bracket: best.bracket,
 		metricName: best.banded.metric.name,
-		value: best.banded.metric.value,
+		// Non-null: only banded metrics reach here, and banding requires a value
+		value: best.banded.metric.value as number,
 		band: best.banded.band
 	};
 }

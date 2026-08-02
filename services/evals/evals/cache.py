@@ -1,0 +1,129 @@
+"""Content-addressed disk cache for query and judge responses.
+
+Re-running an unchanged configuration otherwise repeats every RAG query and every
+judge call — the expensive parts of an eval — to arrive at the same numbers. This
+caches both, keyed by a hash of everything that determines the answer.
+
+Two caches with different defaults, because their risk profiles differ:
+
+- **Judge** (on by default). The key covers the model and the full prompt, and the
+  judge runs at temperature 0. A hit is the same call with the same inputs.
+- **Query** (off by default, `--cache-queries`). The key covers the server's
+  reported configuration, the tier and the question — but *not the indexed corpus*,
+  which the server does not fingerprint. Re-ingest your documents and a cached
+  answer is stale while looking fresh. Turn it on when iterating on judge prompts
+  or metric code against a fixed corpus, not when the corpus is moving.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CACHE_DIR = Path(os.environ.get("EVAL_CACHE_DIR", "data/eval_cache"))
+
+# Bumped when a change makes previously cached entries wrong (prompt wording,
+# response parsing). Old entries then simply miss instead of being served.
+CACHE_VERSION = "1"
+
+
+@dataclass
+class CacheConfig:
+    """Which response caches are active, and where they live."""
+
+    judge: bool = True
+    query: bool = False
+    dir: Path = field(default_factory=lambda: DEFAULT_CACHE_DIR)
+
+    def __post_init__(self):
+        if isinstance(self.dir, str):
+            self.dir = Path(self.dir)
+
+    @property
+    def enabled(self) -> bool:
+        return self.judge or self.query
+
+
+def _key(namespace: str, parts: list[Any]) -> str:
+    payload = json.dumps([CACHE_VERSION, namespace, *parts], sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+class ResponseCache:
+    """Flat JSON-file cache under `<dir>/<namespace>/<sha256>.json`.
+
+    Never raises: a cache problem must degrade to a cache miss, never fail a run.
+    """
+
+    def __init__(self, base_dir: Path = DEFAULT_CACHE_DIR):
+        self.base_dir = Path(base_dir)
+        self.hits = 0
+        self.misses = 0
+
+    def _path(self, namespace: str, key: str) -> Path:
+        return self.base_dir / namespace / f"{key}.json"
+
+    def get(self, namespace: str, parts: list[Any]) -> Any | None:
+        path = self._path(namespace, _key(namespace, parts))
+        try:
+            if not path.exists():
+                self.misses += 1
+                return None
+            value = json.loads(path.read_text())["value"]
+        except Exception as e:
+            logger.debug(f"[CACHE] Unreadable entry {path}: {e}")
+            self.misses += 1
+            return None
+        self.hits += 1
+        return value
+
+    def set(self, namespace: str, parts: list[Any], value: Any) -> None:
+        path = self._path(namespace, _key(namespace, parts))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Write-then-rename so a crash mid-write cannot leave a truncated entry
+            # that later reads would treat as a valid hit.
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"value": value}, default=str))
+            tmp.replace(path)
+        except Exception as e:
+            logger.debug(f"[CACHE] Could not write {path}: {e}")
+
+    def stats(self) -> dict[str, int]:
+        return {"hits": self.hits, "misses": self.misses}
+
+
+def config_fingerprint(config_snapshot: dict[str, Any]) -> str:
+    """Stable hash of the server configuration a cached query answer depends on."""
+    keys = (
+        "llm_model",
+        "llm_provider",
+        "embedding_model",
+        "reranker_model",
+        "retrieval_top_k",
+        "hybrid_search_enabled",
+        "contextual_retrieval_enabled",
+    )
+    return _key("config", [config_snapshot.get(k) for k in keys])
+
+
+def clear_cache(base_dir: Path = DEFAULT_CACHE_DIR) -> int:
+    """Delete every cached entry. Returns the number of files removed."""
+    base_dir = Path(base_dir)
+    if not base_dir.exists():
+        return 0
+    count = 0
+    for path in base_dir.rglob("*.json"):
+        try:
+            path.unlink()
+            count += 1
+        except OSError as e:
+            logger.warning(f"[CACHE] Could not delete {path}: {e}")
+    return count

@@ -13,7 +13,7 @@ Nothing here is a documentation task. These are changes to the product.
 
 Every actionable entry carries a **Status** line: `Open`, `Partially done`, or
 `✅ Done` with the date and commit. Statuses were last reconciled against the code
-on **2026-08-02** (through commit `e26a4d2`).
+on **2026-08-03** (section 2 implementation pass).
 
 ---
 
@@ -219,7 +219,30 @@ across 10 questions renders identically to one across 1000.
 **Effort.** M for (1) and (2); S for (3) and (4).
 **Where.** `services/evals/evals/cli.py` (`cmd_compare`),
 `services/evals/api/routes.py` (`compare_runs`).
-**Status.** Open.
+**Status.** ✅ Done — 2026-08-03. All four parts.
+
+**✅ FIXED (2026-08-03).** New module `services/evals/evals/stats.py`. All four
+proposals landed: seeded percentile paired bootstrap (B = 10,000) with a two-sided
+p-value, McNemar's **exact** test plus discordant counts for binary metrics
+(exact rather than chi-square because discordant counts at these sample sizes are
+routinely under 25), an `underpowered` flag below 100 paired questions, and
+Benjamini-Hochberg across the metric family with the uncorrected false-positive
+arithmetic printed alongside so the correction is auditable.
+
+The prerequisite was per-question data that could actually be paired.
+`BaseMetric.compute_batch` now records `details.per_question` as a
+`{question_id: score}` map — keyed by id, not a bare list, because a list
+misaligns the moment one question errors in one run only and pairing by position
+would then compare different questions. The three metrics that override
+`compute_batch` populate it too, and the runner adds it for `latency_avg_ms`.
+
+Only questions present in both runs are paired. Metrics with no per-question data
+(aggregate-only metrics, or runs predating the capture) are reported as `skipped`
+rather than given invented statistics. Reached from `compare` (default on,
+`--no-significance` to skip) and `GET /eval/runs/compare` (`significance` field,
+`significance=false` to skip). `numpy` became a direct dependency: a vectorized
+bootstrap keeps a 20-metric comparison well under a second. Covered by
+`services/evals/tests/test_stats.py`.
 
 ### 2.3 The golden dataset cannot measure retrieval
 **What.** The golden loader sets `gold_passages=[]` unconditionally.
@@ -233,7 +256,34 @@ return `None` rather than `1.0` for citation metrics when gold data is absent.
 **Effort.** M.
 **Where.** `services/evals/evals/datasets/golden.py`,
 `services/evals/evals/metrics/citation.py`.
-**Status.** Open.
+**Status.** ✅ Done — 2026-08-03.
+
+**✅ FIXED (2026-08-03).** The loader accepts `gold_passages` in three shapes
+(full dicts, bare passage strings with ids derived from `document`, and the
+document-level `gold_doc_ids` shorthand), plus `context_passages` and
+`is_unanswerable`. `MetricResult.value` became `float | None`, and citation
+metrics return `None` where they used to return `1.0`.
+
+Two things fell out of it that were the same defect wearing a different sign.
+Retrieval metrics returned **`0.0`** without gold passages, so a dataset without
+retrieval annotations looked like a retrieval regression — also `None` now. And
+`abstention_false_positive_rate` scored an unanswerable question `0.0` ("did not
+falsely abstain"), pulling the rate down by however many unanswerable questions
+happened to be in the set; same for the mirrored false-negative case. Both are
+`None`.
+
+`None` is propagated end to end rather than coerced at any boundary: `n/a` in the
+CLI and exports, `null` over the API, a muted `n/a` in the dashboard, and the
+weighted score drops the objective and redistributes its weight instead of
+scoring it zero. Document-level gold needed a matching path of its own in the
+citation metrics — a text-less gold passage can only ever be resolved by doc id,
+and would otherwise have scored a spurious 0. Covered by
+`tests/test_golden_dataset.py` and `tests/test_undefined_metrics.py`.
+
+The shipped `golden_qa.json` is deliberately **not** back-annotated: its
+`document` values are filenames, and gold passages must carry the doc ids the RAG
+server assigns. Guessing would have reintroduced exactly the class of bug this
+fixes.
 
 ### 2.4 Single judge, and the default pairs judge with generator by family
 **What.** One judge model scores every generation metric. No ensemble, no
@@ -247,11 +297,20 @@ local versus cloud generation.
 term, support an ensemble with agreement reporting.
 **Effort.** S for the warning, L for ensembles.
 **Where.** `services/evals/evals/judges/llm_judge.py`, `config.yml`.
-**Status.** Open. Not to be confused with the PII judge gate added in `2131914`
-(2026-08-01): `validate_privacy_posture` rejects a non-local judge provider when
-`pii.enabled` is true, which is a data-egress check, not the self-preference
-warning asked for here. Nothing compares the `active.inference` and `active.eval`
-providers.
+**Status.** Partially done — 2026-08-03. Warning done; ensembles still open.
+
+**✅ WARNING ADDED (2026-08-03).** `check_judge_independence` compares
+`active.inference` and `active.eval` providers; `warn_if_judge_not_independent`
+logs it, the CLI prints it before the run, and it is stored on the run at
+`metadata.judge_independence_warning` — the person reading the scores months
+later is the one who needs to know the judge was not neutral. The run report
+renders it as a caveat block. The shipped defaults (both OpenAI) do trigger it.
+
+Still open: **ensemble judging with inter-rater agreement**. A warning tells you
+the referee may be biased; it does not measure by how much.
+
+Distinct from the PII judge gate in `2131914` (2026-08-01), which is a
+data-egress check on the same two fields.
 
 ### 2.5 Calibration covers half the judge prompts
 **What.** `calibrate` checks faithfulness against adherence labels and context
@@ -261,7 +320,22 @@ never checked against ground truth.
 human on anything.
 **Effort.** M.
 **Where.** `services/evals/evals/calibration.py`.
-**Status.** Open.
+**Status.** ✅ Done — 2026-08-03, with a stated limitation.
+
+**✅ FIXED (2026-08-03).** There is no RAGBench label corresponding to answer
+correctness or answer relevancy, so calibrating them against ground truth is not
+available at any effort. What is available for free is that an item's reference
+response is correct for *its own* question and wrong for a different item's.
+`calibrate` now runs a **discrimination check** on both prompts: each response is
+scored against its own reference/question and against a neighbouring item's, and
+the result reports mean matched score, mean mismatched score, separation, and the
+fraction of pairs the judge ranked correctly.
+
+This is deliberately labelled a floor rather than a calibration, in the CLI output
+and in the docs: accuracy well below 100% means the prompt is unreliable, near
+100% only means it is not broken. Claiming more would be the same kind of
+overstatement the rest of this section exists to remove. Reported as
+`correctness_discrimination` / `relevancy_discrimination` in the saved result.
 
 ### 2.6 The richer exporters are unreachable
 **What.** `export_for_review`, `export_scorecard`, and `export_run_report` are
@@ -272,8 +346,22 @@ blank reviewer columns — a human-review workflow that would directly mitigate 
 already written and unusable.
 **Effort.** S — wire them to CLI flags.
 **Where.** `services/evals/evals/export.py`, `services/evals/evals/cli.py`.
-**Status.** Open — still exported from `evals/__init__.py` and called by nothing.
-(`export.py` was touched by `e26a4d2`, but only for the 2.1 "Disabled" bug.)
+**Status.** ✅ Done — 2026-08-03.
+
+**✅ FIXED (2026-08-03).** `export --format` gained `review-json`, `review-csv`,
+`review-md`, `scorecard-csv`, `scorecard-md` and `report`, all wired to the
+existing library functions.
+
+The S estimate missed a prerequisite: `export_for_review` takes question/response
+objects, and the run JSON holds aggregates only, so there was nothing on disk to
+export. Runs now write a per-question sidecar, `{run}_samples.json`, alongside the
+run file — sidecar rather than inline because run files are read on every
+dashboard request and indexed wholesale at startup, and a few hundred answers with
+their retrieved chunks dwarf the metrics they accompany. `evals/samples.py`
+handles both directions; the job manager's run index skips the sidecars.
+
+Runs completed before the sidecar existed cannot be exported for review, and the
+command says so rather than emitting an empty sheet.
 
 ### 2.7 Weighted-score normalization thresholds are hardcoded
 **What.** Latency and cost are normalized against fixed constants in the runner
@@ -285,7 +373,19 @@ thresholds chosen for a different profile gets a headline number that does not
 reflect its constraints — and cannot change it without editing code.
 **Effort.** S — move to `config.yml`.
 **Where.** `services/evals/evals/config.py`, `services/evals/evals/runner.py`.
-**Status.** Open.
+**Status.** ✅ Done — 2026-08-03.
+
+**✅ FIXED (2026-08-03).** New `eval.scoring` block in `config.yml`: `weights`,
+`latency_threshold_ms_generation`, `latency_threshold_ms_end_to_end` and
+`max_cost_per_query_usd`, validated by `ScoringSettings` (negative or all-zero
+weights are rejected). `ScoringConfig.from_models_config()` reads them, falling
+back to module constants when the config is unavailable, and the runner uses them
+instead of the inline numbers.
+
+The resolved values are recorded in each run's `metadata.scoring`, because these
+settings decide what the headline number *means* — a run compared across a change
+to them is not comparable, and without the record there would be no way to tell
+that had happened.
 
 ### 2.8 Stale artifacts from the previous framework
 **What.** `evals/data/golden_baseline.json` and old run files reference metrics
@@ -293,18 +393,53 @@ reflect its constraints — and cannot change it without editing code.
 **Why it matters.** Anyone browsing `data/` concludes those metrics exist.
 **Effort.** S — delete.
 **Where.** `services/evals/evals/data/`.
-**Status.** Open — `golden_baseline.json` is still there.
+**Status.** ✅ Done — 2026-08-03. `golden_baseline.json` and the
+`evals/data/results/` directory are deleted; nothing referenced either.
 
 ### 2.9 Smaller items
 | Item | Effort | Where | Status |
 |---|---|---|---|
-| No caching of query or judge responses — re-running an identical config repeats all work | M | `runner.py` | Open |
-| `cleanup_on_failure` is declared and never read | S | `config.py` | Open |
-| One active job process-wide; a second request gets a 409 with no queue | M | `api/job_manager.py` | Open |
-| The `qasper` loader is documented as broken with `datasets>=4.0` | M | `datasets/qasper.py` | Open |
-| Eval runs are flat JSON with no backup; deleting a file loses the run permanently | M | `runner.py` | Open |
-| `data/calibration/` is not bind-mounted, so calibration results are lost whenever the container is recreated — unlike `data/eval_runs/`, which is mounted | S | `docker-compose.yml` | Open |
-| `evals/README.md` is stale — says to run from `services/rag_server/`, names Claude Sonnet as the judge default when `active.eval` is an OpenAI model | S | `evals/evals/README.md` | Open |
+| No caching of query or judge responses — re-running an identical config repeats all work | M | `runner.py` | ✅ Done — 2026-08-03 |
+| `cleanup_on_failure` is declared and never read | S | `config.py` | ✅ Done — 2026-08-03 |
+| One active job process-wide; a second request gets a 409 with no queue | M | `api/job_manager.py` | ✅ Done — 2026-08-03 |
+| The `qasper` loader is documented as broken with `datasets>=4.0` | M | `datasets/qasper.py` | ✅ Done — 2026-08-03 (documentation was stale, loader works) |
+| Eval runs are flat JSON with no backup; deleting a file loses the run permanently | M | `runner.py` | ✅ Done — 2026-08-03 |
+| `data/calibration/` is not bind-mounted, so calibration results are lost whenever the container is recreated — unlike `data/eval_runs/`, which is mounted | S | `docker-compose.yml` | ✅ Done — 2026-08-03 |
+| `evals/README.md` is stale — says to run from `services/rag_server/`, names Claude Sonnet as the judge default when `active.eval` is an OpenAI model | S | `evals/evals/README.md` | ✅ Done — 2026-08-03 |
+
+Notes on the less obvious ones:
+
+**Response caching** (`evals/cache.py`) is content-addressed on disk, and the two
+halves ship with different defaults because their risk profiles differ. The judge
+cache is **on**: temperature is 0, so an identical prompt is an identical call. The
+query cache is **off** behind `--cache-queries`, because its key covers the
+server's reported configuration but *not the indexed corpus* — after a re-ingest a
+cached answer is stale while looking fresh. It also self-disables when the server
+did not report its retrieval configuration, since the fingerprint then cannot tell
+two pipelines apart. A cache hit replays the originally measured latency rather
+than the hit time, so latency metrics do not silently become a measurement of the
+cache.
+
+**`cleanup_on_failure`** now does what its name says: on a failed end-to-end run
+with the flag false, ingested documents are left in place and the count is logged,
+because the corpus is the only way to reproduce what the failing queries saw.
+Cleanup on success is unconditional.
+
+**The job queue** is FIFO with depth `EVAL_QUEUE_DEPTH` (default 5). A second
+trigger queues and gets a `queue_position` in the 202 response; only a full queue
+returns `429` (was `409`). `GET /eval/queue` and `DELETE /eval/queue/{job_id}`
+expose it. The queue is in-memory, so a restart loses pending jobs — acceptable
+for jobs that have not started, and the alternative is a persistence layer this
+service deliberately does not have.
+
+**`qasper`** was not broken. It already loaded via the `refs/convert/parquet`
+revision and handled both `qas` shapes; a run against `datasets` 4.5.0 returns
+questions with gold passages. The claim was stale documentation in four places,
+now corrected rather than a code change.
+
+**Run backups** are a copy of each run JSON into `data/eval_runs/backup/` at save
+time. Not a substitute for a database, but it makes an accidental `rm` in the runs
+directory recoverable.
 
 ---
 
@@ -694,13 +829,19 @@ If picking a handful, these give the most value per unit of effort.
 5. ~~**1.1** — starting and cancelling an eval run from the dashboard.~~ ✅ (all of
    section 1 landed in the same pass)
 
+**Done (2026-08-03, evaluation-framework pass):**
+
+6. ~~**2.2** — significance testing in `compare` and the API.~~ ✅ The largest
+   improvement to the quality of conclusions users can draw.
+7. ~~**2.3**, **2.5**, **2.6**, **2.7**, **2.8**, and all of **2.9**.~~ ✅
+   **2.4** is partially done: the same-provider warning landed, ensemble judging
+   did not.
+
 **Still the top of the queue:**
 
-6. **2.2** — bootstrap confidence intervals in `compare`. The largest improvement to
-   the quality of conclusions users can draw. The UI now shows per-metric std dev
-   and per-question distributions (**1.3**, **1.4**), so significance testing is the
-   remaining gap.
-7. **4.8** — the eleven skipped citation-extraction tests. S, and it restores
+8. **4.8** — the eleven skipped citation-extraction tests. S, and it restores
    coverage of what the citation metrics depend on; **4.4** is the same shape.
-8. **3.1** — chunk size and overlap in `config.yml`. S, and it is the one documented
+9. **3.1** — chunk size and overlap in `config.yml`. S, and it is the one documented
    tuning recipe that cannot be run without a rebuild.
+10. **Surface significance in the dashboard.** The API returns it; the analytics UI
+    still shows point deltas only, which is where most users will read a comparison.

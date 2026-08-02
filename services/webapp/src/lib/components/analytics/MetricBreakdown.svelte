@@ -110,11 +110,22 @@
 											{expanded[key] ? '▾' : '▸'} dist
 										</button>
 									{/if}
-									<!-- Shape + color: the band must survive greyscale. -->
-									<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm font-mono tabular-nums text-xs {pillClass(m.name, m.value)}">
-										<HealthBadge health={thresholdBand(m.name, m.value)} showWord={false} />
-										{(m.value * 100).toFixed(1)}%
-									</span>
+									{#if m.value === null}
+										<!-- Undefined for this dataset (e.g. citation metrics with no gold
+										     passages). Showing 0% or 100% here would be a fabricated score. -->
+										<span
+											class="px-1.5 py-0.5 rounded-sm font-mono text-xs text-base-content/40"
+											title={String(m.details?.note ?? 'Not applicable for this dataset')}
+										>
+											n/a
+										</span>
+									{:else}
+										<!-- Shape + color: the band must survive greyscale. -->
+										<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm font-mono tabular-nums text-xs {pillClass(m.name, m.value)}">
+											<HealthBadge health={thresholdBand(m.name, m.value)} showWord={false} />
+											{(m.value * 100).toFixed(1)}%
+										</span>
+									{/if}
 								</span>
 							</div>
 							{#if expanded[key] && scores.length > 0}

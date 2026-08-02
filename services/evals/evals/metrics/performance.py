@@ -279,8 +279,9 @@ class CostPerQuery(BaseMetric):
         costs = []
         total_prompt_tokens = 0
         total_completion_tokens = 0
+        per_question: dict[str, float] = {}
 
-        for r in responses:
+        for q, r in zip(questions, responses):
             if r.metrics and r.metrics.token_usage:
                 usage = r.metrics.token_usage
                 # Calculate cost using instance rates
@@ -289,6 +290,7 @@ class CostPerQuery(BaseMetric):
                     (usage.completion_tokens / 1_000_000) * self._output_cost
                 )
                 costs.append(cost)
+                per_question[q.id] = cost
                 total_prompt_tokens += usage.prompt_tokens
                 total_completion_tokens += usage.completion_tokens
 
@@ -315,5 +317,6 @@ class CostPerQuery(BaseMetric):
                 "total_prompt_tokens": total_prompt_tokens,
                 "total_completion_tokens": total_completion_tokens,
                 "model": self.model,
+                "per_question": per_question,
             },
         )

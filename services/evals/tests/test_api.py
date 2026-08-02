@@ -168,6 +168,93 @@ class TestCompareRoute:
         assert [r["id"] for r in body["runs"]] == ["a", "b"]
         assert body["deltas"]["weighted_score"] == 0.0
 
+    def _client(self, jm, run_a, run_b):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from api import routes
+
+        jm._run_index["a"] = (jm.runs_dir / "a.json", run_a)
+        jm._run_index["b"] = (jm.runs_dir / "b.json", run_b)
+        routes.init_router(jm)
+        app = FastAPI()
+        app.include_router(routes.router)
+        return TestClient(app)
+
+    def _run_with_per_question(self, run_id, scores):
+        return _run_dict(
+            run_id=run_id,
+            scorecard={
+                "metrics": [
+                    {
+                        "name": "faithfulness",
+                        "value": sum(scores.values()) / len(scores),
+                        "group": "generation",
+                        "sample_size": len(scores),
+                        "details": {"per_question": scores},
+                    }
+                ],
+                "by_group": {"generation": ["faithfulness"]},
+            },
+        )
+
+    def test_significance_is_reported_alongside_deltas(self, jm):
+        a = self._run_with_per_question("a", {f"q{i}": 0.4 for i in range(120)})
+        b = self._run_with_per_question("b", {f"q{i}": 0.6 for i in range(120)})
+
+        body = self._client(jm, a, b).get(
+            "/eval/runs/compare", params={"ids": "a,b"}
+        ).json()
+
+        assert len(body["significance"]) == 1
+        report = body["significance"][0]
+        assert report["run_a"] == "a" and report["run_b"] == "b"
+        metric = report["metrics"][0]
+        assert metric["metric"] == "faithfulness"
+        assert metric["n_paired"] == 120
+        assert metric["delta"] == pytest.approx(0.2)
+        assert metric["ci_low"] > 0
+        assert metric["significant"] is True
+        assert metric["underpowered"] is False
+
+    def test_significance_can_be_switched_off(self, jm):
+        a = self._run_with_per_question("a", {f"q{i}": 0.4 for i in range(10)})
+        b = self._run_with_per_question("b", {f"q{i}": 0.6 for i in range(10)})
+
+        body = self._client(jm, a, b).get(
+            "/eval/runs/compare", params={"ids": "a,b", "significance": "false"}
+        ).json()
+
+        assert body["significance"] == []
+
+    def test_runs_without_per_question_data_report_no_significance(self, jm):
+        # Runs saved before per-question capture must not produce invented statistics
+        a = _run_dict(run_id="a")
+        b = _run_dict(run_id="b")
+
+        body = self._client(jm, a, b).get(
+            "/eval/runs/compare", params={"ids": "a,b"}
+        ).json()
+
+        assert body["significance"][0]["metrics"] == []
+        assert "faithfulness" in body["significance"][0]["skipped"]
+
+    def test_undefined_metric_survives_serialization_as_null(self, jm):
+        scorecard = _scorecard()
+        scorecard["metrics"].append(
+            {"name": "citation_recall", "value": None, "group": "citation",
+             "sample_size": 0, "details": {"note": "No gold passages defined"}}
+        )
+        a = _run_dict(run_id="a", scorecard=scorecard)
+        b = _run_dict(run_id="b", scorecard=scorecard)
+
+        body = self._client(jm, a, b).get(
+            "/eval/runs/compare", params={"ids": "a,b"}
+        ).json()
+
+        assert body["runs"][0]["scorecard"]["metrics"][-1]["value"] is None
+        assert body["deltas"]["citation_recall"] is None
+
 
 class TestLegacyRunCompat:
     def test_legacy_run_without_new_fields_still_parses(self, jm):

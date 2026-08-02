@@ -170,9 +170,12 @@ class UnanswerableAccuracy(BaseMetric):
         false_positive = 0  # Incorrectly abstained (should have answered)
         false_negative = 0  # Incorrectly answered (should have abstained)
 
+        per_question: dict[str, float] = {}
+
         for q, r in zip(questions, responses):
             did_abstain = is_abstention(r.answer, self.abstention_phrases)
             should_abstain = q.is_unanswerable
+            per_question[q.id] = 1.0 if did_abstain == should_abstain else 0.0
 
             if should_abstain and did_abstain:
                 true_positive += 1
@@ -198,6 +201,7 @@ class UnanswerableAccuracy(BaseMetric):
                 "false_negative": false_negative,
                 "unanswerable_count": true_positive + false_negative,
                 "answerable_count": true_negative + false_positive,
+                "per_question": per_question,
             },
         )
 
@@ -231,11 +235,13 @@ class FalsePositiveRate(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
-        # Only meaningful for answerable questions
+        # Only meaningful for answerable questions. None, not 0.0 — scoring an
+        # inapplicable question as "did not falsely abstain" pulls the rate down
+        # by however many unanswerable questions happen to be in the set.
         if question.is_unanswerable:
             return MetricResult(
                 name=self.name,
-                value=0.0,  # N/A for unanswerable
+                value=None,
                 group=self.group,
                 sample_size=0,
                 details={"note": "Not applicable for unanswerable questions"},
@@ -282,11 +288,12 @@ class FalseNegativeRate(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
-        # Only meaningful for unanswerable questions
+        # Only meaningful for unanswerable questions — see FalsePositiveRate for
+        # why this is None rather than 0.0.
         if not question.is_unanswerable:
             return MetricResult(
                 name=self.name,
-                value=0.0,  # N/A for answerable
+                value=None,
                 group=self.group,
                 sample_size=0,
                 details={"note": "Not applicable for answerable questions"},

@@ -326,7 +326,8 @@ def _export_scorecard_csv(scorecard: Scorecard, output_path: Path) -> Path:
     rows = [
         {
             "metric_name": m.name,
-            "value": m.value,
+            # Blank, not 0 — an undefined metric is not a measured zero
+            "value": "" if m.value is None else m.value,
             "group": m.group.value,
             "sample_size": m.sample_size,
         }
@@ -355,7 +356,8 @@ def _export_scorecard_markdown(scorecard: Scorecard, output_path: Path) -> Path:
         lines.append("| Metric | Value | Sample Size |")
         lines.append("|--------|-------|-------------|")
         for m in metrics:
-            lines.append(f"| {m.name} | {m.value:.4f} | {m.sample_size} |")
+            value = "n/a" if m.value is None else f"{m.value:.4f}"
+            lines.append(f"| {m.name} | {value} | {m.sample_size} |")
         lines.append("")
 
     # Summary statistics
@@ -401,6 +403,7 @@ def export_run_report(
         f"- **Hybrid Search:** {_toggle_label(run.config.hybrid_search_enabled)}",
         f"- **Contextual Retrieval:** {_toggle_label(run.config.contextual_retrieval_enabled)}",
         f"- **Top-K:** {run.config.retrieval_top_k if run.config.retrieval_top_k is not None else 'Unknown'}",
+        f"- **Judge:** {run.metadata.get('judge_model') or 'Disabled'}",
         "",
         "## Datasets\n",
         ", ".join(run.datasets),
@@ -411,6 +414,13 @@ def export_run_report(
         f"- **Success Rate:** {run.success_rate:.1%}",
         "",
     ]
+
+    judge_warning = run.metadata.get("judge_independence_warning")
+    if judge_warning:
+        lines.extend([
+            "> **Judge caveat:** " + judge_warning,
+            "",
+        ])
 
     if run.weighted_score:
         lines.extend([
@@ -434,7 +444,8 @@ def export_run_report(
             lines.append("| Metric | Value |")
             lines.append("|--------|-------|")
             for m in metrics:
-                lines.append(f"| {m.name} | {m.value:.4f} |")
+                value = "n/a" if m.value is None else f"{m.value:.4f}"
+                lines.append(f"| {m.name} | {value} |")
             lines.append("")
 
     with open(output_path, "w") as f:

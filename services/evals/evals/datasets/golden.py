@@ -1,12 +1,15 @@
 """Golden dataset loader for local curated Q&A pairs."""
 
 import json
+import logging
 import random
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 from evals.datasets.base import BaseDatasetLoader
-from evals.schemas import EvalDataset, EvalQuestion, QueryType, Difficulty
+from evals.schemas import EvalDataset, EvalQuestion, GoldPassage, QueryType, Difficulty
 
 
 class GoldenDatasetLoader(BaseDatasetLoader):
@@ -52,6 +55,51 @@ class GoldenDatasetLoader(BaseDatasetLoader):
             f"Golden dataset not found at {self.GOLDEN_PATH} or {self.GOLDEN_PATH_DOCKER}"
         )
 
+    @staticmethod
+    def _parse_passages(item: dict[str, Any], key: str, fallback_doc: str) -> list[GoldPassage]:
+        """Parse optional passage annotations from one golden_qa.json entry.
+
+        Three accepted shapes, in decreasing fidelity:
+          "gold_passages": [{"doc_id": ..., "chunk_id": ..., "text": ...}, ...]
+          "gold_passages": ["raw passage text", ...]      (ids derived from `document`)
+          "gold_doc_ids":  ["report.pdf", ...]            (doc-level only, no text)
+
+        Doc-level-only entries support retrieval metrics but not the text-overlap
+        path in the citation metrics, which is why the richer form is preferred.
+        """
+        passages: list[GoldPassage] = []
+
+        for idx, raw in enumerate(item.get(key) or []):
+            if isinstance(raw, str):
+                doc_id = fallback_doc
+                passages.append(
+                    GoldPassage(
+                        doc_id=doc_id,
+                        chunk_id=f"{doc_id}:{key}:{idx}",
+                        text=raw,
+                    )
+                )
+                continue
+            doc_id = raw.get("doc_id") or fallback_doc
+            passages.append(
+                GoldPassage(
+                    doc_id=doc_id,
+                    chunk_id=raw.get("chunk_id") or f"{doc_id}:{key}:{idx}",
+                    text=raw.get("text", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                )
+            )
+
+        if key == "gold_passages":
+            for doc_id in item.get("gold_doc_ids") or []:
+                if any(p.doc_id == doc_id for p in passages):
+                    continue
+                passages.append(
+                    GoldPassage(doc_id=doc_id, chunk_id=f"{doc_id}:doc", text="")
+                )
+
+        return passages
+
     def _map_query_type(self, qt: str) -> QueryType:
         """Map golden dataset query types to QueryType enum."""
         mapping = {
@@ -88,22 +136,42 @@ class GoldenDatasetLoader(BaseDatasetLoader):
             data = json.load(f)
 
         questions = []
+        annotated = 0
         for idx, item in enumerate(data):
+            fallback_doc = item.get("document") or f"golden:{idx}"
+            gold_passages = self._parse_passages(item, "gold_passages", fallback_doc)
+            context_passages = self._parse_passages(item, "context_passages", fallback_doc)
+            if gold_passages:
+                annotated += 1
+
             question = EvalQuestion(
                 id=self._create_question_id("golden", idx),
                 question=item["question"],
                 expected_answer=item.get("answer"),
-                gold_passages=[],  # Golden dataset doesn't include gold passages
+                gold_passages=gold_passages,
+                context_passages=context_passages,
                 query_type=self._map_query_type(item.get("query_type", "factual")),
                 difficulty=Difficulty.MEDIUM,
                 domain=item.get("document", "unknown"),
-                is_unanswerable=False,
+                is_unanswerable=item.get("is_unanswerable", False),
                 metadata={
                     "document": item.get("document"),
                     "context_hint": item.get("context_hint"),
                 },
             )
             questions.append(question)
+
+        if annotated < len(questions):
+            # Retrieval and citation metrics now return "undefined" for these rather
+            # than 0.0 / 1.0, so the run stays honest — but the user should know why
+            # those columns are blank.
+            logger.info(
+                "[GOLDEN] %d of %d questions have gold_passages; retrieval and "
+                "citation metrics are undefined for the rest. Add 'gold_passages' "
+                "or 'gold_doc_ids' to golden_qa.json entries to measure them.",
+                annotated,
+                len(questions),
+            )
 
         # Sample if max_samples specified
         if max_samples and len(questions) > max_samples:

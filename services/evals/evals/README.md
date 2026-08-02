@@ -21,7 +21,9 @@ Default K values: recall at 1, 3, 5, 10; precision at 1, 3, 5.
 
 ### Generation
 
-Measures answer quality using an **LLM-as-judge** (Claude Sonnet by default). Requires `ANTHROPIC_API_KEY`. Disabled with `--no-judge`.
+Measures answer quality using an **LLM-as-judge**. The judge model is whatever `active.eval` names in the repo-root `config.yml` (an OpenAI model in the shipped defaults), and needs that provider's API key mounted as a Docker secret. Disabled with `--no-judge`.
+
+The judge should not share a provider with `active.inference`: self-preference bias in LLM judges extends across a model family, so a same-provider pairing inflates that provider's own generations. The runner warns at startup when they match and records the warning on the run.
 
 | Metric | What it measures | Range |
 |---|---|---|
@@ -61,7 +63,10 @@ Operational metrics. Not factored into accuracy scoring.
 
 ### Weighted Scoring
 
-All metric groups (except performance) are combined into a single weighted score using configurable objective weights:
+All metric groups (except performance) are combined into a single weighted score. The weights
+and the latency/cost normalization thresholds live under `eval.scoring` in the repo-root
+`config.yml` — a deployment with a different latency or cost profile changes what the headline
+number rewards there, not in code.
 
 | Objective | Default Weight | Fed by |
 |---|---|---|
@@ -70,7 +75,11 @@ All metric groups (except performance) are combined into a single weighted score
 | `citation` | 0.20 | Citation metrics |
 | `retrieval` | 0.15 | Retrieval metrics |
 | `cost` | 0.10 | Cost per query |
-| `latency` | 0.05 | Latency P50 (inverted: lower is better) |
+| `latency` | 0.05 | Latency P50 (inverted: 0 ms = 1.0, `latency_threshold_ms_*` = 0.0) |
+
+Metrics that are undefined for a dataset — citation metrics with no gold passages, retrieval
+metrics on a question set with no annotations — report `null`, not 0.0 or 1.0, and are excluded
+from the objectives they would otherwise feed.
 
 ## Running Evaluations
 
@@ -82,7 +91,7 @@ All metric groups (except performance) are combined into a single weighted score
 
 ### CLI
 
-Run from `services/rag_server/`:
+Run from `services/evals/`:
 
 ```bash
 # Quick eval (10 samples from RAGBench, no LLM judge)
@@ -110,8 +119,18 @@ python -m evals.cli stats
 # Export a run to CSV
 python -m evals.cli export --run-id abc123 --format csv
 
-# Compare runs (with Pareto analysis)
-python -m evals.cli compare run1 run2 --pareto
+# Export a per-question review sheet with blank reviewer columns
+python -m evals.cli export --run-id abc123 --format review-csv
+python -m evals.cli export --run-id abc123 --format review-md
+
+# Export a full Markdown run report
+python -m evals.cli export --run-id abc123 --format report
+
+# Compare runs — paired bootstrap CIs and McNemar are reported by default
+python -m evals.cli compare baseline candidate
+
+# Add Pareto analysis, or skip significance testing
+python -m evals.cli compare run1 run2 --pareto --no-significance
 
 # Calibrate the LLM judge against RAGBench TRACe ground-truth labels
 python -m evals.cli calibrate --samples 20
@@ -144,7 +163,9 @@ When you run an evaluation, the runner performs these steps:
 
 ```
 1. Health check         GET /health on RAG server
-2. Snapshot config      GET /models/info (captures LLM, embedding, reranker settings)
+2. Snapshot config      GET /models/info (LLM, embedding, reranker) and
+                        GET /metrics/retrieval (top_k, hybrid, contextual). A value
+                        the server does not return is stored as null, never guessed.
 3. Load datasets        Download from HuggingFace (RAGBench, SQuAD, etc.)
 4. Query loop           For each question:
                           POST /query → RAG server does full pipeline
@@ -152,7 +173,9 @@ When you run an evaluation, the runner performs these steps:
                           → measure latency, parse response
 5. Compute metrics      Run all metric classes against question/response pairs
 6. Score                Compute weighted score across objectives
-7. Save                 Write run results as JSON to data/eval_runs/
+7. Save                 Write run results as JSON to data/eval_runs/, a copy to
+                        data/eval_runs/backup/, and the per-question samples to
+                        data/eval_runs/{run}_samples.json (used by the review exports)
 ```
 
 The framework treats the RAG server as a **black box over HTTP**. It never imports server internals. The `RAGClient` class sends questions via `POST /query` and parses the JSON response (answer text, sources, citations, token usage).
@@ -164,11 +187,11 @@ Each dataset targets specific evaluation aspects:
 | Dataset | Aspects | Source | Notes |
 |---|---|---|---|
 | `ragbench` | generation, retrieval | HuggingFace: galileo-ai/ragbench | Multi-domain with TRACe annotations. Default: curated mix (covidqa, finqa, cuad, techqa). Relevance-annotated docs become gold passages; the rest are ingested as distractors |
-| `qasper` | citation, generation | HuggingFace: allenai/qasper | Long-document evidence grounding. Broken with `datasets>=4.0` |
+| `qasper` | citation, generation | HuggingFace: allenai/qasper | Long-document evidence grounding. Loads via the `refs/convert/parquet` revision; verified working on `datasets` 4.5 |
 | `squad_v2` | abstention | HuggingFace: rajpurkar/SQuAD_v2.0 | ~50% unanswerable questions |
 | `hotpotqa` | retrieval, generation | HuggingFace: hotpot_qa | Multi-hop reasoning |
 | `msmarco` | retrieval | HuggingFace: ms_marco | Retrieval ranking |
-| `golden` | generation, retrieval | Local: `evals/data/golden_qa.json` | Curated Q&A pairs for your own documents |
+| `golden` | generation, retrieval | Local: `evals/data/golden_qa.json` | Curated Q&A pairs for your own documents. Add `gold_passages` or `gold_doc_ids` per entry to make retrieval and citation metrics measurable |
 
 ## Directory Structure
 
@@ -181,6 +204,8 @@ evals/
 ├── runner.py                EvaluationRunner + RAGClient (HTTP client to RAG server)
 ├── calibration.py           Judge calibration vs RAGBench TRACe ground-truth labels
 ├── export.py                Export results to JSON/CSV/Markdown for manual review
+├── samples.py               Per-question sample sidecar (save/load)
+├── stats.py                 Paired bootstrap CIs, McNemar, Benjamini-Hochberg
 │
 ├── schemas/
 │   ├── dataset.py           EvalQuestion, GoldPassage, EvalDataset
@@ -259,6 +284,36 @@ Results are saved to `data/eval_runs/{run_id}_{timestamp}.json` with this struct
     "weights": {"accuracy": 0.30, "retrieval": 0.15, "citation": 0.20}
   },
   "question_count": 100,
-  "error_count": 2
+  "error_count": 2,
+  "metadata": {
+    "tier": "end_to_end",
+    "judge_model": "gpt-5.2",
+    "judge_independence_warning": null,
+    "scoring": {"weights": {}, "latency_threshold_ms": 30000, "max_cost_per_query_usd": 0.1}
+  }
 }
 ```
+
+Each metric also carries `details.per_question` — a `{question_id: score}` map. That is what
+makes two runs pairable, and it is what `compare` bootstraps over. A metric that is undefined for
+the dataset has `"value": null` and `"sample_size": 0`.
+
+## Comparing runs
+
+`compare` reports a paired bootstrap confidence interval on every metric both runs scored, over
+the questions they have in common:
+
+```
+Metric                          n      delta                 95% CI         p  verdict
+recall_at_5                   100    +0.0620  [+0.0180, +0.1060]    0.0064  significant
+faithfulness                  100    +0.0100  [-0.0290, +0.0490]    0.6120  not significant
+```
+
+- Binary metrics (recall, abstention accuracy) additionally get McNemar's exact test and the
+  discordant counts, so you see how many questions actually flipped and in which direction.
+- Comparisons below 100 paired questions are flagged `underpowered` — indicative only.
+- Benjamini-Hochberg is applied across the metric family; `significant` means it survived the
+  correction, `nominal (fails BH)` means the interval excluded zero but the correction rejected it.
+  Scanning ~20 metrics uncorrected gives roughly a 64% chance of at least one spurious mover.
+
+The same data is available from the API at `GET /eval/runs/compare?ids=a,b` under `significance`.

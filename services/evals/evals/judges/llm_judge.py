@@ -29,6 +29,44 @@ class JudgeParseError(JudgeError):
     """The LLM response contained no parseable SCORE line."""
 
 
+def check_judge_independence(
+    inference_provider: str, judge_provider: str
+) -> str | None:
+    """Return a warning if the judge shares a provider with the generation model.
+
+    Self-preference bias in LLM judges is documented to extend across a model
+    family, not only to an identical model. A same-provider pairing is therefore
+    not a neutral referee for the comparison users most want to run — local versus
+    cloud generation — and the bias points the wrong way for exactly that test.
+    """
+    if not inference_provider or not judge_provider:
+        return None
+    if inference_provider.lower() != judge_provider.lower():
+        return None
+    return (
+        f"Judge and generation model share provider '{judge_provider}'. "
+        f"LLM judges show self-preference bias across a model family, so scores "
+        f"for this provider's own generations are likely inflated. Point "
+        f"active.eval at a different provider for a neutral comparison."
+    )
+
+
+def warn_if_judge_not_independent() -> str | None:
+    """Emit the same-provider warning for the active config. Never raises."""
+    try:
+        from infrastructure.config.models_config import get_models_config
+
+        config = get_models_config()
+        warning = check_judge_independence(config.llm.provider, config.eval.provider)
+    except Exception as e:
+        logger.debug(f"[JUDGE] Could not check judge independence: {e}")
+        return None
+
+    if warning:
+        logger.warning(f"[JUDGE] {warning}")
+    return warning
+
+
 @dataclass
 class JudgeResult:
     """Result from an LLM judge evaluation.
@@ -55,14 +93,17 @@ class LLMJudge:
     responses for various quality metrics.
     """
 
-    def __init__(self, config: JudgeConfig | None = None):
+    def __init__(self, config: JudgeConfig | None = None, cache: Any | None = None):
         """Initialize the judge.
 
         Args:
             config: Judge configuration. If None, loads from models config.
+            cache: Optional ResponseCache. Judge calls are deterministic at
+                temperature 0, so an identical prompt need not be paid for twice.
         """
         self.config = config or self._load_default_config()
         self._llm: LLM | None = None
+        self._cache = cache
 
     def _load_default_config(self) -> JudgeConfig:
         """Load judge config from models.yml."""
@@ -225,6 +266,18 @@ REASONING: [Your explanation]"""
         would be indistinguishable from a genuine "not grounded at all" verdict
         and would drag every batch average down on transient flakiness.
         """
+        cache_parts = [self.config.provider, self.config.model, self.config.temperature, prompt]
+        if self._cache is not None:
+            cached = self._cache.get("judge", cache_parts)
+            if cached is not None:
+                return JudgeResult(
+                    metric_name=metric_name,
+                    score=cached["score"],
+                    reasoning=cached.get("reasoning", ""),
+                    raw_response=cached.get("raw_response", ""),
+                    metadata={"cached": True},
+                )
+
         last_error: Exception | None = None
 
         for attempt in range(self.config.max_retries):
@@ -233,6 +286,13 @@ REASONING: [Your explanation]"""
                 raw_response = str(response)
 
                 score, reasoning = self._parse_response(raw_response)
+
+                if self._cache is not None:
+                    self._cache.set(
+                        "judge",
+                        cache_parts,
+                        {"score": score, "reasoning": reasoning, "raw_response": raw_response},
+                    )
 
                 return JudgeResult(
                     metric_name=metric_name,

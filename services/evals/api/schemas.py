@@ -23,6 +23,8 @@ class TriggerRunRequest(BaseModel):
 class JobCreatedResponse(BaseModel):
     job_id: str
     status: str = "queued"
+    # 0 = started immediately; N = N jobs ahead of it in the queue
+    queue_position: int = 0
     created_at: datetime
 
 
@@ -38,6 +40,15 @@ class ActiveJobResponse(BaseModel):
     job_id: str
     status: str
     progress: ProgressInfo
+
+
+class QueuedJob(BaseModel):
+    job_id: str
+    position: int
+    created_at: datetime
+    name: str = ""
+    tier: str = ""
+    datasets: list[str] = Field(default_factory=list)
 
 
 class DashboardMetrics(BaseModel):
@@ -68,7 +79,9 @@ class RunSummary(BaseModel):
     weighted_score: float | None = None
     llm_model: str | None = None
     dashboard_metrics: DashboardMetrics | None = None
-    metrics: dict[str, float] = Field(default_factory=dict)
+    # None = the metric was undefined for this run's data (e.g. citation metrics
+    # with no gold passages). Distinct from the key being absent.
+    metrics: dict[str, float | None] = Field(default_factory=dict)
     groups: dict[str, list[str]] = Field(default_factory=dict)
 
 
@@ -96,9 +109,49 @@ class RunDetailResponse(BaseModel):
     dashboard_metrics: DashboardMetrics | None = None
 
 
+class MetricSignificance(BaseModel):
+    """Paired significance result for one metric between two runs."""
+
+    metric: str
+    n_paired: int
+    mean_a: float
+    mean_b: float
+    delta: float
+    ci_low: float
+    ci_high: float
+    p_value: float
+    test: str
+    significant: bool
+    significant_corrected: bool | None = None
+    underpowered: bool = False
+    discordant_b_better: int | None = None
+    discordant_a_better: int | None = None
+
+
+class SignificanceReport(BaseModel):
+    """Significance of run B against run A, plus the family-level context.
+
+    Without this a caller sees only arithmetic deltas and cannot tell a real
+    improvement from noise — a difference across 10 questions and one across 1000
+    otherwise render identically.
+    """
+
+    run_a: str
+    run_b: str
+    alpha: float
+    family_size: int
+    expected_false_positives: float
+    any_spurious_probability: float
+    underpowered_threshold: int
+    metrics: list[MetricSignificance] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+
+
 class CompareRunsResponse(BaseModel):
     runs: list[RunDetailResponse]
     deltas: dict[str, float | None] = Field(default_factory=dict)
+    # One report per non-baseline run, each compared against runs[0]
+    significance: list[SignificanceReport] = Field(default_factory=list)
 
 
 class DatasetInfo(BaseModel):

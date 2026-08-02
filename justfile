@@ -68,7 +68,8 @@ setup:
 # Pre-download the reranker model into .cache/huggingface (bind-mounted)
 [group('setup')]
 init MODEL="cross-encoder/ms-marco-MiniLM-L-6-v2":
-    mkdir -p .cache/huggingface .cache/datasets
+    # Created host-side so the bind mounts are owned by the invoking user, not root
+    mkdir -p .cache/huggingface .cache/datasets data/eval_runs data/calibration
     docker compose run --rm --no-deps --build rag-server \
       .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('{{MODEL}}')"
 
@@ -130,10 +131,15 @@ eval-datasets: up
 eval-calibrate SAMPLES="20": up
     docker compose exec evals .venv/bin/python -m evals.cli calibrate --samples {{SAMPLES}}
 
-# Compare evaluation runs, e.g. `just eval-compare <run_id> <run_id>`
+# Compare runs with paired bootstrap CIs, e.g. `just eval-compare <baseline> <candidate>`
 [group('eval')]
 eval-compare +ARGS: up
     docker compose exec evals .venv/bin/python -m evals.cli compare {{ARGS}}
+
+# Export a run, e.g. `just eval-export abc123 review-csv`
+[group('eval')]
+eval-export RUN_ID FORMAT="report": up
+    docker compose exec evals .venv/bin/python -m evals.cli export --run-id {{RUN_ID}} --format {{FORMAT}}
 
 # ============================================================================
 # Maintenance

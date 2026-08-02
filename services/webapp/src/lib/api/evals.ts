@@ -128,7 +128,9 @@ export interface EvalRunSummary {
 	weighted_score: number | null;
 	llm_model: string | null;
 	dashboard_metrics: EvalDashboardMetrics | null;
-	metrics: Record<string, number>;
+	// null = the metric was undefined for this run's data (e.g. citation metrics
+	// with no gold passages). Never render it as 0.
+	metrics: Record<string, number | null>;
 	groups: Record<string, string[]>;
 }
 
@@ -139,7 +141,8 @@ export interface EvalRunListResponse {
 
 export interface ScorecardMetric {
 	name: string;
-	value: number;
+	/** null when the metric is undefined for the dataset — not a measured zero. */
+	value: number | null;
 	group: string;
 	sample_size?: number;
 	details?: Record<string, unknown>;
@@ -171,6 +174,15 @@ export interface EvalRunMetadata {
 	samples_per_dataset?: number;
 	seed?: number | null;
 	tier?: string;
+	judge_model?: string | null;
+	/** Set when the judge shares a provider with the generation model. */
+	judge_independence_warning?: string | null;
+	scoring?: {
+		weights?: Record<string, number>;
+		latency_threshold_ms?: number;
+		max_cost_per_query_usd?: number;
+	};
+	cache?: { judge: boolean; query: boolean; hits: number; misses: number } | null;
 }
 
 export interface EvalRunDetail {
@@ -190,9 +202,44 @@ export interface EvalRunDetail {
 	dashboard_metrics: EvalDashboardMetrics | null;
 }
 
+export interface MetricSignificance {
+	metric: string;
+	n_paired: number;
+	mean_a: number;
+	mean_b: number;
+	delta: number;
+	ci_low: number;
+	ci_high: number;
+	p_value: number;
+	test: 'paired_bootstrap' | 'mcnemar_exact';
+	/** CI excludes zero, before multiple-comparisons correction. */
+	significant: boolean;
+	/** Survives Benjamini-Hochberg across the metric family. Prefer this. */
+	significant_corrected: boolean | null;
+	/** Below the paired-sample floor — indicative only. */
+	underpowered: boolean;
+	discordant_b_better: number | null;
+	discordant_a_better: number | null;
+}
+
+export interface SignificanceReport {
+	run_a: string;
+	run_b: string;
+	alpha: number;
+	family_size: number;
+	expected_false_positives: number;
+	any_spurious_probability: number;
+	underpowered_threshold: number;
+	metrics: MetricSignificance[];
+	/** Metrics in both runs with no per-question data to pair on. */
+	skipped: string[];
+}
+
 export interface EvalCompareResponse {
 	runs: EvalRunDetail[];
 	deltas: Record<string, number | null>;
+	/** One report per non-baseline run, each compared against runs[0]. */
+	significance: SignificanceReport[];
 }
 
 export interface EvalDatasetInfo {

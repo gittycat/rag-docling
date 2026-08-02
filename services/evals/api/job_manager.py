@@ -8,9 +8,12 @@ fast lookup.
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 import uuid
+from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,11 +23,25 @@ from api.schemas import (
     ActiveJobResponse,
     DashboardMetrics,
     ProgressInfo,
+    QueuedJob,
     RunDetailResponse,
     RunSummary,
 )
 from evals.config import DatasetName, EvalConfig, EvalTier, JudgeConfig
 from evals.runner import EvaluationRunner
+from evals.samples import SAMPLES_SUFFIX
+
+# Evals are serialized because they saturate the RAG server; queueing the rest is
+# what turns a second request from a 409 into a wait.
+DEFAULT_QUEUE_DEPTH = int(os.environ.get("EVAL_QUEUE_DEPTH", "5"))
+
+
+@dataclass
+class _PendingJob:
+    job_id: str
+    config: EvalConfig
+    run_name: str
+    created_at: datetime
 
 
 def _extract_duration(data: dict) -> float | None:
@@ -48,8 +65,9 @@ logger = logging.getLogger(__name__)
 class JobManager:
     """Manages eval job lifecycle: trigger, progress, cancellation, run index."""
 
-    def __init__(self, runs_dir: Path):
+    def __init__(self, runs_dir: Path, max_queue_depth: int = DEFAULT_QUEUE_DEPTH):
         self.runs_dir = runs_dir
+        self.max_queue_depth = max_queue_depth
         self._lock = threading.Lock()
 
         # Active job state
@@ -59,6 +77,9 @@ class JobManager:
         self._active_created_at: datetime | None = None
         self._cancelled = threading.Event()
         self._thread: threading.Thread | None = None
+
+        # Jobs waiting for the active one to finish, FIFO
+        self._queue: deque[_PendingJob] = deque()
 
         # Run index: run_id -> (filepath, summary dict loaded from JSON)
         self._run_index: dict[str, tuple[Path, dict]] = {}
@@ -70,6 +91,9 @@ class JobManager:
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         count = 0
         for filepath in sorted(self.runs_dir.glob("*.json")):
+            # Sidecars sit next to their run and are not runs themselves
+            if filepath.name.endswith(SAMPLES_SUFFIX):
+                continue
             try:
                 data = json.loads(filepath.read_text())
                 run_id = data.get("id", filepath.stem.split("_")[0])
@@ -93,50 +117,81 @@ class JobManager:
         judge_enabled: bool = True,
         rag_server_url: str = "http://rag-server:8001",
     ) -> str:
-        """Start a new eval job. Returns job_id. Raises if one is already running."""
-        # Validate before claiming the slot: a rejected request must not leave the
+        """Start or queue an eval job. Returns job_id.
+
+        Raises RuntimeError only when the queue is full — a second concurrent
+        request waits its turn rather than being rejected outright.
+        """
+        # Validate before claiming a slot: a rejected request must not leave the
         # manager thinking a job is queued, which would block every later trigger.
         dataset_names = [DatasetName(d) for d in (datasets or ["ragbench"])]
         eval_tier = EvalTier(tier)
 
+        job_id = str(uuid.uuid4())[:8]
+        config = EvalConfig(
+            datasets=dataset_names,
+            samples_per_dataset=samples,
+            seed=seed,
+            rag_server_url=rag_server_url,
+            runs_dir=self.runs_dir,
+            tier=eval_tier,
+            judge=JudgeConfig(enabled=judge_enabled),
+        )
+        pending = _PendingJob(
+            job_id=job_id,
+            config=config,
+            run_name=name or f"eval-{job_id}",
+            created_at=datetime.now(),
+        )
+
         with self._lock:
             if self._active_job_id and self._active_status in ("queued", "running"):
-                raise RuntimeError("An eval job is already running")
+                if len(self._queue) >= self.max_queue_depth:
+                    raise RuntimeError(
+                        f"Eval queue is full ({self.max_queue_depth} jobs waiting)"
+                    )
+                self._queue.append(pending)
+                logger.info(f"Queued eval job {job_id} (position {len(self._queue)})")
+                return job_id
 
-            job_id = str(uuid.uuid4())[:8]
-            self._active_job_id = job_id
-            self._active_status = "queued"
-            self._active_progress = {}
-            self._active_created_at = datetime.now()
-            self._cancelled.clear()
-
-        try:
-            config = EvalConfig(
-                datasets=dataset_names,
-                samples_per_dataset=samples,
-                seed=seed,
-                rag_server_url=rag_server_url,
-                runs_dir=self.runs_dir,
-                tier=eval_tier,
-                judge=JudgeConfig(enabled=judge_enabled),
-            )
-
-            run_name = name or f"eval-{job_id}"
-
-            self._thread = threading.Thread(
-                target=self._run_job,
-                args=(job_id, config, run_name),
-                daemon=True,
-            )
-            self._thread.start()
-        except Exception:
-            # Release the slot rather than wedging the service on a job that never ran.
-            with self._lock:
+            try:
+                self._start_locked(pending)
+            except Exception:
+                # Release the slot rather than wedging the service on a job that never ran.
                 self._active_job_id = None
                 self._active_status = "failed"
-            raise
+                raise
 
         return job_id
+
+    def _start_locked(self, pending: _PendingJob) -> None:
+        """Claim the active slot and start the worker thread. Caller holds the lock."""
+        self._active_job_id = pending.job_id
+        self._active_status = "queued"
+        self._active_progress = {}
+        self._active_created_at = pending.created_at
+        self._cancelled.clear()
+
+        self._thread = threading.Thread(
+            target=self._run_job,
+            args=(pending.job_id, pending.config, pending.run_name),
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _start_next_queued(self) -> None:
+        """Promote the head of the queue, if any. Caller must not hold the lock."""
+        with self._lock:
+            while self._queue:
+                pending = self._queue.popleft()
+                try:
+                    self._start_locked(pending)
+                    return
+                except Exception as e:
+                    # A job that cannot even start must not stall the ones behind it
+                    logger.error(f"Queued eval job {pending.job_id} failed to start: {e}")
+                    self._active_job_id = None
+                    self._active_status = "failed"
 
     def _run_job(self, job_id: str, config: EvalConfig, run_name: str) -> None:
         """Background thread target — runs async eval in a new event loop."""
@@ -168,6 +223,7 @@ class JobManager:
                 self._active_progress["error"] = str(e)
         finally:
             asyncio.run(runner.close())
+            self._start_next_queued()
 
     # ── Active job ────────────────────────────────────────────────────────
 
@@ -208,6 +264,30 @@ class JobManager:
             self._cancelled.set()
             self._active_status = "cancelled"
             return True
+
+    def list_queued(self) -> list[QueuedJob]:
+        """Jobs waiting behind the active one, in the order they will run."""
+        with self._lock:
+            return [
+                QueuedJob(
+                    job_id=p.job_id,
+                    position=i + 1,
+                    created_at=p.created_at,
+                    name=p.run_name,
+                    tier=p.config.tier.value,
+                    datasets=[d.value for d in p.config.datasets],
+                )
+                for i, p in enumerate(self._queue)
+            ]
+
+    def cancel_queued(self, job_id: str) -> bool:
+        """Drop a job from the queue before it starts."""
+        with self._lock:
+            for pending in list(self._queue):
+                if pending.job_id == job_id:
+                    self._queue.remove(pending)
+                    return True
+        return False
 
     # ── Run index ─────────────────────────────────────────────────────────
 

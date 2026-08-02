@@ -45,12 +45,15 @@ class RecallAtK(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
+        # Undefined, not zero: a question with no gold passages provides no
+        # evidence that retrieval failed, and averaging 0.0 in makes a dataset
+        # without retrieval annotations look like a retrieval regression.
         if not question.gold_passages:
             return MetricResult(
                 name=self.name,
-                value=0.0,
+                value=None,
                 group=self.group,
-                sample_size=1,
+                sample_size=0,
                 details={"note": "No gold passages defined"},
             )
 
@@ -100,12 +103,15 @@ class PrecisionAtK(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
+        # Undefined, not zero: a question with no gold passages provides no
+        # evidence that retrieval failed, and averaging 0.0 in makes a dataset
+        # without retrieval annotations look like a retrieval regression.
         if not question.gold_passages:
             return MetricResult(
                 name=self.name,
-                value=0.0,
+                value=None,
                 group=self.group,
-                sample_size=1,
+                sample_size=0,
                 details={"note": "No gold passages defined"},
             )
 
@@ -161,12 +167,15 @@ class MRR(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
+        # Undefined, not zero: a question with no gold passages provides no
+        # evidence that retrieval failed, and averaging 0.0 in makes a dataset
+        # without retrieval annotations look like a retrieval regression.
         if not question.gold_passages:
             return MetricResult(
                 name=self.name,
-                value=0.0,
+                value=None,
                 group=self.group,
-                sample_size=1,
+                sample_size=0,
                 details={"note": "No gold passages defined"},
             )
 
@@ -234,12 +243,15 @@ class NDCG(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
+        # Undefined, not zero: a question with no gold passages provides no
+        # evidence that retrieval failed, and averaging 0.0 in makes a dataset
+        # without retrieval annotations look like a retrieval regression.
         if not question.gold_passages:
             return MetricResult(
                 name=self.name,
-                value=0.0,
+                value=None,
                 group=self.group,
-                sample_size=1,
+                sample_size=0,
                 details={"note": "No gold passages defined"},
             )
 

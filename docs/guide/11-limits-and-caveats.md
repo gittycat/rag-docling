@@ -43,24 +43,33 @@ noticeably different things.
 
 This is the most serious category, and it deserves to be first.
 
-### There is no significance testing anywhere
+### Significance testing exists, but it cannot rescue a small sample
 
-The `compare` command reports raw arithmetic differences. The API reports raw
-arithmetic differences. The dashboard reports raw arithmetic differences. **No
-confidence interval, no paired test, no variance accounting exists anywhere in the
-comparison path.**
+`compare` and `GET /eval/runs/compare` report a **paired bootstrap 95% confidence
+interval** on every metric both runs scored, over the questions they have in
+common. Binary metrics additionally get **McNemar's exact test** and the discordant
+counts, so you see how many questions actually flipped and in which direction.
+Benjamini-Hochberg is applied across the metric family, and comparisons below 100
+paired questions are flagged `underpowered`.
 
-The practical consequence: the tooling cannot distinguish a real improvement from
-noise, and it does not indicate which it is showing you. A difference of 0.03
-across 10 questions renders identically to a difference of 0.03 across 1000.
+What that fixes: a difference across 10 questions no longer renders identically to
+one across 1000, and "the biggest mover" is no longer a verdict.
 
-The per-metric standard deviation *is* computed and stored in the run JSON — and
-then omitted from every comparison view. The information exists; nothing surfaces
-it where you would use it.
+What it does not fix, and this is the part that matters:
+
+- **A wide interval is still a wide interval.** Significance testing tells you your
+  10-question comparison is uninformative; it does not make it informative.
+- **Only metrics with per-question scores can be tested.** Runs produced before the
+  framework recorded them, and aggregate-only metrics such as P50 latency, are
+  listed as skipped rather than being given invented statistics.
+- **The judge's own variance is not in the interval.** The bootstrap resamples
+  questions, not judge calls. Re-judging identical answers can move a score; that
+  source of noise is invisible here.
 
 Chapter 6's noise-floor technique — running the same configuration twice and
-observing how much it moves on its own — is a workaround, not a substitute. Use
-it. But know that it is a rough empirical guard, not a statistical guarantee.
+observing how much it moves on its own — remains worth doing. It catches
+run-to-run variance the paired test cannot see, because a paired test compares two
+runs and assumes each is a fixed measurement.
 
 ### Sample sizes are usually too small to conclude anything
 
@@ -73,7 +82,8 @@ converges on 100 or more, and one commonly cited figure puts 250 pairs at roughl
 ±0.04 confidence-interval width on a proportion.
 
 Most tuning changes produce small or moderate effects. **Most comparisons you run
-on a small set will be underpowered, and the tooling will not tell you so.**
+on a small set will be underpowered** — `compare` now says so explicitly, but
+saying so is all it can do.
 
 And the obvious workaround is itself unsound: computing a mean and standard error
 and treating it as a confidence interval **substantially understates true
@@ -87,6 +97,10 @@ Each run reports roughly fifteen to twenty metrics. If you scan them and declare
 the biggest mover the winner, the arithmetic works against you: testing twenty
 metrics at the conventional 5% threshold gives about a **64% chance** that at
 least one moves "significantly" by pure chance.
+
+`compare` applies Benjamini-Hochberg and prints that arithmetic under the table.
+A metric marked `nominal (fails BH)` had an interval excluding zero but did not
+survive the correction — treat it as a lead to re-run, not a result.
 
 More likely than not, a spurious winner is available in every comparison you run.
 The only defence is choosing your primary metric before you look — which is
@@ -119,10 +133,14 @@ The practical implication: **comparisons between models from different families,
 judged by a model from one of them, are not neutral.** Recipe 2 in chapter 7 says
 so explicitly.
 
-**Calibration is partial.** The `calibrate` command checks the judge against
-ground-truth annotations for faithfulness and context relevance. `answer_correctness`
-and `answer_relevancy` are **never checked against ground truth at all.** For
-those two metrics you have no evidence the judge agrees with a human on anything.
+**Calibration is uneven.** `calibrate` checks faithfulness and context relevance
+against RAGBench's ground-truth annotations, reporting RMSE and agreement. No such
+ground truth exists for `answer_correctness` or `answer_relevancy`, so those two
+get a weaker check: a **discrimination test** that scores each response against its
+own reference/question and against a deliberately mismatched one, and reports how
+often the judge ranked the matched pair higher. Accuracy well below 100% means the
+prompt is unreliable. Near 100% only means it is not broken — it is a floor, not
+evidence that the judge's mid-range scores track human judgement.
 
 **The rubric compresses.** Judge prompts describe a 0.0 / 0.5 / 1.0 scale. The
 parser accepts any float and clamps it. Scores cluster around the rubric points,
@@ -154,11 +172,13 @@ thought to write. Real users ask things you did not anticipate, phrased in ways 
 did not consider. A perfect score on questions you wrote is evidence about
 questions you wrote.
 
-**The golden set cannot measure retrieval at all.** The loader never populates
-gold passages, so recall, precision, MRR, and NDCG have nothing to compare
-against. Worse, citation precision and recall are *defined* to return **1.0** when
-no gold passages exist — so a golden-set run displays perfect citation scores that
-mean nothing. This is the single most misleading number the system can show you.
+**The golden set measures retrieval only if you annotate it.** Add `gold_passages`
+(or the doc-level `gold_doc_ids` shorthand) to entries in `golden_qa.json` and
+recall, precision, MRR, NDCG and the citation metrics become measurable. Without
+those annotations the metrics now report **`n/a`**, not a number: citation
+precision and recall used to return 1.0 in that case, so an unannotated golden run
+displayed perfect citation scores that meant nothing. Unannotated entries still
+work fine for the judged generation metrics.
 
 **Retrieval is not measured in the `generation` tier**, because retrieval does not
 run.
@@ -167,9 +187,6 @@ run.
 its default of `retrieved`, every retrieved chunk counts as a citation. Under that
 setting these metrics are re-measuring retrieval with different arithmetic, not
 assessing what the model chose to cite.
-
-**One dataset is documented as broken.** The `qasper` loader is noted in the
-source as failing with recent versions of the `datasets` library.
 
 ---
 
@@ -294,20 +311,12 @@ Improvements that would materially strengthen the conclusions available here. No
 of these exist today; each is recorded as a concrete proposal in
 [`docs/suggestions.md`](../suggestions.md).
 
-- **Paired bootstrap confidence intervals** on per-question score differences,
-  reported alongside the point delta in `compare`.
-- **McNemar's test** for binary metrics like recall@k, surfacing how many
-  questions actually flipped and in which direction.
-- **A minimum sample size** before a comparison claims a metric moved, with
-  underpowered comparisons visibly flagged.
-- **A multiple-comparisons correction**, or at minimum surfacing the false-positive
-  arithmetic next to any "biggest mover" display.
-- **Cross-family judging by default**, or a warning when judge and generation
-  model share a vendor.
-- **Ensemble judging** with agreement reporting.
-- **Gold passages in the golden dataset**, so a custom set can measure retrieval.
+- **Ensemble judging** with inter-rater agreement reporting. Today a single judge
+  scores every generation metric, and nothing measures how much a second one would
+  have disagreed.
 - **Multi-turn evaluation**, so question condensation is exercised.
-- **An accurate config snapshot**, so runs record what actually produced them.
+- **Per-question significance in the dashboard.** The API returns it; the analytics
+  UI still shows point deltas only.
 
 ---
 

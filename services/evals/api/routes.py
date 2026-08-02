@@ -9,10 +9,13 @@ from api.schemas import (
     DashboardResponse,
     DatasetInfo,
     JobCreatedResponse,
+    QueuedJob,
     RunDetailResponse,
     RunListResponse,
+    SignificanceReport,
     TriggerRunRequest,
 )
+from evals.stats import compare_runs as stats_compare_runs
 
 router = APIRouter(prefix="/eval")
 
@@ -48,15 +51,19 @@ def trigger_run(req: TriggerRunRequest):
             judge_enabled=req.judge_enabled,
             rag_server_url=rag_url,
         )
-    except RuntimeError:
-        raise HTTPException(409, "An eval job is already running")
+    except RuntimeError as e:
+        # Only reachable when the queue is full — a busy service queues instead
+        raise HTTPException(429, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
 
+    active = jm.get_active_job()
+    queued = [q for q in jm.list_queued() if q.job_id == job_id]
     return JobCreatedResponse(
         job_id=job_id,
         status="queued",
-        created_at=jm.active_created_at,
+        queue_position=queued[0].position if queued else 0,
+        created_at=(queued[0].created_at if queued else jm.active_created_at),
     )
 
 
@@ -78,6 +85,21 @@ def get_active_job():
 def cancel_active_job():
     if not _jm().cancel_active():
         raise HTTPException(404, "No active job to cancel")
+    return {"status": "cancelled"}
+
+
+# ── GET/DELETE /eval/queue — jobs waiting behind the active one ──────────
+
+
+@router.get("/queue", response_model=list[QueuedJob])
+def list_queue():
+    return _jm().list_queued()
+
+
+@router.delete("/queue/{job_id}")
+def cancel_queued_job(job_id: str):
+    if not _jm().cancel_queued(job_id):
+        raise HTTPException(404, f"Job {job_id} is not queued")
     return {"status": "cancelled"}
 
 
@@ -103,7 +125,12 @@ def list_runs(
 
 
 @router.get("/runs/compare", response_model=CompareRunsResponse)
-def compare_runs(ids: str = Query(..., description="Comma-separated run IDs")):
+def compare_runs(
+    ids: str = Query(..., description="Comma-separated run IDs"),
+    significance: bool = Query(
+        True, description="Include paired bootstrap / McNemar significance testing"
+    ),
+):
     jm = _jm()
     id_list = [i.strip() for i in ids.split(",") if i.strip()]
     if len(id_list) < 2:
@@ -111,10 +138,12 @@ def compare_runs(ids: str = Query(..., description="Comma-separated run IDs")):
 
     details = []
     summaries = []
+    raw_runs = []
     for rid in id_list:
         data = jm.get_run(rid)
         if not data:
             raise HTTPException(404, f"Run {rid} not found")
+        raw_runs.append(data)
         details.append(jm.run_to_detail(data))
         summaries.append(jm.run_to_summary(data))
 
@@ -136,7 +165,15 @@ def compare_runs(ids: str = Query(..., description="Comma-separated run IDs")):
             v2 = metrics2.get(name)
             deltas[name] = round(v2 - v1, 4) if v1 is not None and v2 is not None else None
 
-    return CompareRunsResponse(runs=details, deltas=deltas)
+    # Every non-baseline run is tested against the first one. A raw delta with no
+    # uncertainty attached is the defect this exists to fix, so it ships by default.
+    reports: list[SignificanceReport] = []
+    if significance and len(raw_runs) >= 2:
+        for candidate in raw_runs[1:]:
+            report = stats_compare_runs(raw_runs[0], candidate)
+            reports.append(SignificanceReport(**report.to_dict()))
+
+    return CompareRunsResponse(runs=details, deltas=deltas, significance=reports)
 
 
 @router.get("/runs/{run_id}", response_model=RunDetailResponse)
