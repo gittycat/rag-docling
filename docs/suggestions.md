@@ -11,6 +11,10 @@ that.
 
 Nothing here is a documentation task. These are changes to the product.
 
+Every actionable entry carries a **Status** line: `Open`, `Partially done`, or
+`✅ Done` with the date and commit. Statuses were last reconciled against the code
+on **2026-08-02** (through commit `e26a4d2`).
+
 ---
 
 ## 1. Dashboard and web app
@@ -31,6 +35,7 @@ dropping to a terminal.
 `GET /eval/runs/active`, and a cancel button.
 **Where.** `services/webapp/src/lib/components/analytics/ExperimentsTab.svelte`,
 `services/evals/api/routes.py`.
+**Status.** Open.
 
 ### 1.2 Weighted score is shown without its breakdown
 **What.** The API returns `weighted_score` with `weights`, `contributions`, and
@@ -42,6 +47,7 @@ contributions makes an opinionated aggregate look like a measurement, and gives 
 user no way to see that, say, latency contributed almost nothing.
 **Effort.** S — the data is already in the response.
 **Where.** `services/webapp/src/lib/components/analytics/`.
+**Status.** Open.
 
 ### 1.3 Standard deviation is dropped for most metric groups
 **What.** `MetricResult.details.std_dev` is computed for every metric. The UI
@@ -53,6 +59,7 @@ in three of four groups. Combined with 1.4 and section 2, this is why the tuning
 workflow has to be done by hand.
 **Effort.** S.
 **Where.** `services/webapp/src/lib/components/analytics/MetricBreakdown.svelte`.
+**Status.** Open.
 
 ### 1.4 Per-sample distributions are never surfaced
 **What.** `details.individual_scores` carries per-question scores. Nothing displays
@@ -62,6 +69,7 @@ of 0.7 from half scoring 1.0 and half scoring 0.4 are different systems needing
 different fixes. A distribution view would make that visible immediately.
 **Effort.** M.
 **Where.** As above.
+**Status.** Open.
 
 ### 1.5 Config diff ignores all but two selected runs
 **What.** The comparison UI lets a user select up to four runs; `ConfigDiff` only
@@ -70,6 +78,8 @@ ever compares baseline-A against run-B.
 the user believes they are comparing four runs.
 **Effort.** S to disable the extra selection, M to support n-way diffing.
 **Where.** `services/webapp/src/lib/components/ConfigDiff.svelte`.
+**Status.** Open. (The related snapshot defect **2.1** is fixed, including the
+`diff.ts` half of it, but `ConfigDiff` still compares only two runs.)
 
 > **Note:** config diffing is currently unreliable for a deeper reason — see
 > **2.1**. Fixing the UI without fixing the snapshot produces a confident diff of
@@ -83,6 +93,7 @@ alongside results. The upload-size limit is currently a number the user discover
 by exceeding it.
 **Effort.** S each.
 **Where.** `services/webapp/src/lib/api/`.
+**Status.** Open.
 
 ### 1.7 Chat citations show a filename and nothing else
 **What.** Each source carries `score`, `full_text`, and `path`. The chat UI renders
@@ -92,6 +103,7 @@ from. Users currently have to trust the citation or go and find the document
 themselves — which undercuts the product's central claim.
 **Effort.** M — an expandable source panel with the retrieval score.
 **Where.** `services/webapp/src/routes/chat/`.
+**Status.** Open.
 
 ### 1.8 Settings load failures are invisible
 **What.** A failed settings fetch is caught and passed to `console.error`. No error
@@ -101,6 +113,7 @@ failure in a settings screen leads directly to users believing they changed
 something they did not.
 **Effort.** S.
 **Where.** `services/webapp/src/routes/settings/`.
+**Status.** Open.
 
 ### 1.9 Documents table caps at 15 rows client-side
 **What.** The full document list is fetched and then truncated to 15 rows in the
@@ -110,6 +123,7 @@ fetch cost grows with the corpus while the display does not.
 **Effort.** M for real server-side pagination, S for client-side paging over the
 fetched list.
 **Where.** `services/webapp/src/routes/documents/`.
+**Status.** Open.
 
 ### 1.10 Bulk delete has no partial-failure handling
 **What.** Deleting several documents at once does not report which deletions
@@ -118,6 +132,7 @@ succeeded when some fail.
 after a partial failure.
 **Effort.** S.
 **Where.** `services/webapp/src/routes/documents/`.
+**Status.** Open.
 
 ### 1.11 Upload progress is simulated before task IDs exist
 **What.** Progress is animated with a timer until real task IDs arrive, then
@@ -126,6 +141,7 @@ switches to real polling.
 where an upload is most likely to fail. A stalled upload shows a healthy bar.
 **Effort.** S — an indeterminate state until real progress is available.
 **Where.** `services/webapp/src/routes/upload/`.
+**Status.** Open.
 
 ### 1.12 Status is conveyed by colour alone
 **What.** Outside the `HealthBadge` component, status indicators are coloured dots
@@ -134,12 +150,15 @@ with no text or shape distinction.
 substantial fraction of users.
 **Effort.** S.
 **Where.** `services/webapp/src/lib/components/analytics/`.
+**Status.** Open.
 
 ### 1.13 Dead client code
 **What.** `fetchEvalDatasets` is defined and never called; `clearChatSession` is
 imported and unused.
 **Effort.** S.
 **Where.** `services/webapp/src/lib/`.
+**Status.** Open — both still present (`api/evals.ts:181`, `api.ts:477` imported at
+`routes/chat/+page.svelte:8`).
 
 ---
 
@@ -162,6 +181,7 @@ server-side via `get_inference_config()`.
 **Effort.** S — this is a small change with disproportionate value.
 **Where.** `services/evals/evals/runner.py`,
 `services/rag_server/api/routes/health.py`, `services/rag_server/schemas/health.py`.
+**Status.** ✅ Done — 2026-08-02, commit `e26a4d2`.
 
 **✅ FIXED (2026-08-02).** No `/models/info` change was needed — `GET
 /metrics/retrieval` already returned all three values. `RAGClient.get_retrieval_config()`
@@ -201,6 +221,7 @@ across 10 questions renders identically to one across 1000.
 **Effort.** M for (1) and (2); S for (3) and (4).
 **Where.** `services/evals/evals/cli.py` (`cmd_compare`),
 `services/evals/api/routes.py` (`compare_runs`).
+**Status.** Open.
 
 ### 2.3 The golden dataset cannot measure retrieval
 **What.** The golden loader sets `gold_passages=[]` unconditionally.
@@ -214,6 +235,7 @@ return `None` rather than `1.0` for citation metrics when gold data is absent.
 **Effort.** M.
 **Where.** `services/evals/evals/datasets/golden.py`,
 `services/evals/evals/metrics/citation.py`.
+**Status.** Open.
 
 ### 2.4 Single judge, and the default pairs judge with generator by family
 **What.** One judge model scores every generation metric. No ensemble, no
@@ -227,6 +249,11 @@ local versus cloud generation.
 term, support an ensemble with agreement reporting.
 **Effort.** S for the warning, L for ensembles.
 **Where.** `services/evals/evals/judges/llm_judge.py`, `config.yml`.
+**Status.** Open. Not to be confused with the PII judge gate added in `2131914`
+(2026-08-01): `validate_privacy_posture` rejects a non-local judge provider when
+`pii.enabled` is true, which is a data-egress check, not the self-preference
+warning asked for here. Nothing compares the `active.inference` and `active.eval`
+providers.
 
 ### 2.5 Calibration covers half the judge prompts
 **What.** `calibrate` checks faithfulness against adherence labels and context
@@ -236,6 +263,7 @@ never checked against ground truth.
 human on anything.
 **Effort.** M.
 **Where.** `services/evals/evals/calibration.py`.
+**Status.** Open.
 
 ### 2.6 The richer exporters are unreachable
 **What.** `export_for_review`, `export_scorecard`, and `export_run_report` are
@@ -246,6 +274,8 @@ blank reviewer columns — a human-review workflow that would directly mitigate 
 already written and unusable.
 **Effort.** S — wire them to CLI flags.
 **Where.** `services/evals/evals/export.py`, `services/evals/evals/cli.py`.
+**Status.** Open — still exported from `evals/__init__.py` and called by nothing.
+(`export.py` was touched by `e26a4d2`, but only for the 2.1 "Disabled" bug.)
 
 ### 2.7 Weighted-score normalization thresholds are hardcoded
 **What.** Latency and cost are normalized against fixed constants in the runner
@@ -257,6 +287,7 @@ thresholds chosen for a different profile gets a headline number that does not
 reflect its constraints — and cannot change it without editing code.
 **Effort.** S — move to `config.yml`.
 **Where.** `services/evals/evals/config.py`, `services/evals/evals/runner.py`.
+**Status.** Open.
 
 ### 2.8 Stale artifacts from the previous framework
 **What.** `evals/data/golden_baseline.json` and old run files reference metrics
@@ -264,17 +295,18 @@ reflect its constraints — and cannot change it without editing code.
 **Why it matters.** Anyone browsing `data/` concludes those metrics exist.
 **Effort.** S — delete.
 **Where.** `services/evals/evals/data/`.
+**Status.** Open — `golden_baseline.json` is still there.
 
 ### 2.9 Smaller items
-| Item | Effort | Where |
-|---|---|---|
-| No caching of query or judge responses — re-running an identical config repeats all work | M | `runner.py` |
-| `cleanup_on_failure` is declared and never read | S | `config.py` |
-| One active job process-wide; a second request gets a 409 with no queue | M | `api/job_manager.py` |
-| The `qasper` loader is documented as broken with `datasets>=4.0` | M | `datasets/qasper.py` |
-| Eval runs are flat JSON with no backup; deleting a file loses the run permanently | M | `runner.py` |
-| `data/calibration/` is not bind-mounted, so calibration results are lost whenever the container is recreated — unlike `data/eval_runs/`, which is mounted | S | `docker-compose.yml` |
-| `evals/README.md` is stale — says to run from `services/rag_server/`, names Claude Sonnet as the judge default when `active.eval` is an OpenAI model | S | `evals/README.md` |
+| Item | Effort | Where | Status |
+|---|---|---|---|
+| No caching of query or judge responses — re-running an identical config repeats all work | M | `runner.py` | Open |
+| `cleanup_on_failure` is declared and never read | S | `config.py` | Open |
+| One active job process-wide; a second request gets a 409 with no queue | M | `api/job_manager.py` | Open |
+| The `qasper` loader is documented as broken with `datasets>=4.0` | M | `datasets/qasper.py` | Open |
+| Eval runs are flat JSON with no backup; deleting a file loses the run permanently | M | `runner.py` | Open |
+| `data/calibration/` is not bind-mounted, so calibration results are lost whenever the container is recreated — unlike `data/eval_runs/`, which is mounted | S | `docker-compose.yml` | Open |
+| `evals/README.md` is stale — says to run from `services/rag_server/`, names Claude Sonnet as the judge default when `active.eval` is an OpenAI model | S | `evals/evals/README.md` | Open |
 
 ---
 
@@ -289,6 +321,7 @@ experiment cannot be run by configuration alone — the only recipe in the guide
 that limitation.
 **Effort.** S — add a `chunking` section to `config.yml`.
 **Where.** `services/rag_server/core/config.py`.
+**Status.** Open — still hardcoded at `core/config.py:105`.
 
 ### 3.2 ★ Three provider API keys have no supported path
 **What.** The settings classes read `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, and
@@ -300,6 +333,7 @@ without hand-editing compose.
 **Fix.** Declare the secrets in `docker-compose.yml`, or remove the model entries.
 **Effort.** S.
 **Where.** `docker-compose.yml`, `config.yml`.
+**Status.** ✅ Done — 2026-08-02, commit `e26a4d2`.
 
 **✅ FIXED (2026-08-02).** Removed, per the owner's call that none of the three are
 in use. Gone from both `Settings` classes, the `LLMProvider` enum, the key
@@ -327,6 +361,8 @@ experiment "tuning" one of these measures nothing while appearing to work.
 configured value — actively telling the user a number that is not in use.
 **Effort.** S each — either wire them up or remove them. `reranker.top_n` should be
 wired up; the rest are probably removals.
+**Status.** ✅ Done — 2026-08-02, commit `e26a4d2` (all six keys resolved: two wired
+up, four removed).
 
 **✅ FIXED (2026-08-02).** `reranker.top_n` and `eval.abstention_phrases` wired up;
 the other four removed from `config.yml` and their schema models, with a pointer
@@ -363,6 +399,8 @@ tuning axis — corpora heavy in identifiers benefit from favouring BM25 — and
 unavailable.
 **Effort.** S.
 **Where.** `services/rag_server/infrastructure/search/hybrid_retriever.py`.
+**Status.** Open — the constructor still defaults both weights to `1.0` and no
+caller passes them.
 
 ### 3.5 Task worker constants are hardcoded
 **What.** Poll interval, max attempts, a one-hour stuck-task timeout, retry delays,
@@ -373,6 +411,7 @@ determines how long a crashed job blocks reprocessing, and a silently-capped env
 is a confusing failure.
 **Effort.** S.
 **Where.** `services/rag_server/infrastructure/tasks/task_worker.py`.
+**Status.** Open.
 
 ### 3.6 Multiple drifting model-cost tables
 **What.** Hardcoded per-model pricing exists in at least
@@ -381,12 +420,17 @@ differing values. Neither is sourced from configuration or a pricing feed.
 **Why it matters.** Reported cost differs depending on which service you ask, and
 both drift from real prices as vendors change them.
 **Effort.** M — single source, ideally in `config.yml`.
+**Status.** Open. `e26a4d2` pruned the removed providers from all three cost tables,
+so they agree on fewer models, but the tables are still duplicated and hardcoded.
 
 ### 3.7 Config inspection is incomplete and partly misleading
 **What.** `just show-config-full` prints the configured reranker `top_n`, which is
 not the value used. Neither banner prints the `database` or `chat_memory` sections.
 **Effort.** S.
 **Where.** `services/rag_server/infrastructure/config/display.py`.
+**Status.** Partially done — the misleading half closed 2026-08-02 (`e26a4d2`): both
+banners now print the effective reranker `top_n` via `effective_reranker_top_n()`.
+Still open: neither banner prints the `database` or `chat_memory` sections.
 
 ---
 
@@ -402,6 +446,8 @@ compliance problem for anyone relying on deletion.
 **Effort.** S.
 **Where.** `services/rag_server/infrastructure/database/documents.py`,
 `services/rag_server/infrastructure/search/vector_store.py`.
+**Status.** ✅ Done — 2026-08-02, commit `e26a4d2`. Pre-existing orphans still need
+a manual `just reconcile-vectors-apply`.
 
 **✅ FIXED (2026-08-02).** Vectors are keyed on the `document_id` metadata field
 written at `pipelines/ingestion.py:459` — which is also exactly what llama-index's
@@ -431,6 +477,8 @@ longer exists.
 than no job — it either fails constantly and gets ignored, or passes vacuously.
 **Effort.** S.
 **Where.** `.forgejo/workflows/ci.yml`, `Makefile`.
+**Status.** ✅ Done — 2026-08-02, commit `e26a4d2`. Both CI jobs are green, at the
+cost of the deselections recorded in **4.8** and the 4.4 note.
 
 **✅ FIXED (2026-08-02).** The `Makefile` was deleted rather than repaired — the
 `justfile` already covered every target (the only difference: `make docker-logs`
@@ -456,6 +504,7 @@ contextual prefix should be stored there or the column and its read path should 
 **Effort.** S.
 **Where.** `services/rag_server/pipelines/ingestion.py`,
 `services/rag_server/infrastructure/search/bm25_retriever.py`.
+**Status.** Open.
 
 ### 4.4 Two BM25 implementations, and the test covers the wrong one
 **What.** The live retriever uses `to_bm25query` with the `<@>` operator. A second
@@ -468,6 +517,9 @@ be misled by both the test and the dead function.
 **Effort.** S — delete the unused function and correct the test.
 **Where.** `services/rag_server/infrastructure/database/documents.py`,
 `services/rag_server/tests/test_bm25_query_safety.py`.
+**Status.** Open — the failing test was skipped on 2026-08-02 (`e26a4d2`) so CI is
+honest; the dead function and the wrong assertion are untouched. See the note at
+the end of this section.
 
 ### 4.5 BM25 failures degrade silently
 **What.** The retriever catches all exceptions, logs a warning, and returns an empty
@@ -480,11 +532,13 @@ help?" would conclude it does not.
 visible without reading logs.
 **Effort.** S.
 **Where.** `services/rag_server/infrastructure/search/bm25_retriever.py`.
+**Status.** Open.
 
 ### 4.6 The startup banner names the wrong technologies
 **What.** `services/rag_server/main.py` logs "pg_search BM25 + pgvector". The actual
 stack is `pg_textsearch` and ChromaDB; `pgvector` is a listed but unused dependency.
 **Effort.** S.
+**Status.** Open — `main.py:138` still logs "pg_search BM25 + pgvector".
 
 ### 4.7 Documentation and code disagree on whether contextual enrichment is masked
 **What.** The repository contradicts itself. The `config.yml` comment and the
@@ -501,6 +555,8 @@ whether to enable contextual retrieval with a cloud provider is reading the comm
 **Where.** `config.yml`,
 `services/rag_server/infrastructure/config/models_config.py`,
 `services/rag_server/pipelines/ingestion.py`.
+**Status.** Open — both wrong statements survive (`config.yml:299`,
+`models_config.py:429-431`).
 
 ### 4.8 ★ Eleven eval tests import rag-server internals and fail everywhere
 **What.** `services/evals/tests/test_rag_eval.py` — `TestCitationExtraction` (8
@@ -517,6 +573,8 @@ green, but the coverage is simply absent.
 **Fix.** They test rag-server code, so move them to `services/rag_server/tests/`.
 **Effort.** S.
 **Where.** `services/evals/tests/test_rag_eval.py`.
+**Status.** Open — recorded and skipped on 2026-08-02 (`e26a4d2`); the eleven tests
+have still not been moved and still do not run.
 
 ### 4.9 Importing the task worker performs live network I/O
 **What.** Importing `services/rag_server/infrastructure/tasks/task_worker.py`
@@ -533,6 +591,9 @@ untouched.
 **Effort.** S.
 **Where.** `services/rag_server/infrastructure/tasks/task_worker.py`,
 `services/rag_server/core/config.py`.
+**Status.** Partially done — worked around at the test level on 2026-08-02
+(`e26a4d2`, `tests/conftest.py`). The import-time network call itself is unchanged,
+so the fix (make the check lazy) is still open.
 
 ### 4.10 `ConfigSnapshot` in the rag-server schemas is dead code
 **What.** `services/rag_server/schemas/metrics.py:159` defines a 15-field pydantic
@@ -544,6 +605,9 @@ anything, so a reader fixing snapshot behaviour may edit the wrong type. It is a
 a better shape than the one in use — worth harvesting rather than only deleting.
 **Effort.** S.
 **Where.** `services/rag_server/schemas/metrics.py`.
+**Status.** Open — still defined at `schemas/metrics.py:159`, still unconstructed.
+The 2.1 fix harvested part of its shape (`rrf_k`, reranker `top_n`) into the evals
+snapshot's `additional` field but did not delete or adopt this model.
 
 > **Note on 4.4.** `test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries`
 > was failing on an unmodified tree (confirmed against a clean worktree at `HEAD`) —
@@ -566,6 +630,9 @@ plausible transcription of any figure in that post — those are 35%, 49%, 67%, 
 90%, and all concern contextual retrieval rather than hybrid search.
 **Action.** Cite a real source or remove the number. It should not be repeated as
 fact.
+**Status.** Partially done — gone from `OVERVIEW.md` as of the 2026-08-01 docs
+rewrite (`352fb07`), but it survives verbatim in `docs/ROADMAP.md:45`
+("~48% retrieval improvement over single-method").
 
 ### 5.2 "~49% fewer retrieval failures" — **substantiated, was uncredited**
 **Where.** `OVERVIEW.md`, attributed to contextual retrieval.
@@ -579,6 +646,8 @@ reranking by default, the shipped configuration corresponds to the 67% row.
 **Action.** Cite
 <https://www.anthropic.com/engineering/contextual-retrieval>. Done in `OVERVIEW.md`;
 retained here for the record.
+**Status.** ✅ Done — 2026-08-01, commit `352fb07` (`OVERVIEW.md:30`, with both
+precisions stated). `docs/ROADMAP.md:49` still carries the bare figure uncredited.
 
 ### 5.3 "Contextual retrieval takes ~85% of processing time" — **unverified**
 **Where.** `CLAUDE.md`, Common Issues.
@@ -587,38 +656,48 @@ benchmark ran with contextual retrieval disabled. The claim is architecturally
 plausible — one LLM call per chunk — but plausibility is not measurement.
 **Action.** Measure it (the per-stage timing log lines already exist) or soften to a
 qualitative statement.
+**Status.** Partially done — `CLAUDE.md` now says contextual retrieval's per-chunk
+LLM calls "dominate ingestion time (unmeasured)" and points here, so the fabricated
+85% is gone. The measurement has not been taken.
 
 ### 5.4 `docs/BENCHMARKS.md` — **substantiated, and narrow**
 **Finding.** A real run on a 3-file, 6-chunk corpus, honest about its own limits. It
 tested neither hybrid nor contextual retrieval and reported no measurable difference
 at that corpus size. It cannot support any claim about either feature.
+**Status.** No action required — informational.
 
 ---
 
 ## 6. Operations
 
-| Item | Why it matters | Effort |
-|---|---|---|
-| **No backups for any volume.** Postgres data, ChromaDB vectors, eval runs, and the Forgejo CI history are all unbacked-up named volumes. | Total data loss on volume removal. `docker compose down -v` is one flag away from destroying everything. | M |
-| **No resource limits on any container** in any compose file. | One runaway service can starve the host. | S |
-| **No request or correlation IDs** anywhere in logging. | Tracing a single request across webapp → rag-server → task-worker is impossible; debugging relies on timestamp correlation. | M |
-| **`EMBEDDING_MODEL` is never set** by any compose file, so `/models/info` always reports `unknown`. | The API misreports the active embedding model, and any consumer relying on it — including run records — gets nothing. | S |
-| **`RAG_SERVER_AUTH_TOKEN` (non-file variant)** is read as a fallback and set by no compose file. | Dead code path. | S |
+| Item | Why it matters | Effort | Status |
+|---|---|---|---|
+| **No backups for any volume.** Postgres data, ChromaDB vectors, eval runs, and the Forgejo CI history are all unbacked-up named volumes. | Total data loss on volume removal. `docker compose down -v` is one flag away from destroying everything. | M | Open |
+| **No resource limits on any container** in any compose file. | One runaway service can starve the host. | S | Open |
+| **No request or correlation IDs** anywhere in logging. | Tracing a single request across webapp → rag-server → task-worker is impossible; debugging relies on timestamp correlation. | M | Open |
+| **`EMBEDDING_MODEL` is never set** by any compose file, so `/models/info` always reports `unknown`. | The API misreports the active embedding model, and any consumer relying on it — including run records — gets nothing. | S | Open |
+| **`RAG_SERVER_AUTH_TOKEN` (non-file variant)** is read as a fallback and set by no compose file. | Dead code path. | S | Open |
 
 ---
 
 ## Suggested priority
 
-If picking a handful, these give the most value per unit of effort:
+If picking a handful, these give the most value per unit of effort.
 
-1. **2.1** — the fabricated config snapshot. Small fix, and it is currently
-   undermining the product's core workflow.
-2. **4.1** — deleted documents leaving retrievable vectors. Small fix, serious
-   implications.
-3. **3.2** — provider keys with no supported path. Small fix, removes a guaranteed
-   first-run failure.
-4. **4.2** — the broken CI eval job. Small fix, restores a safety net.
+**Done (2026-08-02, commit `e26a4d2`):**
+
+1. ~~**2.1** — the fabricated config snapshot.~~ ✅
+2. ~~**4.1** — deleted documents leaving retrievable vectors.~~ ✅
+3. ~~**3.2** — provider keys with no supported path.~~ ✅
+4. ~~**4.2** — the broken CI eval job.~~ ✅ (also **3.3**, which was not on this list)
+
+**Still the top of the queue:**
+
 5. **1.1** — starting an eval run from the dashboard. The largest reachable gap
    between capability and usability.
 6. **2.2** — bootstrap confidence intervals in `compare`. The largest improvement to
    the quality of conclusions users can draw.
+7. **4.8** — the eleven skipped citation-extraction tests. S, and it restores
+   coverage of what the citation metrics depend on; **4.4** is the same shape.
+8. **3.1** — chunk size and overlap in `config.yml`. S, and it is the one documented
+   tuning recipe that cannot be run without a rebuild.
