@@ -106,16 +106,29 @@ class ScoringConfig:
 
 
 # Cost lookup table (USD per 1M tokens)
+# Lookup is exact-match on the full model id (then "provider/*" wildcards), and
+# an unmatched model silently costs $0 — every model reachable from config.yml
+# must have an entry here or the cost objective scores it as free.
 MODEL_COSTS = {
     # Anthropic
+    "claude-opus-5": {"input": 5.00, "output": 25.00},
+    "claude-opus-4-5-20251101": {"input": 5.00, "output": 25.00},
+    "claude-sonnet-5": {"input": 3.00, "output": 15.00},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+    # Retired 2026-06-15 (returns 404) but still referenced by config.yml's
+    # eval tier — priced so a run against it is not scored as free.
     "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
     "claude-haiku-3-5-20241022": {"input": 0.80, "output": 4.00},
     # OpenAI
     "gpt-4o": {"input": 2.50, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "gpt-5-mini": {"input": 0.15, "output": 0.60},   # placeholder, matches gpt-4o-mini tier
-    "gpt-5.2": {"input": 2.50, "output": 10.00},
+    "gpt-5-mini": {"input": 0.25, "output": 2.00},
+    "gpt-5-nano": {"input": 0.05, "output": 0.40},
+    "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
+    "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
+    "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
+    "gpt-5.2": {"input": 1.75, "output": 14.00},
     "gpt-4-turbo": {"input": 10.00, "output": 30.00},
     # Google, DeepSeek, and Moonshot providers are not currently supported
     # (no Docker secret declared) — see rag_server/infrastructure/llm/config.py.

@@ -15,32 +15,61 @@ models:
       timeout: 120
       keep_alive: 10m  # Ollama-only: keep model in memory (10m, -1=forever, 0=unload immediately)
 
-    llama3-8b:
+    # Replaces llama3:8b — that model's 8K context could not hold top_k=10 chunks
+    # plus chat history. Granite 4.1 is Apache-2.0, 128K context, same 8B size,
+    # and IBM tunes it for RAG/tool-calling.
+    granite4-8b:
       provider: ollama
-      model: llama3:8b
+      model: granite4.1:8b
+      base_url: http://host.docker.internal:11434
+      timeout: 120
+      keep_alive: 10m
+
+    # Smaller/newer alternative to gemma3:4b — 256K context, ~3.4GB.
+    qwen35-4b:
+      provider: ollama
+      model: qwen3.5:4b
       base_url: http://host.docker.internal:11434
       timeout: 120
       keep_alive: 10m
 
     # OpenAI
+    # Cheapest current-generation model that still follows the grounding and
+    # citation instructions in `prompts.context` ($0.20/$1.20 per 1M tokens).
+    # gpt-5-nano ($0.05/$0.40) is cheaper but drops citations under load.
+    gpt56-luna:
+      provider: openai
+      model: gpt-5.6-luna
+      base_url: https://api.openai.com/v1
+      timeout: 120
+      requires_api_key: true
+
     gpt5-mini:
       provider: openai
-      model: gpt-5-mini # good quality, much cheaper; great for most production RAG where retrieval is solid
+      model: gpt-5-mini
       base_url: https://api.openai.com/v1
       timeout: 120
       requires_api_key: true
 
     # Anthropic models (cloud API)
+    # Cheapest Anthropic model ($1/$5 per 1M tokens). 
+    claude-haiku:
+      provider: anthropic
+      model: claude-haiku-4-5
+      base_url: https://api.anthropic.com
+      timeout: 120
+      requires_api_key: true
+
     claude-sonnet:
       provider: anthropic
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-5
       base_url: https://api.anthropic.com
       timeout: 120
       requires_api_key: true
 
     claude-opus:
       provider: anthropic
-      model: claude-opus-4-6
+      model: claude-opus-5
       base_url: https://api.anthropic.com
       timeout: 120
       requires_api_key: true
@@ -72,9 +101,26 @@ models:
 
   embedding:
     # Ollama embeddings (local)
+    # NOTE: Switching the active embedding model invalidates every stored vector —
+    # the ChromaDB collection must be dropped and all documents re-ingested.
     nomic-embed:
       provider: ollama
       model: nomic-embed-text:latest
+      base_url: http://host.docker.internal:11434
+      embed_batch_size: 64
+
+    # Newer local alternatives, both smaller or comparable to nomic-embed-text
+    # and better on MTEB retrieval. qwen3-embedding:0.6b is the strongest
+    # sub-1GB option; embeddinggemma is 300M for CPU-bound hosts.
+    qwen3-embed-06b:
+      provider: ollama
+      model: qwen3-embedding:0.6b
+      base_url: http://host.docker.internal:11434
+      embed_batch_size: 64
+
+    embeddinggemma:
+      provider: ollama
+      model: embeddinggemma:300m
       base_url: http://host.docker.internal:11434
       embed_batch_size: 64
 
