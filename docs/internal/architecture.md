@@ -147,19 +147,18 @@ LLM providers, selected per role (`llm`, `embedding`, `eval`) in `config.yml`:
 Ollama (default, local), OpenAI, Anthropic, Google Gemini, DeepSeek, Moonshot, and
 vLLM (OpenAI-compatible, self-hosted).
 
-## The misleading startup log line
+## Startup log line
 
 `services/rag_server/main.py` logs, on every startup:
 
 ```
-[STARTUP] Hybrid search enabled (pg_search BM25 + pgvector)
+[STARTUP] Hybrid search enabled (pg_textsearch BM25 + ChromaDB vectors)
 ```
 
-This is wrong on both counts. There is no `pg_search` extension in use — full-text
-search runs through the Timescale `pg_textsearch` extension against a Postgres
-`tsvector` index. There is no `pgvector` column or index doing the vector search
-either — vectors live entirely in ChromaDB, via the `ChromaVectorStore` integration
-described above. The actual stack is **`pg_textsearch` (BM25) + ChromaDB
-(vectors)**, fused with RRF. The log line appears to be a leftover from an earlier
-design and has not been corrected in code. Do not trust it as documentation of the
-retrieval stack — this document is the source of truth instead.
+It used to read "pg_search BM25 + pgvector", which was wrong on both counts:
+there is no `pg_search` extension (full-text search runs through the Timescale
+`pg_textsearch` extension) and no `pgvector` column or index (vectors live
+entirely in ChromaDB via the `ChromaVectorStore` integration described above).
+Corrected per `docs/suggestions.md` #4.6; `/metrics/retrieval` carried the same
+wrong `vector_store` value and now reports `ChromaDB` with the collection name
+from `config.yml`.

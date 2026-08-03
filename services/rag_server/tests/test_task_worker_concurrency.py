@@ -1,38 +1,25 @@
 import asyncio
-import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# task_worker.py calls initialize_settings() at import time (before conftest's
-# autouse fixture runs, since imports happen at collection time). Provide fake
-# secrets and make the ChromaDB dimension guard fail soft just for the import.
-from pydantic import SecretStr
-from app import settings as app_settings
 
+def test_importing_task_worker_has_no_side_effects():
+    """Importing the worker must not touch the network, ChromaDB or Settings.
 
-class _FakeSettings:
-    OPENAI_API_KEY = SecretStr("test-openai-key")
-    ANTHROPIC_API_KEY = SecretStr("test-anthropic-key")
-    RAG_SERVER_DB_USER = SecretStr("raguser")
-    RAG_SERVER_DB_PASSWORD = SecretStr("ragpass")
+    Regression guard for docs/suggestions.md #4.9: initialize_settings() used to
+    run at module scope, which took down the whole pytest collection wherever
+    Ollama was not running.
+    """
+    with patch("core.config.initialize_settings") as init_llama, \
+         patch("app.settings.init_settings") as init_secrets:
+        sys.modules.pop("infrastructure.tasks.task_worker", None)
+        import infrastructure.tasks.task_worker  # noqa: F401
 
-
-app_settings.SETTINGS = _FakeSettings()
-
-# initialize_settings() also calls check_ollama_reachable(), which does a real
-# httpx.get() against the configured base_url and sys.exit(1)s if it fails —
-# there is no live Ollama in CI/unit-test environments, so this must be
-# no-op'd for the duration of the import too.
-_ollama_patch = patch("core.config.check_ollama_reachable")
-_chroma_patch = patch("infrastructure.search.vector_store.get_chroma_client", side_effect=ValueError("no chromadb in tests"))
-_ollama_patch.start()
-_chroma_patch.start()
-import infrastructure.tasks.task_worker  # noqa: E402  (trigger side-effecting import while patched)
-_chroma_patch.stop()
-_ollama_patch.stop()
+    init_llama.assert_not_called()
+    init_secrets.assert_not_called()
 
 
 def test_default_worker_concurrency_is_two(monkeypatch):

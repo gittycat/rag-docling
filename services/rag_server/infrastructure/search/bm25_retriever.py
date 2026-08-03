@@ -1,6 +1,7 @@
 """BM25 retriever using pg_textsearch (Timescale) for PostgreSQL full-text search."""
 
 import logging
+import time
 from typing import Any
 
 from llama_index.core.retrievers import BaseRetriever
@@ -11,6 +12,69 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from infrastructure.database.postgres import get_session
 
 logger = logging.getLogger(__name__)
+
+# BM25 failures are non-fatal — a broken extension or index silently downgrades
+# every hybrid query to vector-only. Track the outcome of the last search so
+# /metrics/system can surface the degradation instead of it living in the logs.
+_last_error: str | None = None
+_last_error_at: float | None = None
+_last_success_at: float | None = None
+_failure_count: int = 0
+
+
+def _record_success() -> None:
+    global _last_success_at, _last_error, _last_error_at, _failure_count
+    _last_success_at = time.time()
+    _last_error = None
+    _last_error_at = None
+    _failure_count = 0
+
+
+def _record_failure(error: Exception) -> None:
+    global _last_error, _last_error_at, _failure_count
+    _last_error = f"{type(error).__name__}: {error}"
+    _last_error_at = time.time()
+    _failure_count += 1
+
+
+def get_bm25_health() -> dict[str, Any]:
+    """Outcome of the most recent BM25 search, for health reporting.
+
+    status is "unknown" until a search has run in this process.
+    """
+    if _last_error is not None:
+        status = "unhealthy"
+    elif _last_success_at is not None:
+        status = "healthy"
+    else:
+        status = "unknown"
+
+    return {
+        "status": status,
+        "last_error": _last_error,
+        "last_error_at": _last_error_at,
+        "last_success_at": _last_success_at,
+        "consecutive_failures": _failure_count,
+    }
+
+
+async def probe_bm25(session: AsyncSession) -> dict[str, Any]:
+    """Actively verify the pg_textsearch extension and BM25 index are usable.
+
+    Runs the same operator/index pair the retriever uses, so a missing extension,
+    a dropped index or a permissions problem shows up here rather than as silently
+    empty hybrid results.
+    """
+    sql = text(
+        "SELECT 1 FROM document_chunks "
+        "WHERE content <@> to_bm25query(:query, 'idx_chunks_bm25') < 0 LIMIT 1"
+    )
+    try:
+        await session.execute(sql, {"query": "bm25 health probe"})
+    except Exception as e:
+        logger.error(f"[BM25] Health probe failed — hybrid search is degraded to vector-only: {e}")
+        return {"status": "unavailable", "error": f"{type(e).__name__}: {e}"}
+    return {"status": "healthy", "error": None}
 
 
 class PgSearchBM25Retriever(BaseRetriever):
@@ -60,7 +124,6 @@ class PgSearchBM25Retriever(BaseRetriever):
                 dc.document_id,
                 dc.chunk_index,
                 dc.content,
-                dc.content_with_context,
                 dc.metadata,
                 dc.created_at,
                 d.file_name,
@@ -83,8 +146,16 @@ class PgSearchBM25Retriever(BaseRetriever):
             )
             rows = result.fetchall()
         except Exception as e:
-            logger.warning(f"[BM25] Search failed: {e}")
+            # Degrading to vector-only silently is the failure mode 4.5 describes:
+            # log at error level and record it so /metrics/system reports it.
+            _record_failure(e)
+            logger.error(
+                f"[BM25] Search failed — this query degrades to vector-only "
+                f"(consecutive failures: {_failure_count}): {e}"
+            )
             return []
+
+        _record_success()
 
         nodes_with_scores = []
         for row in rows:
@@ -104,7 +175,7 @@ class PgSearchBM25Retriever(BaseRetriever):
             # Create TextNode
             node = TextNode(
                 id_=f"{row.document_id}-chunk-{row.chunk_index}",
-                text=row.content_with_context or row.content,
+                text=row.content,
                 metadata=metadata,
             )
 

@@ -36,19 +36,21 @@ lives in ChromaDB under the same `document_id`, not here.
 | `id` | `UUID` | primary key |
 | `document_id` | `UUID` | `REFERENCES documents(id) ON DELETE CASCADE` |
 | `chunk_index` | `INTEGER` | 0-based position within the document |
-| `content` | `TEXT` | chunk text |
-| `content_with_context` | `TEXT` | nullable — intended to hold the contextual-retrieval prefix |
+| `content` | `TEXT` | chunk text, contextual-retrieval prefix included inline when enabled |
 | `metadata` | `JSONB` | default `{}` |
 | `created_at` | `TIMESTAMPTZ` | default `NOW()` |
 
-Unique constraint on `(document_id, chunk_index)`. The BM25 retriever
-(`bm25_retriever.py`) prefers `content_with_context` over `content` when both
-exist. In the current codebase `content_with_context` is written from
-`node.metadata.get("contextual_prefix", "")` at ingestion time, but nothing in
-the contextual-retrieval code ever sets a `contextual_prefix` metadata key —
-the generated prefix is prepended directly into the chunk's `content` instead.
-So `content_with_context` is populated as an empty string even when
-contextual retrieval is enabled, and BM25 silently falls back to `content`.
+Unique constraint on `(document_id, chunk_index)`. A `content_with_context`
+column existed until `docs/suggestions.md` #4.3: it was written from a
+`contextual_prefix` metadata key nothing ever set, so it was always empty
+while the prefix itself went into `content`. Column, write and the BM25
+retriever's read of it are gone. Databases created before that change still
+have the empty column — `init.sql` does not re-run on an existing volume, so
+drop it by hand if you want it gone:
+
+```sql
+ALTER TABLE document_chunks DROP COLUMN IF EXISTS content_with_context;
+```
 
 ### BM25 index
 
@@ -57,30 +59,18 @@ CREATE INDEX idx_chunks_bm25 ON document_chunks
 USING bm25 (content) WITH (text_config='english');
 ```
 
-This index is created once, in `init.sql`, against the `content` column only
-(not `content_with_context`). The `text_config='english'` option — which
+This index is created once, in `init.sql`, against the `content` column. The
+`text_config='english'` option — which
 selects English stemming/stopword rules for the underlying tsvector-style
 tokenization — is **hardcoded in the DDL**. There is no corresponding
 `config.yml` key; changing the search language requires editing `init.sql`
 and rebuilding the index, not touching configuration.
 
-Query-time usage (`services/rag_server/infrastructure/database/documents.py`,
-`search_chunks_bm25`):
-
-```sql
-SELECT dc.*, bm25_search.score as bm25_score
-FROM document_chunks dc,
-LATERAL bm25_search('idx_chunks_bm25', websearch_to_tsquery('english', :query)) bm25_search
-WHERE dc.id = bm25_search.id
-ORDER BY bm25_score DESC
-LIMIT :limit
-```
-
-Note `'english'` is repeated here as a literal in `websearch_to_tsquery`,
-independently of the index DDL — the two are not derived from a shared
-constant. The retrieval-path retriever (`PgSearchBM25Retriever`) instead uses
-the `<@>` distance operator against `to_bm25query(...)`, which returns
-negative scores (lower is better) that the retriever negates; see
+Query-time usage is `PgSearchBM25Retriever` only: the `<@>` distance operator
+against `to_bm25query(...)`, which returns negative scores (lower is better)
+that the retriever negates. A second implementation in this module
+(`search_chunks_bm25`, built on `bm25_search()`/`websearch_to_tsquery()`) had
+no caller and was deleted — see `docs/suggestions.md` #4.4 and
 `rag-pipeline.md`/`retrieval.md` for the retrieval-side detail. No manual
 reindex step is needed after insert — the index maintains itself.
 
@@ -300,7 +290,7 @@ path:
   loading `Document.chunks` and counting in Python.
 - BM25 search and the `SKIP LOCKED` claim are both raw, explicit SQL via
   `text()` — deliberately, since both depend on PostgreSQL-specific syntax
-  (`pg_textsearch`'s `bm25_search()`/`<@>` operator, `FOR UPDATE SKIP LOCKED`)
+  (`pg_textsearch`'s `<@>`/`to_bm25query()` pair, `FOR UPDATE SKIP LOCKED`)
   that a query builder can't express portably.
 - `Document.chunks` is declared as an ORM relationship
   (`cascade="all, delete-orphan"`) purely so that deleting a `Document` row

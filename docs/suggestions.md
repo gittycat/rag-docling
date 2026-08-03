@@ -13,7 +13,7 @@ Nothing here is a documentation task. These are changes to the product.
 
 Every actionable entry carries a **Status** line: `Open`, `Partially done`, or
 `✅ Done` with the date and commit. Statuses were last reconciled against the code
-on **2026-08-03** (section 2 implementation pass).
+on **2026-08-03** (section 4 implementation pass).
 
 ---
 
@@ -637,7 +637,20 @@ contextual prefix should be stored there or the column and its read path should 
 **Effort.** S.
 **Where.** `services/rag_server/pipelines/ingestion.py`,
 `services/rag_server/infrastructure/search/bm25_retriever.py`.
-**Status.** Open.
+**Status.** ✅ Done — 2026-08-03. The column and its read path were removed.
+
+**✅ FIXED (2026-08-03).** Of the two options, the column went. The generated
+prefix is prepended to `node.text` before embedding, so it is already inside
+`document_chunks.content` — which is also the column `idx_chunks_bm25` indexes.
+A second column would have duplicated that text, and the retriever's
+`content_with_context or content` was a no-op in every case. Removed from
+`init.sql`, the ORM model, `add_chunks()`, the ingestion `chunks_data` payload
+(along with the dead `contextual_prefix` metadata filter) and the retriever's
+SELECT.
+
+**Existing databases** keep the empty column — `init.sql` does not re-run on an
+existing volume. Nothing reads or writes it; drop it by hand if you want it gone:
+`ALTER TABLE document_chunks DROP COLUMN IF EXISTS content_with_context;`
 
 ### 4.4 Two BM25 implementations, and the test covers the wrong one
 **What.** The live retriever uses `to_bm25query` with the `<@>` operator. A second
@@ -650,9 +663,15 @@ be misled by both the test and the dead function.
 **Effort.** S — delete the unused function and correct the test.
 **Where.** `services/rag_server/infrastructure/database/documents.py`,
 `services/rag_server/tests/test_bm25_query_safety.py`.
-**Status.** Open — the failing test was skipped on 2026-08-02 (`e26a4d2`) so CI is
-honest; the dead function and the wrong assertion are untouched. See the note at
-the end of this section.
+**Status.** ✅ Done — 2026-08-03.
+
+**✅ FIXED (2026-08-03).** `search_chunks_bm25` is deleted, and with it
+`test_document_bm25_search_uses_pg_textsearch`, which only ever proved that an
+uncalled function still looked the way it always had. The skipped test is
+rewritten against the live retriever: it asserts the SQL contains
+`to_bm25query(:query, 'idx_chunks_bm25')` and that the query text is bound as a
+parameter rather than appearing anywhere in the SQL string — which is the
+query-safety property the file claims to cover.
 
 ### 4.5 BM25 failures degrade silently
 **What.** The retriever catches all exceptions, logs a warning, and returns an empty
@@ -664,14 +683,39 @@ help?" would conclude it does not.
 **Fix.** Surface BM25 health in `/health` or `/metrics/system` so the failure is
 visible without reading logs.
 **Effort.** S.
-**Where.** `services/rag_server/infrastructure/search/bm25_retriever.py`.
-**Status.** Open.
+**Where.** `services/rag_server/infrastructure/search/bm25_retriever.py`,
+`services/rag_server/services/metrics.py`.
+**Status.** ✅ Done — 2026-08-03.
+
+**✅ FIXED (2026-08-03).** The `except` still swallows the error — a BM25 fault
+should not fail a user's query — but it now logs at `ERROR` and records the
+failure in module state (`get_bm25_health()`). `/metrics/system` reports
+`component_status.bm25`, combining that with an active probe (`probe_bm25()`)
+that runs the same `<@>`/`to_bm25query` pair against `idx_chunks_bm25`:
+
+| Value | Meaning |
+|---|---|
+| `healthy` | probe works, last real search succeeded |
+| `unhealthy` | probe works, last real search failed |
+| `unavailable` | probe itself fails — extension, index or permissions |
+
+The probe answers before any query has run, so a dropped index is visible at
+boot rather than after a confusing eval. The key is omitted when hybrid search
+is disabled. Covered by `tests/test_bm25_health.py`.
 
 ### 4.6 The startup banner names the wrong technologies
 **What.** `services/rag_server/main.py` logs "pg_search BM25 + pgvector". The actual
 stack is `pg_textsearch` and ChromaDB; `pgvector` is a listed but unused dependency.
 **Effort.** S.
-**Status.** Open — `main.py:138` still logs "pg_search BM25 + pgvector".
+**Status.** ✅ Done — 2026-08-03. Banner now reads "pg_textsearch BM25 +
+ChromaDB vectors".
+
+**✅ FIXED (2026-08-03).** The same wrong claim was also served by the API:
+`VectorSearchConfig.vector_store` defaulted to `"PostgreSQL (pgvector)"` and
+`get_retrieval_config()` passed that literal, so `/metrics/retrieval` — which
+the dashboard renders — named a store the system does not use. Both now say
+`ChromaDB`, and `collection_name` is read from `config.yml` instead of being
+hardcoded to `"documents"`.
 
 ### 4.7 Documentation and code disagree on whether contextual enrichment is masked
 **What.** The repository contradicts itself. The `config.yml` comment and the
@@ -688,8 +732,9 @@ whether to enable contextual retrieval with a cloud provider is reading the comm
 **Where.** `config.yml`,
 `services/rag_server/infrastructure/config/models_config.py`,
 `services/rag_server/pipelines/ingestion.py`.
-**Status.** Open — both wrong statements survive (`config.yml:299`,
-`models_config.py:429-431`).
+**Status.** ✅ Done — 2026-08-03. Both statements now match the code: masking
+covers every path that reaches the LLM (generation *and* contextual enrichment);
+embeddings and reranking are what stay unmasked and local.
 
 ### 4.8 ★ Eleven eval tests import rag-server internals and fail everywhere
 **What.** `services/evals/tests/test_rag_eval.py` — `TestCitationExtraction` (8
@@ -706,8 +751,11 @@ green, but the coverage is simply absent.
 **Fix.** They test rag-server code, so move them to `services/rag_server/tests/`.
 **Effort.** S.
 **Where.** `services/evals/tests/test_rag_eval.py`.
-**Status.** Open — recorded and skipped on 2026-08-02 (`e26a4d2`); the eleven tests
-have still not been moved and still do not run.
+**Status.** ✅ Done — 2026-08-03. Moved to
+`services/rag_server/tests/test_citation_extraction.py`; all eleven run in the
+`test-rag-server` CI job. The skip markers and the per-test local imports are
+gone (the imports are now module-level, which is what makes the move honest —
+the file cannot silently stop importing the code it tests).
 
 ### 4.9 Importing the task worker performs live network I/O
 **What.** Importing `services/rag_server/infrastructure/tasks/task_worker.py`
@@ -724,9 +772,16 @@ untouched.
 **Effort.** S.
 **Where.** `services/rag_server/infrastructure/tasks/task_worker.py`,
 `services/rag_server/core/config.py`.
-**Status.** Partially done — worked around at the test level on 2026-08-02
-(`e26a4d2`, `tests/conftest.py`). The import-time network call itself is unchanged,
-so the fix (make the check lazy) is still open.
+**Status.** ✅ Done — 2026-08-03.
+
+**✅ FIXED (2026-08-03).** `init_settings()`/`initialize_settings()` moved from
+module scope into `main()`, so importing the module reaches nothing. The check
+itself stays eager *within* `main()` — a worker that cannot reach its embedding
+provider should fail at boot, not on the first document — the defect was where
+it ran, not that it runs. The test-level workaround
+(`test_task_worker_concurrency.py`'s import-time patching of
+`check_ollama_reachable` and `get_chroma_client`) is deleted and replaced by a
+regression test asserting the import stays inert.
 
 ### 4.10 `ConfigSnapshot` in the rag-server schemas is dead code
 **What.** `services/rag_server/schemas/metrics.py:159` defines a 15-field pydantic
@@ -738,16 +793,21 @@ anything, so a reader fixing snapshot behaviour may edit the wrong type. It is a
 a better shape than the one in use — worth harvesting rather than only deleting.
 **Effort.** S.
 **Where.** `services/rag_server/schemas/metrics.py`.
-**Status.** Open — still defined at `schemas/metrics.py:159`, still unconstructed.
-The 2.1 fix harvested part of its shape (`rrf_k`, reranker `top_n`) into the evals
-snapshot's `additional` field but did not delete or adopt this model.
+**Status.** ✅ Done — 2026-08-03. Deleted.
 
-> **Note on 4.4.** `test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries`
-> was failing on an unmodified tree (confirmed against a clean worktree at `HEAD`) —
-> the live retriever emits `to_bm25query`, the test asserts `bm25_search(`, exactly
-> as **4.4** describes. It is now `@pytest.mark.skip`-ped with a reason citing 4.4,
-> so the suite is green without the defect being papered over. The underlying fix —
-> delete the unused `search_chunks_bm25` and correct the test — is still open.
+**✅ FIXED (2026-08-03).** Nothing further was harvested: the evals snapshot's
+`additional` field already carries the whole `/models/info` and
+`/metrics/retrieval` payloads, so every remaining field of the pydantic model
+(`llm_base_url`, `citation_scope`, `citation_format`, `abstention_phrases`) was
+either already captured there or not available to the eval runner at all —
+adding declared-but-unfilled fields is the 2.1 defect in a new place. The
+module docstring now points at `evals/schemas/results.py` as the only snapshot
+type.
+
+> **Section 4 is complete as of 2026-08-03.** Both suites are green with no
+> skips attributable to this section: rag-server **147 passed, 37 skipped, 1
+> xfailed**; evals **190 passed, 20 skipped** (the 11 previously-skipped citation
+> tests moved into the rag-server count).
 
 ---
 
@@ -837,11 +897,18 @@ If picking a handful, these give the most value per unit of effort.
    **2.4** is partially done: the same-provider warning landed, ensemble judging
    did not.
 
+**Done (2026-08-03, correctness pass):**
+
+8. ~~**4.3**, **4.4**, **4.5**, **4.6**, **4.7**, **4.8**, **4.9**, **4.10**.~~ ✅
+   All of section 4 now closed. The two with the most behavioural weight: **4.5**
+   (BM25 failures are now reported at `component_status.bm25` instead of only in
+   logs) and **4.8** (eleven citation-extraction tests run again).
+
 **Still the top of the queue:**
 
-8. **4.8** — the eleven skipped citation-extraction tests. S, and it restores
-   coverage of what the citation metrics depend on; **4.4** is the same shape.
 9. **3.1** — chunk size and overlap in `config.yml`. S, and it is the one documented
    tuning recipe that cannot be run without a rebuild.
 10. **Surface significance in the dashboard.** The API returns it; the analytics UI
     still shows point deltas only, which is where most users will read a comparison.
+11. **2.4** — ensemble judging. The same-provider warning landed; pairing judge and
+    generator by family is still the default.

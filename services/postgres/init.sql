@@ -21,8 +21,9 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
+    -- Contextual-retrieval prefixes (when enabled) are prepended to the chunk
+    -- text before it is stored, so this column is what the BM25 index covers.
     content TEXT NOT NULL,
-    content_with_context TEXT,
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(document_id, chunk_index)

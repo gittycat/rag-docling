@@ -667,11 +667,13 @@ def ingest_document(
     # Build chunk data for PostgreSQL storage
     chunks_data = []
     for i, node in enumerate(nodes):
+        # node text already carries the contextual prefix when contextual
+        # retrieval is enabled (add_contextual_prefix_to_chunk prepends it),
+        # so `content` is the same text that was embedded and BM25-indexed.
         chunks_data.append({
             "chunk_index": i,
             "content": node.get_content(),
-            "content_with_context": node.metadata.get("contextual_prefix", ""),
-            "metadata": {k: v for k, v in node.metadata.items() if k != "contextual_prefix"},
+            "metadata": dict(node.metadata),
         })
 
     return {

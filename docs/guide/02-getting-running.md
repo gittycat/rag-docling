@@ -176,7 +176,10 @@ curl http://localhost:8001/metrics/system
 ```
 
 The `health_status` field (`"healthy"` or `"degraded"`) and the `component_status`
-object (per-component postgres/ollama checks) are the real dependency check.
+object (per-component postgres/bm25/ollama checks) are the real dependency check.
+`bm25` appears only when hybrid search is enabled; `unavailable` there means the
+`pg_textsearch` extension or index cannot be queried, which silently reduces every
+hybrid query to vector-only.
 
 Tail logs at any point with:
 

@@ -66,8 +66,10 @@ class DocumentChunk(Base):
         nullable=False,
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Holds the contextual prefix inline when contextual retrieval is enabled —
+    # the prefix is prepended to the chunk text before embedding and before this
+    # row is written, so the BM25 index over `content` covers it too.
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    content_with_context: Mapped[str | None] = mapped_column(Text)
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default="{}"
     )

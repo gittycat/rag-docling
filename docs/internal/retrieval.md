@@ -44,7 +44,7 @@ The text language config (`english`) is hardcoded in this DDL, not read from
 The live retrieval query, issued by `PgSearchBM25Retriever`:
 
 ```sql
-SELECT dc.id, dc.document_id, dc.chunk_index, dc.content, dc.content_with_context,
+SELECT dc.id, dc.document_id, dc.chunk_index, dc.content,
        dc.metadata, dc.created_at, d.file_name, d.file_type, d.file_path,
        d.file_size_bytes, d.file_hash, d.uploaded_at,
        -(dc.content <@> to_bm25query(:query, 'idx_chunks_bm25')) as bm25_score
@@ -62,13 +62,14 @@ present a conventional positive score to callers. The query string is passed
 as a bound parameter, not interpolated. `:limit` is the same `top_k` value
 used for the vector leg.
 
-The node text returned by this retriever prefers `content_with_context` over
-`content` when present — see `rag-pipeline.md` for why `content_with_context`
-is currently always empty even when contextual retrieval is enabled, meaning
-BM25 always ends up matching against plain `content` in practice.
+The node text returned by this retriever is `dc.content`, which already
+carries the contextual prefix when contextual retrieval is enabled — the
+prefix is prepended to the chunk text before the row is written, so the BM25
+index covers it (see `rag-pipeline.md`).
 
-Any exception during this query is swallowed: the retriever logs a warning
-and returns an empty list rather than propagating the error (see "Failure
+Any exception during this query is swallowed: the retriever logs an error,
+records the failure for `/metrics/system` (`component_status.bm25`), and
+returns an empty list rather than propagating the error (see "Failure
 modes" below).
 
 ## Vector retrieval via ChromaDB
@@ -192,13 +193,23 @@ No similarity/score threshold knob exists anywhere in this table — see
 
 ## Failure modes and discrepancies
 
-**BM25 errors degrade silently to vector-only.** The BM25 retriever wraps its
-query in a bare `except Exception`, logs a warning, and returns an empty
-list. From the caller's point of view this looks identical to "no keyword
-matches" — a broken `pg_textsearch` extension, a bad index, or any other
-BM25-side fault will not raise or fail the request; it will just quietly
-reduce every hybrid query to vector-only results until someone notices via
-logs.
+**BM25 errors degrade to vector-only, but the degradation is now visible.**
+The BM25 retriever still wraps its query in a bare `except Exception` and
+returns an empty list — an individual request never fails because of a
+BM25-side fault. It logs at `ERROR` and records the failure in module state
+(`get_bm25_health()` in `bm25_retriever.py`). `/metrics/system` reports it as
+`component_status.bm25`, combining two signals:
+
+| Value | Meaning |
+|---|---|
+| `healthy` | probe query works and the last real search succeeded |
+| `unhealthy` | probe works but the most recent search failed |
+| `unavailable` | the probe itself fails — extension, index or permissions |
+
+The probe (`probe_bm25`) runs the same `<@>`/`to_bm25query` pair against
+`idx_chunks_bm25`, so a dropped index or missing extension surfaces there
+even if no user query has run yet. The key is absent from `component_status`
+when hybrid search is disabled.
 
 **There is no similarity or score threshold anywhere in the retrieval path.**
 Neither the vector retriever nor the BM25 retriever applies a minimum-score
@@ -213,16 +224,10 @@ read by the code that builds the reranker postprocessor, which recomputes
 `top_n` from `retrieval.top_k` instead. Changing this config value has no
 observable effect on the running system.
 
-**A second, unused BM25 implementation exists**, in the database layer
-(`search_chunks_bm25`), using a different `pg_textsearch` API —
-`bm25_search(...)` combined with `websearch_to_tsquery(...)` — rather than
-the `to_bm25query`/`<@>` operator pair the live retriever uses. This function
-has no caller anywhere in production code; its only caller is its own test.
-That test's docstring asserts that the *live* retriever (`bm25_retriever.py`)
-sends SQL using `bm25_search(`/`websearch_to_tsquery`, which is not true of
-the current implementation — the test describes a code path that is not the
-one actually running. Treat this test as stale, not as documentation of live
-BM25 behavior: if BM25 query-syntax handling (quoted phrases, exclusions,
-special characters) ever needs debugging, confirm which of the two SQL forms
-is actually in the request path before trusting either the test or memory of
-"how BM25 works here."
+**There is one BM25 implementation.** A second, unused one
+(`search_chunks_bm25` in the database layer, built on
+`bm25_search(...)`/`websearch_to_tsquery(...)`) was deleted along with the
+test that asserted the live retriever emitted its SQL shape
+(`docs/suggestions.md` #4.4). `PgSearchBM25Retriever._search_bm25` — the
+`to_bm25query`/`<@>` pair shown above — is the only path that runs, and
+`tests/test_bm25_query_safety.py` now asserts against it.

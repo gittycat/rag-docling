@@ -318,10 +318,12 @@ prompts:
 # ============================================================================
 # PII Masking - opt-in cloud generation tier only (Task 2.3)
 # ============================================================================
-# Reversible PII masking for the generation path (user query, retrieved
-# context, chat history, session-title generation) when using a cloud LLM
-# provider (openai/anthropic). Embeddings, contextual
-# enrichment, and the reranker are never masked and stay local/VM-side by
+# Reversible PII masking for every path that sends text to a cloud LLM
+# provider (openai/anthropic): the generation path (user query, retrieved
+# context, chat history, session-title generation) and contextual enrichment
+# during ingestion (document name + chunk preview are masked before the LLM
+# call; the generated prefix is unmasked before local storage/embedding).
+# Embeddings and the reranker are never masked and stay local/VM-side by
 # product decision — see validate_privacy_posture() in models_config.py,
 # which refuses to boot if pii.enabled is true with a non-local embedding
 # provider.

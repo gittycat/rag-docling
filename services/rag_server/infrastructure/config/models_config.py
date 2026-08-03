@@ -426,9 +426,10 @@ class ModelsConfig(BaseModel):
     def validate_privacy_posture(self) -> None:
         """Enforce that cloud generation (pii.enabled) never pairs with a cloud embedder.
 
-        Masking only covers the generation path (Task 2.3 scope); embeddings,
-        contextual enrichment, and reranking stay local/VM-side by product
-        decision. Sending the corpus to a cloud embedder would defeat that.
+        Masking covers every path that reaches the configured LLM — generation
+        and contextual enrichment (see PiiConfig). Embeddings and reranking are
+        never masked and stay local/VM-side by product decision, so sending the
+        corpus to a cloud embedder would defeat that.
         """
         if self.pii.enabled and self.embedding.provider not in LOCAL_EMBEDDING_PROVIDERS:
             raise ValueError(

@@ -150,7 +150,6 @@ async def add_chunks(
             document_id=document_id,
             chunk_index=chunk["chunk_index"],
             content=chunk["content"],
-            content_with_context=chunk.get("content_with_context"),
             metadata_=chunk.get("metadata", {}),
         )
         chunk_models.append(chunk_model)
@@ -185,33 +184,3 @@ async def delete_document(session: AsyncSession, document_id: UUID) -> bool:
     )
     await session.flush()
     return result.rowcount > 0
-
-
-async def search_chunks_bm25(
-    session: AsyncSession, query: str, limit: int = 10
-) -> list[tuple[DocumentChunk, float]]:
-    """BM25 full-text search using pg_textsearch. Returns (chunk, score) tuples."""
-    sql = text("""
-        SELECT dc.*, bm25_search.score as bm25_score
-        FROM document_chunks dc,
-        LATERAL bm25_search('idx_chunks_bm25', websearch_to_tsquery('english', :query)) bm25_search
-        WHERE dc.id = bm25_search.id
-        ORDER BY bm25_score DESC
-        LIMIT :limit
-    """)
-    result = await session.execute(sql, {"query": query, "limit": limit})
-    rows = result.fetchall()
-
-    chunks_with_scores = []
-    for row in rows:
-        chunk = DocumentChunk(
-            id=row.id,
-            document_id=row.document_id,
-            chunk_index=row.chunk_index,
-            content=row.content,
-            content_with_context=row.content_with_context,
-            metadata_=row.metadata,
-            created_at=row.created_at,
-        )
-        chunks_with_scores.append((chunk, row.bm25_score))
-    return chunks_with_scores

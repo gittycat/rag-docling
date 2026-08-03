@@ -416,13 +416,23 @@ properly rather than that keyword search does not help.
 
 Which leads to the important part.
 
-**Caveat — and this one matters.** **BM25 failures are silent.** If the
-`pg_textsearch` extension or the BM25 index is broken, the retriever catches the
-error, logs a warning, and returns an empty list. Every query then degrades to
-vector-only with no error surfaced to you.
+**Caveat — and this one matters.** **A BM25 failure never fails a query.** If
+the `pg_textsearch` extension or the BM25 index is broken, the retriever catches
+the error and returns an empty list, so every query quietly degrades to
+vector-only.
 
 So before concluding "hybrid search doesn't help my corpus," confirm BM25 is
 actually running:
+
+```bash
+curl -s http://localhost:8001/metrics/system | jq '.component_status.bm25'
+# "healthy"     — index works and the last retrieval succeeded
+# "unhealthy"   — index works but the last retrieval failed
+# "unavailable" — the extension or index cannot be queried at all
+```
+
+That endpoint probes the index directly, so it answers even before you have run
+a query. The logs carry the same information at `ERROR` level:
 
 ```bash
 docker compose logs rag-server | grep -i bm25

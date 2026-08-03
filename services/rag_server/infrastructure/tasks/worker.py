@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 async def process_document_async(file_path: str, filename: str, batch_id: str, task_id: str) -> dict:
     """
-    Process a document and index it in PostgreSQL (pgvector).
+    Process a document: chunks + BM25 rows in PostgreSQL, vectors in ChromaDB.
 
     Args:
         file_path: Path to temporary file in /tmp/shared

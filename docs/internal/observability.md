@@ -24,10 +24,18 @@ actual database. `webapp`, `chromadb`, and `task-worker` have no Docker
 healthcheck defined at all.
 
 Real component health lives elsewhere: `GET /metrics/system` (below) actually
-issues a `SELECT 1` against Postgres and a `GET /api/tags` against Ollama,
-and reports both an overall `health_status` (`"healthy"` / `"degraded"`) and
-a per-component `component_status` dict. If you need to know whether the
-system is actually working, use `/metrics/system`, not `/health`.
+issues a `SELECT 1` against Postgres, a BM25 probe query against
+`idx_chunks_bm25`, and a `GET /api/tags` against Ollama, and reports both an
+overall `health_status` (`"healthy"` / `"degraded"`) and a per-component
+`component_status` dict. If you need to know whether the system is actually
+working, use `/metrics/system`, not `/health`.
+
+The `bm25` component is present only when hybrid search is enabled. It is
+`unavailable` when the probe itself fails (missing `pg_textsearch` extension,
+dropped index, permissions) and `unhealthy` when the probe succeeds but the
+most recent real retrieval failed — BM25 errors never fail a query, they
+silently degrade it to vector-only, so this key is the only signal short of
+reading logs (`docs/suggestions.md` #4.5).
 
 ## Metrics API surface
 
@@ -35,7 +43,7 @@ All under `services/rag_server/api/routes/metrics.py`:
 
 | Route | Returns |
 |---|---|
-| `GET /metrics/system` | Model config, retrieval config, `document_count`, `chunk_count`, `health_status`, and `component_status` (`postgres`, `ollama`) — the one endpoint that actually checks dependencies, described above. |
+| `GET /metrics/system` | Model config, retrieval config, `document_count`, `chunk_count`, `health_status`, and `component_status` (`postgres`, `bm25`, `ollama`) — the one endpoint that actually checks dependencies, described above. |
 | `GET /metrics/models` | Per-model detail (LLM, embedding, reranker, eval): name, provider, parameter count, disk size (queried live from Ollama where applicable), context window, a reference URL, and a load/availability status. |
 | `GET /metrics/retrieval` | Current retrieval configuration: hybrid search (BM25 + vector + RRF) on/off, contextual retrieval on/off, reranker enabled/model/`top_n`, `top_k`. |
 

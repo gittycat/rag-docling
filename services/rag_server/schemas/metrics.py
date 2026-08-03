@@ -5,9 +5,9 @@ Provides comprehensive visibility into:
 - Retrieval configuration (hybrid search, BM25, vector, reranking)
 - System overview
 
-Note: Evaluation-specific schemas have been moved to schemas/eval.py.
-This file contains shared models (ConfigSnapshot, LatencyMetrics, CostMetrics)
-that are imported by both metrics.py and eval.py.
+Note: Evaluation-specific schemas have been moved to schemas/eval.py. The
+run-level config snapshot lives in the eval service (evals/schemas/results.py),
+which is the only thing that builds one.
 """
 
 from datetime import UTC, datetime
@@ -55,7 +55,7 @@ class VectorSearchConfig(BaseModel):
     enabled: bool = Field(True, description="Vector search is always enabled")
     chunk_size: int = Field(..., description="Chunk size in tokens")
     chunk_overlap: int = Field(..., description="Chunk overlap in tokens")
-    vector_store: str = Field("PostgreSQL (pgvector)", description="Vector database used")
+    vector_store: str = Field("ChromaDB", description="Vector database used")
     collection_name: str = Field("documents", description="Collection name")
 
 
@@ -147,55 +147,8 @@ class RetrievalConfig(BaseModel):
 
 
 # ============================================================================
-# Shared Evaluation Models (used by both metrics.py and eval.py)
+# Evaluation Models (Latency, Cost)
 # ============================================================================
-
-
-# ============================================================================
-# Enhanced Evaluation Models (Config Snapshots, Latency, Cost, Baseline)
-# ============================================================================
-
-
-class ConfigSnapshot(BaseModel):
-    """Complete configuration snapshot at evaluation time.
-
-    Captures all settings that could affect evaluation results,
-    enabling accurate comparison between runs.
-    """
-
-    # LLM Configuration
-    llm_provider: str = Field(..., description="LLM provider (ollama, openai, anthropic, vllm)")
-    llm_model: str = Field(..., description="LLM model name (e.g., 'gpt-4o', 'claude-sonnet-4', 'gemma3:4b')")
-    llm_base_url: Optional[str] = Field(None, description="Custom LLM endpoint URL")
-
-    # Embedding Configuration
-    embedding_provider: str = Field(..., description="Embedding provider")
-    embedding_model: str = Field(..., description="Embedding model name")
-
-    # Retrieval Configuration
-    retrieval_top_k: int = Field(..., description="Number of chunks to retrieve initially")
-    hybrid_search_enabled: bool = Field(..., description="Whether hybrid search (BM25+Vector) is enabled")
-    rrf_k: int = Field(60, description="RRF fusion constant")
-    contextual_retrieval_enabled: bool = Field(..., description="Whether contextual retrieval is enabled")
-
-    # Reranker Configuration
-    reranker_enabled: bool = Field(..., description="Whether reranking is enabled")
-    reranker_model: Optional[str] = Field(None, description="Reranker model name")
-    reranker_top_n: Optional[int] = Field(None, description="Number of results after reranking")
-
-    # Evaluation Configuration
-    citation_scope: Optional[str] = Field(
-        None,
-        description="Citation scope used for evaluation (retrieved or explicit)",
-    )
-    citation_format: Optional[str] = Field(
-        None,
-        description="Citation format used for explicit citations (e.g., numeric)",
-    )
-    abstention_phrases: Optional[list[str]] = Field(
-        None,
-        description="Phrases treated as abstentions for unanswerable detection",
-    )
 
 
 class LatencyMetrics(BaseModel):
@@ -255,5 +208,5 @@ class SystemMetrics(BaseModel):
     health_status: str = Field("healthy", description="Overall system health")
     component_status: dict[str, str] = Field(
         default_factory=dict,
-        description="Status of each component (postgres, ollama)"
+        description="Status of each component (postgres, bm25, ollama)"
     )

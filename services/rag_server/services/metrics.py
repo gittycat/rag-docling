@@ -272,12 +272,15 @@ def get_retrieval_config() -> RetrievalConfig:
     inference_config = get_inference_config()
     ingestion_config = get_ingestion_config()
 
+    # Local import: the module-level get_models_config() is the API-shaped one.
+    from infrastructure.config.models_config import get_models_config as get_config
+
     vector_config = VectorSearchConfig(
         enabled=True,
         chunk_size=500,
         chunk_overlap=50,
-        vector_store="PostgreSQL (pgvector)",
-        collection_name="documents",
+        vector_store="ChromaDB",
+        collection_name=get_config().chromadb.collection,
     )
 
     bm25_config = BM25Config(
@@ -322,6 +325,35 @@ def get_retrieval_config() -> RetrievalConfig:
     )
 
 
+async def _check_bm25() -> str:
+    """Probe the BM25 index, then fold in the last live retrieval outcome.
+
+    "unavailable" = the extension/index cannot be queried at all.
+    "unhealthy"   = the probe works but the most recent real search failed.
+    """
+    from infrastructure.database.postgres import get_session
+    from infrastructure.search.bm25_retriever import get_bm25_health, probe_bm25
+
+    try:
+        async with get_session() as session:
+            probe = await probe_bm25(session)
+    except Exception as e:
+        logger.error(f"BM25 health check error: {e}")
+        return "unavailable"
+
+    if probe["status"] != "healthy":
+        return "unavailable"
+
+    health = get_bm25_health()
+    if health["status"] == "unhealthy":
+        logger.warning(
+            f"BM25 index is queryable but the last search failed "
+            f"({health['consecutive_failures']} consecutive): {health['last_error']}"
+        )
+        return "unhealthy"
+    return "healthy"
+
+
 async def get_system_metrics() -> SystemMetrics:
     """Get complete system metrics overview."""
     from infrastructure.database.postgres import get_session
@@ -353,6 +385,12 @@ async def get_system_metrics() -> SystemMetrics:
     except Exception as e:
         logger.warning(f"PostgreSQL health check error: {e}")
         component_status["postgres"] = "unavailable"
+
+    # Check BM25 (pg_textsearch extension + index). Only meaningful when hybrid
+    # search is on; without this a broken index silently turns every hybrid query
+    # into a vector-only one.
+    if retrieval.hybrid_search.enabled:
+        component_status["bm25"] = await _check_bm25()
 
     # Check Ollama
     ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")

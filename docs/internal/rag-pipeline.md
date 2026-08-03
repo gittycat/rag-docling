@@ -31,9 +31,8 @@ worker for each queued document. It runs synchronously inside a worker thread
    manual refresh call is actually needed here.
 
 The function returns a dict containing `document_id`, `filename`, a chunk
-count, and `chunks_data` — one entry per chunk with `chunk_index`, `content`,
-`content_with_context`, and `metadata` — which the task worker then persists to
-Postgres.
+count, and `chunks_data` — one entry per chunk with `chunk_index`, `content`
+and `metadata` — which the task worker then persists to Postgres.
 
 ## Docling: reader configuration and the JSON export constraint
 
@@ -151,21 +150,15 @@ recovery) before being merged into the chunk text — one token mapping is
 shared across all of a document's concurrent chunk calls so the same entity
 maps to the same token throughout.
 
-### Defect: `content_with_context` is always empty
+### Where the contextual prefix ends up
 
-The code that assembles `chunks_data` for Postgres reads
-`node.metadata.get("contextual_prefix", "")` to populate the
-`content_with_context` column. But the contextual-retrieval stage described
-above never sets a `contextual_prefix` metadata key on the node — it merges
-the generated context straight into `node.text`, not into a separate metadata
-field. The practical effect: **`document_chunks.content_with_context` in
-Postgres is always an empty string**, regardless of whether contextual
-retrieval ran or succeeded. The generated context is not lost — it lives
-inside `content` (via the embedded/indexed node text) — but the column
-specifically meant to hold it never gets populated. The BM25 retriever (see
-`retrieval.md`) prefers `content_with_context` over `content` when building
-its result text, and so silently falls back to plain `content` for every
-query, again regardless of whether contextual retrieval is enabled.
+The generated context is merged into `node.text`, so it is embedded, indexed
+and stored as part of `document_chunks.content` — there is no separate column
+for it. A vestigial `content_with_context` column, always empty because
+nothing ever set the `contextual_prefix` metadata key it was populated from,
+was removed along with the BM25 retriever's read of it
+(`docs/suggestions.md` #4.3). Existing databases keep the (empty) column
+until it is dropped by hand; nothing reads or writes it.
 
 ## Embedding generation
 

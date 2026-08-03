@@ -69,12 +69,11 @@ cd services/evals && uv run pytest tests/ -v            # hermetic subset only
 cd services/evals && uv run pytest tests/ --run-eval -v # + dataset-loader/integration tests
 ```
 
-Two classes in `services/evals/tests/test_rag_eval.py` — `TestCitationExtraction` and
-`TestQueryEndpointIncludeChunks` — are marked `@pytest.mark.skip` rather than `eval`: they import
-`pipelines.inference` from `services/rag_server`, which is not installed in `services/evals`'
-virtualenv, so they raise `ModuleNotFoundError` regardless of flags. This is a real defect (tests
-that test the wrong service's code, from the wrong service) tracked separately in
-`docs/suggestions.md`, not something the CI fix addressed.
+`TestCitationExtraction` and `TestQueryEndpointIncludeChunks` used to live in
+`services/evals/tests/test_rag_eval.py`, skipped because they import `pipelines.inference` from
+`services/rag_server`, which is not installed in the evals virtualenv. They now live in
+`services/rag_server/tests/test_citation_extraction.py` and run in the `test-rag-server` job
+(`docs/suggestions.md` #4.8).
 
 ## Pytest markers
 
@@ -140,39 +139,28 @@ The integration `conftest.py` layers two more pieces on top of this:
   after every test; `mock_models_config` patches `get_models_config` to a fixed configuration
   (Ollama LLM/embedding, Anthropic eval, reranker enabled) for isolated unit tests.
 
-## Known stale test: `tests/test_bm25_query_safety.py`
+## `tests/test_bm25_query_safety.py`
 
-There are two BM25 query implementations in the codebase, and this test file no longer tracks
-the one that is actually live.
-
-The retrieval path the query pipeline actually uses is `PgSearchBM25Retriever`
+There is one BM25 query implementation: `PgSearchBM25Retriever`
 (`infrastructure/search/bm25_retriever.py`), wired into hybrid search from
-`infrastructure/search/hybrid_retriever.py`. Its SQL builds the query with pg_textsearch's
-`to_bm25query(...)` function and the `<@>` distance operator. A second, older function,
-`search_chunks_bm25` in `infrastructure/database/documents.py`, still builds SQL the previous
-way — via `bm25_search(...)` and `websearch_to_tsquery(...)` — but nothing in the running
-application calls it anymore; its only remaining caller is this test file.
+`infrastructure/search/hybrid_retriever.py`, building its SQL with pg_textsearch's
+`to_bm25query(...)` function and the `<@>` distance operator.
 
-`test_bm25_query_safety.py` asserts that **both** functions produce SQL containing
-`bm25_search(` and `websearch_to_tsquery('english', :query)`. That assertion is true of the dead
-`search_chunks_bm25` helper, but it does not match what `PgSearchBM25Retriever._search_bm25`
-actually emits today — reading that method directly shows `to_bm25query`/`<@>` in the generated
-SQL, not `bm25_search`/`websearch_to_tsquery`. The test was written against the old
-implementation and never updated when the live retriever moved to pg_textsearch's newer
-operator form.
+This file used to assert that the live retriever emitted the SQL shape of a *second*,
+uncalled helper (`search_chunks_bm25`, `bm25_search(...)`/`websearch_to_tsquery(...)`) — an
+assertion that was false of the running code, so the test was skipped rather than trusted. The
+dead helper is gone and the test now asserts against what the live retriever actually emits:
+`to_bm25query(:query, 'idx_chunks_bm25')`, with the user's text bound as a parameter and never
+interpolated into the SQL string (`docs/suggestions.md` #4.4).
 
-Practically, this means the test gives false confidence: a green `test_document_bm25_search_uses_pg_textsearch`
-result only proves an unused code path still looks the way it always did, and
-`test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries` is asserting on SQL text the
-current retriever does not produce, so it is checking the wrong thing rather than checking
-nothing — it does not exercise or validate the BM25 query safety of the code path that actually
-serves queries. Anyone touching `PgSearchBM25Retriever`'s SQL should not treat this file as a
-safety net.
+## Import-time side effects
 
-`test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries` is currently marked
-`@pytest.mark.skip` (not fixed — see `docs/suggestions.md` #4.4 for the actual fix) so that CI
-stays green without silently asserting the wrong thing; `test_document_bm25_search_uses_pg_textsearch`
-still runs, since it accurately describes the dead `search_chunks_bm25` helper it targets.
+`infrastructure/tasks/task_worker.py` used to call `init_settings()`/`initialize_settings()` at
+module scope, which reached the network (an Ollama reachability probe that `sys.exit(1)`s on
+failure) and ChromaDB. Importing it without those services running took down the whole pytest
+collection with `INTERNALERROR`/`SystemExit`, and the tests worked around it by patching during
+the import. Both calls now happen in `main()`; `test_task_worker_concurrency.py` asserts the
+import stays inert (`docs/suggestions.md` #4.9).
 
 ## Frontend tests
 

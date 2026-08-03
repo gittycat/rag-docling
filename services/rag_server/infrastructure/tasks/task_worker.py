@@ -17,12 +17,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize secrets and LlamaIndex settings
-from app.settings import init_settings
-from core.config import initialize_settings
-init_settings()
-initialize_settings()
-
 from infrastructure.database.postgres import get_session
 from infrastructure.database import jobs as db_jobs
 from infrastructure.tasks.worker import process_document_async, _cleanup_temp_file
@@ -175,6 +169,15 @@ async def run_worker():
 
 def main():
     """Entry point for the task worker."""
+    # Deliberately not at import time: initialize_settings() reaches the network
+    # (Ollama reachability) and ChromaDB, which makes the module unimportable
+    # — and pytest collection unsurvivable — wherever those are not running.
+    from app.settings import init_settings
+    from core.config import initialize_settings
+
+    init_settings()
+    initialize_settings()
+
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     asyncio.run(run_worker())

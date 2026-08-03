@@ -135,7 +135,7 @@ async def startup():
 
     # Log hybrid search status
     if config.retrieval.enable_hybrid_search:
-        logger.info("[STARTUP] Hybrid search enabled (pg_search BM25 + pgvector)")
+        logger.info("[STARTUP] Hybrid search enabled (pg_textsearch BM25 + ChromaDB vectors)")
     else:
         logger.info("[STARTUP] Hybrid search disabled, using vector-only retrieval")
 

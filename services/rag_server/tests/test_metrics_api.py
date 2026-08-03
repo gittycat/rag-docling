@@ -171,7 +171,7 @@ def mock_system_metrics():
                     enabled=True,
                     chunk_size=500,
                     chunk_overlap=50,
-                    vector_store="PostgreSQL (pgvector)",
+                    vector_store="ChromaDB",
                     collection_name="documents",
                 ),
                 fusion_method="reciprocal_rank_fusion",

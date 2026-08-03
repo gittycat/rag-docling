@@ -7,14 +7,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-@pytest.mark.skip(
-    reason="known defect, tracked separately in docs/suggestions.md #4.4: asserts "
-    "the live PgSearchBM25Retriever emits the unused search_chunks_bm25()/bm25_search() "
-    "SQL shape, but the live retriever actually uses to_bm25query() — not fixed here"
-)
 @pytest.mark.asyncio
-async def test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries():
-    """BM25 retriever should use pg_textsearch bm25_search and preserve raw user text."""
+async def test_pgsearch_retriever_uses_to_bm25query_for_raw_user_queries():
+    """The live retriever passes raw user text to to_bm25query() as a bound parameter."""
     from infrastructure.search.bm25_retriever import PgSearchBM25Retriever
 
     query = "what's an LLM"
@@ -31,29 +26,9 @@ async def test_pgsearch_retriever_uses_bm25_search_for_raw_user_queries():
     assert results == []
     sql, params = session.execute.await_args.args
     sql_str = str(sql)
-    assert "bm25_search(" in sql_str
-    assert "websearch_to_tsquery('english', :query)" in sql_str
+    assert "to_bm25query(:query, 'idx_chunks_bm25')" in sql_str
+    # Query text is never interpolated into the SQL — apostrophes and operators
+    # reach pg_textsearch as data, not as syntax.
+    assert query not in sql_str
     assert params["query"] == query
-
-
-@pytest.mark.asyncio
-async def test_document_bm25_search_uses_pg_textsearch():
-    """BM25 search should route user text through pg_textsearch bm25_search."""
-    from infrastructure.database.documents import search_chunks_bm25
-
-    query = "what's an LLM"
-
-    result_proxy = Mock()
-    result_proxy.fetchall.return_value = []
-
-    session = AsyncMock()
-    session.execute.return_value = result_proxy
-
-    results = await search_chunks_bm25(session, query=query, limit=5)
-
-    assert results == []
-    sql, params = session.execute.await_args.args
-    sql_str = str(sql)
-    assert "bm25_search(" in sql_str
-    assert "websearch_to_tsquery('english', :query)" in sql_str
-    assert params == {"query": query, "limit": 5}
+    assert params["limit"] == 10
