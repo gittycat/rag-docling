@@ -1,13 +1,11 @@
 # 11. Limits and caveats
 
-An honest account of what the evaluation apparatus in this system can and cannot
-establish.
+An honest account of what the evaluation apparatus can and cannot establish.
 
-This chapter exists because the failure mode for a system like this is not that it
-produces no numbers — it is that it produces numbers that feel more authoritative
-than they are. A dashboard with a weighted score of 0.83 invites a confidence the
-underlying measurement does not support. If you read only one chapter of this
-guide before presenting results to someone else, read this one.
+The failure mode for a system like this is not that it produces no numbers — it is
+that it produces numbers that feel more authoritative than they are. A dashboard
+showing 0.83 invites confidence the measurement does not support. **If you read one
+chapter before presenting results to someone else, read this one.**
 
 None of what follows means the measurements are worthless. It means they are
 evidence of a particular strength, and knowing that strength is what lets you use
@@ -17,93 +15,79 @@ them well.
 
 ## What a good score does and does not prove
 
-**A good score means:** on this specific set of questions, with this corpus, under
-this configuration, as scored by this judge, at this moment, the system produced
-answers that satisfied these particular criteria.
+**A good score means:** on this question set, with this corpus, under this
+configuration, as scored by this judge, at this moment, the system produced answers
+satisfying these particular criteria.
 
-**It does not mean** the system will answer *your users'* questions well. Those
-are different questions, asked differently, often about parts of the corpus your
-question set does not touch.
-
-**It does not mean** the system will still score this way next month. The corpus
-drifts, model providers update models behind stable names, and your evaluation set
-ages.
-
-**It does not mean** the configuration is optimal. It means it beat the
-alternatives you happened to test. The best configuration may be one you never
-tried.
-
-**It does not mean** the answers are correct. It means the judge found them
-plausible against the criteria in its prompt. On specialist material those are
-noticeably different things.
+| It does not mean | Because |
+|---|---|
+| The system will answer *your users'* questions well | Those are different questions, asked differently, often about parts of the corpus your set does not touch |
+| It will still score this way next month | The corpus drifts, providers update models behind stable names, and your set ages |
+| The configuration is optimal | It beat the alternatives you happened to test. The best one may be untried. |
+| The answers are correct | The judge found them plausible against the criteria in its prompt. On specialist material those differ noticeably. |
 
 ---
 
 ## Statistical limits
 
-This is the most serious category, and it deserves to be first.
-
-### Significance testing exists, but it cannot rescue a small sample
+### Significance testing exists, but cannot rescue a small sample
 
 `compare` and `GET /eval/runs/compare` report a **paired bootstrap 95% confidence
-interval** on every metric both runs scored, over the questions they have in
-common. Binary metrics additionally get **McNemar's exact test** and the discordant
-counts, so you see how many questions actually flipped and in which direction.
-Benjamini-Hochberg is applied across the metric family, and comparisons below 100
-paired questions are flagged `underpowered`.
+interval** on every metric both runs scored, over their common questions. Binary
+metrics also get **McNemar's exact test** with discordant counts, so you see how
+many questions flipped and which way. Benjamini-Hochberg is applied across the
+metric family, and comparisons below 100 paired questions are flagged
+`underpowered`. The bootstrap uses a fixed seed, so the same two runs always compare
+identically.
 
 What that fixes: a difference across 10 questions no longer renders identically to
 one across 1000, and "the biggest mover" is no longer a verdict.
 
-What it does not fix, and this is the part that matters:
+What it does not fix:
 
-- **A wide interval is still a wide interval.** Significance testing tells you your
-  10-question comparison is uninformative; it does not make it informative.
-- **Only metrics with per-question scores can be tested.** Runs produced before the
-  framework recorded them, and aggregate-only metrics such as P50 latency, are
-  listed as skipped rather than being given invented statistics.
+- **A wide interval is still a wide interval.** The test tells you your 10-question
+  comparison is uninformative; it does not make it informative.
+- **Only metrics with per-question scores can be tested.** Aggregate-only metrics
+  such as P50 latency, and runs produced before the framework recorded per-question
+  data, are listed as skipped rather than given invented statistics.
 - **The judge's own variance is not in the interval.** The bootstrap resamples
   questions, not judge calls. Re-judging identical answers can move a score; that
-  source of noise is invisible here.
+  noise is invisible here — and judge caching is on by default, which hides it
+  further. Chapter 6's noise-floor technique, run with `--no-judge-cache`, is what
+  catches it.
 
-Chapter 6's noise-floor technique — running the same configuration twice and
-observing how much it moves on its own — remains worth doing. It catches
-run-to-run variance the paired test cannot see, because a paired test compares two
-runs and assumes each is a fixed measurement.
+### Sample sizes are usually too small
 
-### Sample sizes are usually too small to conclude anything
+For a paired test at the conventional 5% threshold and 80% power:
 
-Detecting a **large** effect takes on the order of 15–25 paired questions. A
-**moderate** effect takes roughly 34. A **small** effect takes 150–200 or more.
+| Effect size | Paired questions needed |
+|---|---|
+| Large (d = 0.8) | ~15 |
+| Moderate (d = 0.5) | ~34 |
+| Small (d = 0.2) | ~199 |
 
-The shipped golden dataset has **ten entries**. At that size, only a dramatic
-change is distinguishable from chance. Practitioner guidance for golden sets
-converges on 100 or more, and one commonly cited figure puts 250 pairs at roughly
-±0.04 confidence-interval width on a proportion.
+The shipped golden dataset has **ten entries.** Practitioner guidance converges on
+100 or more. Most tuning changes produce small or moderate effects, so **most
+comparisons you run on a small set will be underpowered** — `compare` now says so
+explicitly, but saying so is all it can do.
 
-Most tuning changes produce small or moderate effects. **Most comparisons you run
-on a small set will be underpowered** — `compare` now says so explicitly, but
-saying so is all it can do.
-
-And the obvious workaround is itself unsound: computing a mean and standard error
-and treating it as a confidence interval **substantially understates true
-uncertainty** on evaluation sets below a few hundred datapoints. This is a
-documented result, not a quibble. The comfortable-looking error bar would be the
-wrong size.
+The obvious workaround is itself unsound: computing a mean and standard error and
+treating it as a confidence interval **substantially understates true uncertainty**
+on evaluation sets below a few hundred datapoints. The bootstrap exists to avoid
+that assumption.
 
 ### Checking many metrics manufactures false winners
 
-Each run reports roughly fifteen to twenty metrics. If you scan them and declare
-the biggest mover the winner, the arithmetic works against you: testing twenty
-metrics at the conventional 5% threshold gives about a **64% chance** that at
-least one moves "significantly" by pure chance.
+Each run reports roughly fifteen to twenty metrics. Testing twenty at the 5%
+threshold gives about a **64% chance** that at least one moves "significantly" by
+chance (1 − 0.95²⁰).
 
-`compare` applies Benjamini-Hochberg and prints that arithmetic under the table.
-A metric marked `nominal (fails BH)` had an interval excluding zero but did not
-survive the correction — treat it as a lead to re-run, not a result.
+`compare` applies Benjamini-Hochberg and prints that arithmetic under the table. A
+metric marked `nominal (fails BH)` had an interval excluding zero but did not
+survive correction — a lead to re-run, not a result.
 
 More likely than not, a spurious winner is available in every comparison you run.
-The only defence is choosing your primary metric before you look — which is
+The only defence is choosing your primary metric before you look, which is
 discipline, not tooling.
 
 ---
@@ -113,191 +97,143 @@ discipline, not tooling.
 Three of the most-watched metrics — faithfulness, correctness, relevancy — come
 from a single LLM reading the answer and assigning a score.
 
-**One judge, no ensemble, no agreement check.** There is no second judge to
-disagree with, no majority vote, and no inter-rater reliability figure. When the
-judge is wrong, nothing catches it.
+**One judge, no ensemble, no agreement check.** No second judge to disagree, no
+majority vote, no inter-rater reliability figure. When the judge is wrong, nothing
+catches it.
 
-**Documented biases apply.** The research literature on LLM-as-judge names three
-recurring failure modes: position bias, verbosity bias (longer answers score
-better independent of quality), and self-preference — judges scoring outputs from
-their own model family more favourably.
+**Documented biases apply.** The LLM-as-judge literature names three recurring
+failure modes: position bias, verbosity bias (longer answers score better
+independent of quality), and self-preference — judges scoring their own model
+family more favourably.
 
-That last one is directly relevant to the shipped configuration, which uses
-OpenAI models for **both** generation and judging. Self-preference is documented
-to extend across a model *family*, not only to the identical model. The magnitude
-varies enormously across model pairs and datasets — reported swings run in both
-directions across a wide range — so no single correction factor applies. It is a
-known risk factor, not a fixed offset.
+That last is directly relevant: the shipped configuration uses OpenAI models for
+**both** generation and judging. Self-preference is documented to extend across a
+model *family*, not only the identical model, and reported magnitudes swing widely
+in both directions across model pairs — so no correction factor applies. It is a
+risk factor, not a fixed offset. The runner detects the pairing and records a
+warning on the run, but detecting is not correcting.
 
-The practical implication: **comparisons between models from different families,
-judged by a model from one of them, are not neutral.** Recipe 2 in chapter 7 says
-so explicitly.
+**Calibration is uneven.**
 
-**Calibration is uneven.** `calibrate` checks faithfulness and context relevance
-against RAGBench's ground-truth annotations, reporting RMSE and agreement. No such
-ground truth exists for `answer_correctness` or `answer_relevancy`, so those two
-get a weaker check: a **discrimination test** that scores each response against its
-own reference/question and against a deliberately mismatched one, and reports how
-often the judge ranked the matched pair higher. Accuracy well below 100% means the
-prompt is unreliable. Near 100% only means it is not broken — it is a floor, not
-evidence that the judge's mid-range scores track human judgement.
+| Prompt | Check | Strength |
+|---|---|---|
+| Faithfulness, context relevance | Against RAGBench ground-truth annotations — agreement plus RMSE | Strong |
+| `answer_correctness`, `answer_relevancy` | Discrimination test: score each response against its own reference and a deliberately mismatched one, report how often the matched pair ranked higher | Weak — accuracy near 100% only means the prompt is not broken. It is a floor, not evidence that mid-range scores track human judgement. |
 
-**The rubric compresses.** Judge prompts describe a 0.0 / 0.5 / 1.0 scale. The
-parser accepts any float and clamps it. Scores cluster around the rubric points,
-which limits the resolution available for detecting small differences — a
-constraint that compounds the sample-size problem.
+**The rubric compresses.** Judge prompts describe a 0.0 / 0.5 / 1.0 scale; the
+parser accepts any float and clamps. Scores cluster at the rubric points, limiting
+the resolution available for small differences — a constraint that compounds the
+sample-size problem.
 
-**The judge is not a domain expert.** On specialist content it is assessing
+**The judge is not a domain expert.** On specialist content it assesses
 plausibility and internal consistency, not correctness. A confidently wrong answer
-in a domain the judge does not know will often score well.
+in a domain the judge does not know often scores well.
 
-**Judge failures shrink your sample silently.** Failed calls are excluded from
-averages rather than scored zero — the right behaviour, as chapter 4 explains, but
-it means a metric's `sample_size` can fall well below your question count, and the
-questions that survived are not a random subset. Check `sample_size`. Nothing
-warns you.
+**Judge failures shrink your sample silently.** Failed calls are excluded rather
+than scored zero — right behaviour, but a metric's `sample_size` can fall well
+below your question count, and the survivors are not a random subset. Check
+`sample_size`. Nothing warns you.
 
 ---
 
 ## Dataset limits
 
 **Public benchmarks are not your corpus.** RAGBench, HotpotQA, MS MARCO, QASPER,
-and SQuAD 2.0 tell you the pipeline functions and let you compare configurations
-on a fixed task. They tell you nothing about whether the system answers questions
-about *your* documents. Their documents are not your documents; their questions
-are not your questions.
+and SQuAD 2.0 tell you the pipeline functions and let you compare configurations on
+a fixed task. Their documents are not your documents; their questions are not your
+questions.
 
-**Your golden set encodes your assumptions.** It contains the questions you
-thought to write. Real users ask things you did not anticipate, phrased in ways you
-did not consider. A perfect score on questions you wrote is evidence about
-questions you wrote.
+**Your golden set encodes your assumptions.** It contains the questions you thought
+to write. A perfect score on questions you wrote is evidence about questions you
+wrote.
 
-**The golden set measures retrieval only if you annotate it.** Add `gold_passages`
-(or the doc-level `gold_doc_ids` shorthand) to entries in `golden_qa.json` and
-recall, precision, MRR, NDCG and the citation metrics become measurable. Without
-those annotations the metrics now report **`n/a`**, not a number: citation
-precision and recall used to return 1.0 in that case, so an unannotated golden run
-displayed perfect citation scores that meant nothing. Unannotated entries still
-work fine for the judged generation metrics.
+**The golden set measures retrieval only if you annotate it** — and even then, only
+partly. Adding `gold_passages` (or `gold_doc_ids`) makes recall, precision, MRR,
+NDCG and the citation metrics measurable. Without annotations they report **`n/a`**,
+not a number; an earlier version returned 1.0 for citation precision and recall,
+displaying perfect scores that meant nothing. But the golden set supports only the
+`generation` tier, so annotations measure how well the pipeline *uses* the right
+passages, not whether retrieval *finds* them.
 
 **Retrieval is not measured in the `generation` tier**, because retrieval does not
 run.
 
 **Citation metrics measure retrieval by default.** With `eval.citation_scope` at
-its default of `retrieved`, every retrieved chunk counts as a citation. Under that
-setting these metrics are re-measuring retrieval with different arithmetic, not
-assessing what the model chose to cite.
+`retrieved`, every retrieved chunk counts as a citation — re-measuring retrieval
+with different arithmetic, not assessing what the model chose to cite.
 
 ---
 
 ## Coverage limits
 
-**Everything is single-turn.** Every evaluation asks one question and scores one
-answer. The condensation step that rewrites follow-up questions into standalone
-ones is **never exercised** — and it is a genuine source of failure in real
-conversational use. A system that scores well here can still handle follow-ups
-badly, and you would not know.
-
-**Latency is measured under evaluation conditions.** Runs execute many queries
-concurrently; a real user runs one. The reported figures are useful for comparing
-runs against each other and misleading as a statement about user experience.
-
-**Cost is estimated from hardcoded rate tables** in the source — not a live
-pricing feed. There are two such tables in different services and they have
-drifted apart. Useful for comparison, not for forecasting a bill.
-
-**Streaming is not evaluated.** Evaluations use the non-streaming path. The
-streaming path differs in ways that matter — most notably, the PII output
-guardrail can only audit there, never block, because tokens are already sent.
-
-**PII masking's quality cost is not measured by default.** You have to construct
-that comparison yourself, as chapter 8 describes.
-
-**Nothing measures the corpus.** If the answer is not in your documents, no
-configuration finds it. Uniformly low scores with high abstention usually indicate
-a coverage gap, not a tuning problem — and no metric here distinguishes the two.
+| Not covered | Consequence |
+|---|---|
+| **Everything is single-turn** | The condensation step that rewrites follow-up questions is never exercised, and it is a genuine source of failure in real conversational use. A system that scores well here can still handle follow-ups badly. |
+| **Latency is measured under eval concurrency** | Runs execute many queries at once; a real user runs one. Useful for comparing runs, misleading about user experience. |
+| **Cost is estimated from hardcoded rate tables** | Two such tables in different services, drifted apart. Useful for comparison, not for forecasting a bill. |
+| **Streaming is not evaluated** | Evaluations use the non-streaming path. The PII output guardrail can only audit on the streaming path, never block. |
+| **PII masking's quality cost is not measured by default** | You must construct that comparison yourself (chapter 8). |
+| **Nothing measures the corpus** | If the answer is not in your documents, no configuration finds it. Uniformly low scores with high abstention usually indicate a coverage gap, and no metric distinguishes the two. |
 
 ---
 
 ## Reproducibility limits
 
-**The saved config snapshot is partly fabricated.** `retrieval_top_k`,
-`hybrid_search_enabled`, and `contextual_retrieval_enabled` are hardcoded
-constants written into every run record regardless of actual configuration. Those
-three cover several of the most commonly tuned settings.
+**What is recorded.** The saved config snapshot reads the models and retrieval
+settings live from the RAG server, so `retrieval_top_k`, `hybrid_search_enabled`,
+and `contextual_retrieval_enabled` reflect what actually ran. When the server does
+not report them they record as `Unknown` rather than a guess, and query caching is
+refused for that run. Every run is also copied to `data/eval_runs/backup/`.
 
-This means **a stored run does not reliably record what produced it.** The
-dashboard's config-diff inherits the flaw and can report "no change" between runs
-that differed precisely in these settings. Keep your own record; chapter 6 says so
-repeatedly for this reason.
+**What is not.**
 
-**Configuration can change mid-run.** The config file auto-reloads on
-modification, so editing it during an evaluation applies the change partway
-through, yielding a result describing neither configuration.
-
-**Model providers are not stable.** A cloud model behind a fixed name can change
-underneath you. A comparison run today and a comparison run in three months may
-not be measuring the same system, and nothing records the provider-side version.
-
-**Nothing is deterministic end to end.** `temperature=0` reduces variation without
-eliminating it, for both the generator and the judge.
-
-**Results have no backup.** Runs are flat JSON files. The index is rebuilt by
-scanning the directory at startup. Delete a file and the run is gone.
-
-**Several config keys silently do nothing** — `reranker.top_n`,
-`eval.abstention_phrases`, `database.max_connections`, and three PII settings. An
-experiment that "tuned" one of these measured nothing while appearing to work.
-Chapter 3 lists them.
+- **Configuration can change mid-run.** The config file auto-reloads on
+  modification, so editing during an evaluation applies the change partway through,
+  yielding a result describing neither configuration.
+- **Model providers are not stable.** A cloud model behind a fixed name can change
+  underneath you, and nothing records the provider-side version. A comparison today
+  and one in three months may not measure the same system.
+- **Nothing is deterministic end to end.** `temperature=0` reduces variation for
+  both generator and judge without eliminating it.
+- **Judge caching is on by default**, so a re-run is not an independent measurement
+  unless you pass `--no-judge-cache`.
+- **Chunk size and overlap are not in `config.yml`** and are not recorded as
+  anything you set — they are code constants, so a run that used different values
+  is only distinguishable by your own notes.
 
 ---
 
 ## What this system is genuinely good for
 
-The list above is long, so it is worth being equally clear about the real
-strengths. They are not small.
+The list above is long, so it is worth being equally clear about the strengths.
 
-**Detecting large regressions.** If a change makes things substantially worse, you
-will see it, and you will see it before your users do. This alone justifies the
-apparatus.
-
-**Comparing configurations that differ a lot.** Reranking on versus off, a 4B
-local model versus a frontier cloud model, hybrid search versus vector-only —
-these produce effects large enough to see clearly at realistic sample sizes.
-
-**Measuring retrieval, honestly and cheaply.** Retrieval metrics need no judge,
-are deterministic, and are the most trustworthy numbers the system produces. Since
-most RAG quality problems are retrieval problems, this is more valuable than it
-sounds.
-
-**Making cost and latency trade-offs visible.** Even approximate figures beat
-intuition when deciding whether a quality gain justifies a latency cost.
-
-**Enforcing discipline.** The greatest practical value is often procedural: a
-fixed question set and a repeatable procedure stop you from tuning on vibes and
-remembering yesterday's answers as better than they were.
-
-**Catching hallucination behaviour.** Faithfulness and the abstention false
-negative rate measure something genuinely important — whether the system invents
-answers — and measure it in a way ad-hoc testing reliably misses.
+| Strength | Why it matters |
+|---|---|
+| **Detecting large regressions** | If a change makes things substantially worse you will see it, before your users do. This alone justifies the apparatus. |
+| **Comparing configurations that differ a lot** | Reranking on/off, a 4B local model vs a frontier cloud model, hybrid vs vector-only — effects large enough to see clearly at realistic sample sizes |
+| **Measuring retrieval honestly and cheaply** | No judge, deterministic, the most trustworthy numbers here. Since most RAG quality problems are retrieval problems, this is more valuable than it sounds. |
+| **Making cost and latency trade-offs visible** | Even approximate figures beat intuition when deciding whether a quality gain justifies a latency cost |
+| **Enforcing discipline** | A fixed question set and a repeatable procedure stop you tuning on vibes and remembering yesterday's answers as better than they were |
+| **Catching hallucination behaviour** | Faithfulness and the abstention false negative rate measure whether the system invents answers — something ad-hoc testing reliably misses |
 
 ---
 
 ## How to report results honestly
 
-If you are showing these numbers to someone else:
-
-- **State the sample size.** Every time. It is the first thing that determines
-  whether a difference means anything.
+- **State the sample size.** Every time. It determines whether a difference means
+  anything.
 - **State the dataset and tier**, so it is clear what was and was not exercised.
+- **Quote the confidence interval, not just the delta** — and say when a comparison
+  was flagged `underpowered`.
 - **Say whether you established a noise floor**, and what it was.
-- **Say which metric you chose in advance**, and resist presenting a
-  chosen-afterward metric as the headline.
+- **Say which metric you chose in advance**, and resist promoting a
+  chosen-afterward metric to headline.
 - **Report what got worse**, not only what improved.
-- **Do not present the weighted score as an overall quality figure.** It embeds
-  someone else's weighting of six objectives, with latency at 0.05 and cost at
-  0.10.
-- **Do not present citation metrics from a golden-set run.** They are 1.0 by
+- **Do not present the weighted score as an overall quality figure.** It embeds a
+  weighting of six objectives, with latency at 0.05 and cost at 0.10 by default —
+  and if you edited `eval.scoring`, say so, because it makes earlier runs
+  incomparable.
+- **Do not present citation metrics from an unannotated run.** They are `n/a` by
   definition and mean nothing.
 - **Say "no detectable difference"** rather than "no difference" when a comparison
   comes back flat. Those are different claims, and at these sample sizes only the
@@ -305,22 +241,18 @@ If you are showing these numbers to someone else:
 
 ---
 
-## Recommendations (not currently implemented)
+## Still missing
 
-Improvements that would materially strengthen the conclusions available here. None
-of these exist today; each is recorded as a concrete proposal in
-[`docs/suggestions.md`](../suggestions.md).
+Recorded as concrete proposals in [`docs/suggestions.md`](../suggestions.md).
 
-- **Ensemble judging** with inter-rater agreement reporting. Today a single judge
-  scores every generation metric, and nothing measures how much a second one would
-  have disagreed.
+- **Ensemble judging** with inter-rater agreement reporting.
 - **Multi-turn evaluation**, so question condensation is exercised.
 - **Per-question significance in the dashboard.** The API returns it; the analytics
   UI still shows point deltas only.
+- **Configurable chunk size and overlap**, and configurable RRF source weights.
 
 ---
 
 **Back to:** [Guide index](INDEX.md)
 
-Engineering detail on the framework's internals:
-[`docs/internal/eval-framework.md`](../internal/eval-framework.md).
+Engineering detail: [`docs/internal/eval-framework.md`](../internal/eval-framework.md).

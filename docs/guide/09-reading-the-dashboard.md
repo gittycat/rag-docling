@@ -1,163 +1,100 @@
-# Reading the dashboard
+# 9. Reading the dashboard
 
-The dashboard is the Analytics page in the web UI. It is a read-only window onto
-eval runs and live system state — it can show you what's already been measured,
-but as you'll see below, it cannot trigger new measurement itself.
+The Analytics page is a read-only window onto eval runs and live system state, plus
+one control: you can start and cancel runs from it.
 
-## Getting there
+Open **http://localhost:8000/analytics**. Three tabs — **Health**, **Experiments**,
+**System** — selected via `?tab=`. Older names (`overview`, `scorecard`, `trends`,
+`compare`) redirect to `health` or `experiments`.
 
-Open **http://localhost:8000/analytics**. The page has three tabs — **Health**,
-**Experiments**, **System** — selected via a `?tab=` query parameter (older tab
-names `overview`, `scorecard`, `trends`, `compare` still redirect to the current
-two that absorbed them, `health`/`experiments`, if you have an old bookmark).
+**Refresh behaviour.** The page loads `GET /api/metrics/system` and
+`GET /api/eval/dashboard` on open, and polls `GET /api/eval/runs/active` every 5
+seconds regardless of tab to drive the live-job indicator. With auto-refresh on,
+all three refresh every 30 seconds. The first load shows a spinner; after that
+background refreshes are silent — **a failed background refresh leaves the last
+values on screen with no indication they are stale.**
 
-The page loads `GET /api/metrics/system` and `GET /api/eval/dashboard` on open,
-and separately polls `GET /api/eval/runs/active` every 5 seconds regardless of
-which tab is showing, to drive the live-job indicator in the header. If
-auto-refresh is enabled, all three refresh again every 30 seconds. The very
-first load shows a full-page spinner; after that, background refreshes are
-silent — if a background refresh fails, the page just keeps showing the last
-values it had, with no visible indication that the data may be stale.
+A sticky header spans all tabs: system name and version, health dot, document and
+chunk counts, the two most recent runs' score badges, and the live-job strip.
 
-The sticky header above the tabs (system name/version, a health dot, document
-and chunk counts, the two most recent runs' score badges, and the live-job strip
-when a run is in progress) is common to all three tabs.
+---
 
 ## Health tab
 
-This is the default landing tab. It fetches the two most recent eval runs (for
-delta comparison) and the full detail of the latest one.
+The default landing tab. Fetches the two most recent runs (for deltas) and full
+detail of the latest.
 
-- **Weakest-link verdict banner** — a short sentence rolling up the run's
-  weakest metric across groups. This is computed client-side from the run's
-  metric list; it is not a single field the API returns.
-- **Weighted score** stat panel — the run's overall `weighted_score.score`,
-  with a delta against the previous run's `weighted_score`.
-- **Retrieval** / **Generation** stat panels — each shows the single *weakest*
-  metric within that group, not a named headline metric. If the run's tier is
-  `generation` (no retrieval performed), the Retrieval panel reads "n/a
-  (generation tier)" instead of a number.
-- **Cost / query** stat panel — the run's average per-query cost in USD, with a
-  delta against the previous run.
-- **Latency p95** stat panel — the 95th-percentile end-to-end query latency for
-  the run, with a delta against the previous run.
-- **Config under test** chip strip (`ConfigContext`) — a compact summary of what
-  was actually running for this eval: LLM, embedding model, reranker model (only
-  shown if the reranker was enabled), retrieval `top_k`, whether hybrid search
-  was on (with the RRF `k` value appended if so), whether contextual retrieval
-  was on, and chunk size/overlap. Each field prefers the run's own recorded
-  config and falls back to live system config only if the run didn't record
-  that field.
-- **Latency panel** — three bars (p50, average, p95 latency), all in seconds,
-  also printed as text below the chart. This is explicitly a single end-to-end
-  number per query, not a retrieval-vs-generation breakdown: the eval harness
-  only times one `perf_counter` span around the whole query, so there is no
-  stage-level timing data to draw a waterfall from.
-- **Weighted score breakdown** — the objectives behind the headline number: each
-  objective's configured weight, its effective share after weights for
-  objectives with no data are redistributed, its score, its contribution, and
-  that contribution as a share of the total. Objectives the run produced no data
-  for are listed underneath.
-- **Metric breakdown** — the full per-group metric list (retrieval,
-  generation, citation, abstention), each metric shown as a percentage with a
-  threshold band (shape plus color) and, where present, `± std_dev` and the
-  sample size `n`. Metrics that carry per-question scores get a **dist** toggle
-  that expands a histogram of those scores with min/p25/median/p75/max — an
-  average of 0.7 from every question scoring 0.7 looks different here from one
-  where half score 1.0 and half score 0.4.
+| Panel | Shows |
+|---|---|
+| **Weakest-link verdict** | A sentence rolling up the run's weakest metric across groups. Computed client-side, not an API field. |
+| **Weighted score** | `weighted_score.score`, with a delta against the previous run |
+| **Retrieval** / **Generation** | The single *weakest* metric in that group — not a named headline metric. On a `generation`-tier run the Retrieval panel reads "n/a (generation tier)". |
+| **Cost / query** | Average per-query cost in USD, with a delta |
+| **Latency p95** | 95th-percentile end-to-end query latency, with a delta |
+| **Config under test** | LLM, embedding model, reranker (only if enabled), `top_k`, hybrid search (with RRF `k` appended), contextual retrieval, chunk size/overlap. Prefers the run's own recorded config, falling back to live system config only where the run recorded nothing. |
+| **Latency panel** | Three bars — p50, average, p95 — in seconds, also printed as text. One end-to-end number per query; there is no retrieval-vs-generation breakdown, because the harness times a single span around the whole query. |
+| **Weighted score breakdown** | Per objective: configured weight, effective share after redistribution, score, contribution, and contribution as a share of total. Objectives with no data are listed underneath. |
+| **Metric breakdown** | Full per-group metric list (retrieval, generation, citation, abstention), each as a percentage with a threshold band (shape plus colour), `± std_dev` where present, and sample size `n`. Metrics carrying per-question scores get a **dist** toggle expanding a histogram with min/p25/median/p75/max. |
+
+That histogram earns its place: an average of 0.7 where every question scored 0.7
+looks nothing like one where half scored 1.0 and half scored 0.4.
+
+---
 
 ## Experiments tab
 
-This combines a trend view and a run-comparison view.
+Combines trends, comparison, and run control.
 
-- **Metric history sparklines** — five small trend charts (weighted score,
-  faithfulness, answer correctness, latency p95, average cost) plotted across
-  the most recent eval runs, oldest to newest. This strip is independent of
-  anything selected below it — it always shows all recent runs regardless of
-  which ones you've checked for comparison.
-- **Run selector** — a checklist of up to 50 recent runs, each with a run name,
-  model, run date, and a score badge. You can select up to 4 runs at once.
-  There is no search box, dataset filter, or tier filter — you scroll the list.
-- **Comparison table** — for the runs you've selected, a table grouped by
-  headline → retrieval → generation → citation → abstention → cost/speed, each
-  cell showing the raw metric value plus a colored delta against a baseline.
-  The oldest of your selected runs is always treated as baseline "A" —
-  everything else is shown as a delta from A, regardless of the order you
-  clicked runs in. A "hide unchanged rows" checkbox filters out rows where every
-  selected run is within a small threshold of A.
-- **Config diff** — one column per selected run, baseline A first. Cells that
-  differ from A are marked with `~` and highlighted; settings the runner never
-  captured render as `Unknown` and are never reported as a change. Unchanged
-  settings are hidden by default.
-- **Export** — the currently selected runs (and the comparison result) can be
-  exported as CSV or JSON. The JSON export is the one place where fields the
-  on-screen panels drop — like `total_cost_usd`, `cost_model`, per-run
-  `dashboard_metrics` — do reach you, since it dumps the full API response
-  objects verbatim.
-- **Run evaluation panel** — starts and cancels runs from the UI; see
-  [chapter 5](05-running-evals.md#from-the-dashboard). When no runs exist yet,
-  the tab's empty state points at this panel.
+| Panel | Shows |
+|---|---|
+| **Metric history sparklines** | Five trend charts (weighted score, faithfulness, answer correctness, latency p95, average cost) across recent runs, oldest to newest. Independent of your selection below — always all recent runs. |
+| **Run selector** | Checklist of up to 50 recent runs with name, model, date, score badge. Select up to 4. No search box, no dataset or tier filter — you scroll. |
+| **Comparison table** | Grouped headline → retrieval → generation → citation → abstention → cost/speed. Each cell shows the raw value plus a coloured delta against baseline. **The oldest selected run is always baseline "A"**, regardless of click order. "Hide unchanged rows" filters rows where every run is within a small threshold of A. |
+| **Config diff** | One column per selected run, baseline A first. Cells differing from A are marked `~` and highlighted; settings the runner never captured render as `Unknown` and are never reported as a change. Unchanged settings hidden by default. |
+| **Export** | Selected runs and the comparison result as CSV or JSON. The JSON export is the only place fields the panels drop — `total_cost_usd`, `cost_model`, per-run `dashboard_metrics` — actually reach you, since it dumps the API response objects verbatim. |
+| **Run evaluation** | Start and cancel runs; see [chapter 5](05-running-evals.md#from-the-dashboard). The tab's empty state points here when no runs exist. |
+
+---
 
 ## System tab
 
-This tab reads only `GET /api/metrics/system` — no eval-service call.
+Reads only `GET /api/metrics/system` — no eval-service call.
 
-- **Component status** — one row per backend dependency (postgres, ollama),
-  each with a status dot and badge, drawn from the same `component_status`
-  object that also feeds the header's overall health dot.
-- **Models table** — one row per configured model role (LLM, embedding,
-  reranker if enabled, eval judge if configured): model name, provider,
-  parameter count, disk size, and load status. The API also returns a
-  `reference_url` and a `description` for every model in this table, but
-  neither is rendered anywhere — there's no link-out to model documentation
-  from this page.
-- **Index statistics tiles** — total document count, total chunk count, the
-  configured retrieval `top_k`, and the final post-rerank `top_n`.
+| Panel | Shows |
+|---|---|
+| **Component status** | One row per backend dependency (postgres, ollama, bm25 when hybrid search is on), with status dot and badge. Same `component_status` object that feeds the header health dot. |
+| **Models table** | One row per role (LLM, embedding, reranker if enabled, eval judge if configured): name, provider, parameter count, disk size, load status |
+| **Index statistics** | Document count, chunk count, configured `top_k`, and final post-rerank `top_n` |
 
-A number of fields the API already returns for this tab are simply never drawn
-anywhere in the System tab or elsewhere in the app: the descriptive/research-note
-fields on hybrid search, contextual retrieval, and the reranker (e.g.
-`hybrid_search.description`, `contextual_retrieval.research_reference`,
-`reranker.description`), the one-line `pipeline_description` string, the full
-`evaluation_metrics` glossary (name/category/description/threshold/
-interpretation/reference URL per known metric), and the server's own response
-`timestamp` (the header instead shows your browser's local clock).
+The API returns a `reference_url` and `description` for every model in that table;
+neither is rendered, so there is no link-out to model documentation.
 
-## What the dashboard cannot do today
+---
 
-Be aware of these limits before you go looking for a control that isn't there:
+## What the dashboard cannot do
 
-- **No significance testing.** The comparison table shows deltas and the metric
-  breakdown shows variance, but nothing tells you whether a difference between
-  two runs is larger than the noise. That judgement is still yours to make from
-  the std dev and the per-question distributions.
-- **No stage-level latency.** The eval harness times one span around the whole
-  query, so there is no retrieval-vs-generation breakdown to draw.
-- **No search or filtering in the run selector** — you scroll a list of the 50
-  most recent runs.
-- Other things fetched by the API but never surfaced anywhere in the webapp:
-  the run's `metadata.seed` (reproducibility info), and the descriptive fields
-  on the System tab's models and pipeline objects (`reference_url`,
-  `description`, `pipeline_description`, the `evaluation_metrics` glossary).
+| Limit | Use instead |
+|---|---|
+| **No significance testing displayed.** The CLI and API compute paired bootstrap intervals, McNemar's test, and BH correction — the analytics UI shows point deltas only. | `just eval-compare <a> <b>` |
+| **No stage-level latency.** The harness times one span around the whole query. | Nothing — the data does not exist |
+| **No search or filter in the run selector.** You scroll the 50 most recent. | The CLI, or read `data/eval_runs/` directly |
+| **Fields fetched but never drawn:** the run's `metadata.seed`, the descriptive/research-note fields on hybrid search, contextual retrieval and the reranker, `pipeline_description`, the `evaluation_metrics` glossary, and the server's own response `timestamp` (the header shows your browser clock). | The raw API response |
+
+---
 
 ## When to drop to the CLI
 
-Use the `evals` CLI (via `docker compose exec evals ...`, or the `just eval*`
-recipes) rather than the dashboard whenever you need to:
+- **A tier, dataset mix, or judge setting the panel does not expose**, or scripting
+  a sweep: `just eval --tier <tier> --datasets <names> --samples <n>`.
+- **Significance testing on a comparison** — `just eval-compare`.
+- **A YAML config file** (`--config`); the dashboard form covers only the flags in
+  chapter 5.
+- **An individual question's response**, not just the distribution: read the run
+  JSON in `data/eval_runs/`, or export a `review-*` format.
+- **Runs outside the 50 most recent**, or filtering by dataset or tier.
+- **Judge calibration**, listing datasets, or anything else under `evals.cli` —
+  `just eval-calibrate`, `just eval-datasets` are CLI-only.
 
-- **Run a tier, dataset mix, or judge setting the panel does not expose**, or
-  script a sweep of runs: `just eval --tier <tier> --datasets <names> --samples <n>`,
-  or the shorthand recipes `just test-eval` / `just test-eval-full`.
-- **Run against a YAML config file** (`--config`) — the dashboard form only
-  covers the flags listed in chapter 5.
-- **Inspect an individual question's response**, not just the score
-  distribution: read the run JSON in `data/eval_runs`.
-- **Diff runs that are not in the 50 most recent**, or filter by dataset/tier —
-  the run selector has neither.
-- **Compare more than two runs' configuration.** `just eval-compare <run_id> <run_id>`
-  works pairwise; for three-plus runs, fetch each run's `config` object via the
-  API and diff them yourself — the dashboard's config diff is hardcoded to
-  baseline-vs-second-selection.
-- **Calibrate the judge**, list datasets, or do anything else under
-  `evals.cli` — none of this is dashboard-reachable; `just eval-datasets`,
-  `just eval-calibrate`, etc. are CLI-only.
+---
+
+**Next:** [10. Troubleshooting](10-troubleshooting.md).

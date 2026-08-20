@@ -1,55 +1,40 @@
-# Getting running
+# 2. Getting running
 
-This chapter gets you from a fresh clone to a working chat session: prerequisites,
-the secrets you must create by hand, the one config decision you must make before
-the first boot, starting the stack, and what survives when you tear it down.
+Fresh clone to working chat session. The one decision to make before first boot is
+[local vs cloud models](#choose-local-or-cloud-models-before-first-boot) — get it
+wrong and the stack will not start.
 
 ## Prerequisites
 
-You need:
+| Need | Why |
+|---|---|
+| **Docker** | Docker Desktop, OrbStack, or Podman. The stack is Compose-only; there is no non-Docker path. |
+| **`just`** | The command runner used throughout (`brew install just`). Every recipe has an underlying `docker compose` form. |
+| **Ollama** | Only if you run any local model. Required for the default `nomic-embed` embedding. |
+| **Disk headroom** | Local models and the reranker download into a bind-mounted cache on first fetch. |
 
-- **Docker** — Docker Desktop, OrbStack, or Podman. The stack is defined entirely
-  in Docker Compose files; there is no non-Docker way to run it.
-- **`just`** — the command runner used for every recipe in this guide (`brew install just`
-  or your platform's equivalent). Every `just` recipe has an underlying `docker compose`
-  command; this guide gives both where it matters.
-- **Ollama**, only if you plan to run any local model — the checked-in models are
-  Ollama-backed for local inference/embedding (`gemma3-4b`, `llama3-8b`, `nomic-embed`).
-  Not required if you intend to run cloud models only.
-- Disk and memory headroom for whichever models you choose — local inference models
-  and the reranker are downloaded into a bind-mounted cache the first time you fetch them.
+`just preflight` runs automatically before `just up` and `just deploy`. It checks
+that Docker is reachable and — only when `active.inference` or `active.embedding`
+points at an `ollama` provider — that Ollama answers on `localhost:11434`.
 
-`just preflight` (run automatically by `just up` and `just deploy`) checks that the
-Docker daemon is reachable, and — only if `config.yml`'s `active.inference` or
-`active.embedding` currently points at an `ollama` provider — that Ollama answers on
-`localhost:11434`. If Ollama isn't running and you need it, start it with the Ollama
-app or `ollama serve`.
+## Create secrets first
 
-## Secrets you must create before first start
+Credentials come exclusively from Docker Compose **secrets**: files under
+`secrets/`, mounted at `/run/secrets/<NAME>`. Environment variables of the same
+name are deliberately ignored. Compose refuses to start a container whose secret
+file is missing.
 
-The base stack reads credentials exclusively from Docker Compose **secrets** —
-files under `secrets/`, mounted into containers at `/run/secrets/<NAME>`. The
-application does not accept these values as plain environment variables. Before
-your first `docker compose up` (or `just up`), the following files must exist:
+| File | Required |
+|---|---|
+| `secrets/POSTGRES_SUPERUSER` | Always |
+| `secrets/POSTGRES_SUPERPASSWORD` | Always |
+| `secrets/RAG_SERVER_DB_USER` | Always |
+| `secrets/RAG_SERVER_DB_PASSWORD` | Always |
+| `secrets/OPENAI_API_KEY` | Only if an OpenAI model is active (inference, embedding, or eval judge) |
+| `secrets/ANTHROPIC_API_KEY` | Only if an Anthropic model is active |
 
-| File | Used by | Required even for an all-local start? |
-|---|---|---|
-| `secrets/POSTGRES_SUPERUSER` | postgres | Yes |
-| `secrets/POSTGRES_SUPERPASSWORD` | postgres | Yes |
-| `secrets/RAG_SERVER_DB_USER` | postgres, rag-server, task-worker | Yes |
-| `secrets/RAG_SERVER_DB_PASSWORD` | postgres, rag-server, task-worker | Yes |
-| `secrets/OPENAI_API_KEY` | rag-server, task-worker, evals | Only if you select an OpenAI model anywhere (inference, embedding, or eval judge) |
-| `secrets/ANTHROPIC_API_KEY` | rag-server, task-worker, evals | Only if you select an Anthropic model anywhere |
-
-Docker Compose secrets are declared as `file: secrets/<NAME>` — if the file is
-missing, the container that needs it will fail to start (Compose refuses to mount
-a secret whose source file doesn't exist). Even for a fully local, Ollama-only
-deployment, you still need the four Postgres/database secret files — the database
-is not optional, and Postgres has no default credentials baked into the image.
-
-Create them as flat text files with no trailing formatting concerns beyond
-whitespace (the app strips leading/trailing whitespace and null bytes when it
-reads them), for example:
+The four Postgres files are needed even for a fully local deployment — the
+database is not optional and the image has no default credentials.
 
 ```bash
 mkdir -p secrets
@@ -59,201 +44,145 @@ echo -n "ragbench_app" > secrets/RAG_SERVER_DB_USER
 echo -n "$(openssl rand -hex 24)" > secrets/RAG_SERVER_DB_PASSWORD
 ```
 
-Only add `secrets/OPENAI_API_KEY` and/or `secrets/ANTHROPIC_API_KEY` if the model
-you're about to activate needs them (see below).
+Leading and trailing whitespace and null bytes are stripped on read, so the exact
+file ending does not matter.
 
-Separately, `just` itself (not Docker) reads `secrets/.env` for non-secret local
-values used by `just` recipes — this is a plain dotenv file, unrelated to the
-Docker secrets above. It is not required for `docker compose up` to work, only
-for some `just` recipes that assume it exists.
+Separately, `just` reads `secrets/.env` for non-secret local values used by some
+recipes. That is a plain dotenv file, unrelated to Docker secrets, and
+`docker compose up` does not need it.
 
-## Choosing local vs. cloud models before first boot
+## Choose local or cloud models before first boot
 
-This is the single most common first-run failure, so read this section before you
-run anything.
-
-The checked-in `config.yml` ships with **cloud models active**:
+The checked-in `config.yml` ships with **cloud inference active**:
 
 ```yaml
 active:
-  inference: gpt5-mini
-  embedding: nomic-embed
-  eval: gpt5-2
-  reranker: minilm-l6
+  inference: gpt5-mini    # OpenAI — needs secrets/OPENAI_API_KEY
+  embedding: nomic-embed  # Ollama — local, needs Ollama running
+  eval: gpt5-2            # OpenAI — needs secrets/OPENAI_API_KEY
+  reranker: minilm-l6     # local cross-encoder
 ```
 
-`active.inference` is `gpt5-mini` (OpenAI) and `active.eval` is `gpt5-2` (also
-OpenAI) — both `requires_api_key: true`. If you start the stack as-is without an
-`OPENAI_API_KEY` secret file, the rag-server and evals containers will fail to
-validate their provider requirements at boot.
+Start as-is without `secrets/OPENAI_API_KEY` and the rag-server and evals
+containers fail their provider validation at boot.
 
-`active.embedding` is already `nomic-embed`, which is Ollama-backed and local —
-you do not need to change this one for a local-only start, but you do need Ollama
-running and reachable (see Prerequisites).
-
-**If you want a fully local, no-cloud-API-key start**, edit `config.yml` before
-your first `up` and change `active.inference` to an Ollama-backed key — the two
-defined in the checked-in file are `gemma3-4b` and `llama3-8b`:
+**For a fully local start**, point `active.inference` at an Ollama-backed model:
 
 ```yaml
 active:
-  inference: gemma3-4b   # was gpt5-mini
-  embedding: nomic-embed  # already local — no change needed
-  eval: gpt5-2            # can stay cloud, or point at a local model if you add one
+  inference: granite4-8b  # or gemma3-4b, qwen35-4b
+  embedding: nomic-embed  # already local
+  eval: gpt5-2            # judging can stay cloud, or use a local model
   reranker: minilm-l6
 ```
 
-Before this will work you also need the models pulled into Ollama:
+Then pull the models:
 
 ```bash
-ollama pull gemma3:4b
+ollama pull granite4.1:8b
 ollama pull nomic-embed-text
 ```
 
-If instead you want to keep cloud inference, create the matching secret file
-(`secrets/OPENAI_API_KEY` or `secrets/ANTHROPIC_API_KEY`) before starting.
+### Models available out of the box
 
-**A warning about three model choices that will fail at boot regardless of what
-secret files you create**: selecting `gemini-pro`, `deepseek-chat`, or
-`moonshot-v1` as `active.inference` (or `active.eval`) will pass YAML validation
-but fail at container boot. The application code knows how to read
-`GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, and `MOONSHOT_API_KEY`, but **no compose
-file declares any of these three as a Docker secret** — there is no
-`secrets: GOOGLE_API_KEY: file: secrets/GOOGLE_API_KEY` entry anywhere in
-`docker-compose.yml` or its overlays. Picking one of these three models is not
-currently a supported path without hand-editing the compose file yourself to add
-the secret declaration and mount, in addition to creating the secret file.
-Everything else in `models.inference` and `models.eval` (`gemma3-4b`, `llama3-8b`,
-`gpt5-mini`, `claude-sonnet`, `claude-opus`) is fully wired.
+| Key | Provider | Model | Notes |
+|---|---|---|---|
+| `gemma3-4b` | Ollama | `gemma3:4b` | Small, fast |
+| `qwen35-4b` | Ollama | `qwen3.5:4b` | 256K context, ~3.4 GB |
+| `granite4-8b` | Ollama | `granite4.1:8b` | Apache-2.0, 128K context, tuned for RAG |
+| `gpt5-mini` | OpenAI | `gpt-5-mini` | Shipped default |
+| `gpt56-luna` | OpenAI | `gpt-5.6-luna` | |
+| `claude-haiku` | Anthropic | `claude-haiku-4-5` | Cheapest Anthropic option |
+| `claude-sonnet` | Anthropic | `claude-sonnet-5` | |
+| `claude-opus` | Anthropic | `claude-opus-5` | |
 
-## Pre-fetching the reranker
+Embedding models: `nomic-embed`, `qwen3-embed-06b`, `embeddinggemma` (all local);
+`openai-ada`, `openai-3-small`, `openai-3-large` (cloud).
 
-Before your first `up`, run:
+Only OpenAI, Anthropic, and Ollama are wired. Adding another provider means
+touching six places in the code plus the compose secret declarations —
+`config.yml` carries a commented template listing them.
+
+## Pre-fetch the reranker
 
 ```bash
 just init
 ```
 
-This runs a disposable rag-server container that downloads the active reranker
-model (default `cross-encoder/ms-marco-MiniLM-L-6-v2`) into `.cache/huggingface`,
-which is bind-mounted into both `rag-server` and `task-worker`. `just init MODEL=...`
-lets you pass a different Hugging Face model id if you've changed
+This downloads the active reranker (default `cross-encoder/ms-marco-MiniLM-L-6-v2`)
+into `.cache/huggingface`, bind-mounted into rag-server and task-worker. Pass a
+different Hugging Face id with `just init MODEL=<id>` if you changed
 `active.reranker`.
 
-This step matters because rag-server checks at startup whether the reranker
-model is present in the local Hugging Face cache, and **fails fast with a
-`RuntimeError` if it is not** — the container will not silently fall back to
-downloading it live, and it will not come up in a degraded state. If reranking is
-enabled (`reranker.enabled: true`, the default) and you skip `just init`, the
-container starts, then dies on this check, and the compose healthcheck for
-rag-server will never pass. The error message it logs points back at running
-`just init`.
+Do not skip this. With reranking enabled (the default), rag-server checks at
+startup that the model is in the local cache and **exits with a `RuntimeError` if
+it is not** — `HF_HUB_OFFLINE=1` is set, so there is no silent live download and
+no degraded start. Skip `just init` and the container boots, dies on this check,
+and never passes its healthcheck.
 
-## Starting the stack
+## Start and confirm health
 
 ```bash
-just up
+just up            # preflight + docker compose up -d
+docker compose ps  # watch for healthy
 ```
 
-This runs `preflight` (the Docker/Ollama sanity check above) and then
-`docker compose up -d`, bringing up `postgres`, `chromadb`, `rag-server`,
-`task-worker`, `webapp`, and `evals`.
-
-## Confirming health
+Docker healthchecks on rag-server and evals only confirm the process answers HTTP.
+For the real dependency check:
 
 ```bash
-docker compose ps
+curl -s http://localhost:8001/metrics/system | jq '.health_status, .component_status'
 ```
 
-Watch for all services reaching `healthy` (rag-server and evals both have Docker
-healthchecks; postgres has a real `pg_isready` check). Note that rag-server's and
-evals' Docker healthchecks only confirm the process is answering HTTP — they do
-not verify Postgres/ChromaDB/Ollama connectivity from inside the app. For that,
-once the stack is up:
+`health_status` is `healthy` or `degraded`; `component_status` carries per-component
+postgres/bm25/ollama results. `bm25` appears only when hybrid search is enabled —
+`unavailable` there means the `pg_textsearch` extension or index cannot be queried,
+which silently reduces every hybrid query to vector-only.
 
 ```bash
-curl http://localhost:8001/metrics/system
+just logs                        # all services
+docker compose logs -f rag-server  # one service
+just show-config                 # which models are actually active
 ```
 
-The `health_status` field (`"healthy"` or `"degraded"`) and the `component_status`
-object (per-component postgres/bm25/ollama checks) are the real dependency check.
-`bm25` appears only when hybrid search is enabled; `unavailable` there means the
-`pg_textsearch` extension or index cannot be queried, which silently reduces every
-hybrid query to vector-only.
+Web UI: **http://localhost:8000**. Eval API: **http://localhost:8002**.
 
-Tail logs at any point with:
+## Ingest and ask
 
 ```bash
-just logs
-```
+# Upload — or use http://localhost:8000/upload
+curl -F "files=@/path/to/document.pdf" http://localhost:8001/upload
 
-or `docker compose logs -f <service>` for a single service.
-
-Open the web UI at **http://localhost:8000**. The eval service API answers
-directly at **http://localhost:8002**.
-
-You can also sanity-check which models are actually active before or after
-starting:
-
-```bash
-just show-config
-```
-
-## Ingesting your first documents
-
-Use the Upload page in the web UI (`http://localhost:8000/upload`), or the
-underlying API directly:
-
-```bash
-curl -F "files=@/path/to/your/document.pdf" http://localhost:8001/upload
-```
-
-Ingestion runs asynchronously through the task worker; the Upload page polls
-task status for you. Give it a moment — contextual retrieval (if enabled) and
-embedding generation both take real wall-clock time per document.
-
-## Asking a first question
-
-From the chat page (`http://localhost:8000/chat`), or directly:
-
-```bash
+# Ask — or use http://localhost:8000/chat
 curl -N http://localhost:8001/query/stream \
   -H "Content-Type: application/json" \
   -d '{"query": "What does this document say about X?"}'
 ```
 
-(`-N` disables curl's output buffering so you see the SSE stream as it arrives.)
+Ingestion is asynchronous through the task worker; the Upload page polls task
+status. Give it time — embedding and (if enabled) contextual retrieval both cost
+real wall-clock time per document. `-N` disables curl buffering so you see the SSE
+stream arrive.
 
-## Stopping, and what persists
+## Stopping, and what survives
 
 ```bash
-just down
+just down    # docker compose down — containers only
 ```
 
-is `docker compose down` — it stops and removes containers but leaves named
-volumes and bind-mounted host directories intact. On the next `just up`, your
-documents, chat history, and vector index are all still there.
+| Survives `down` | What it holds |
+|---|---|
+| `postgres_data` (volume) | Document metadata, chat sessions, task queue |
+| `chroma_data` (volume) | Vector index |
+| `./config.yml` (bind mount) | Your configuration |
+| `./data/indexed_documents` (bind mount) | Original uploaded files |
+| `./.cache/huggingface` (bind mount) | Downloaded model weights |
 
-What persists across a plain `down`:
+`docker compose down -v` additionally **destroys** `postgres_data` and
+`chroma_data`. There is no backup mechanism for either; recovery means re-ingesting
+every document. The bind-mounted host directories are untouched by `-v` — they live
+on your filesystem, not in a Docker volume.
 
-- **`postgres_data`** (named volume) — all relational state: document metadata,
-  chat sessions/history, the task queue.
-- **`chroma_data`** (named volume) — the vector index.
-- **`./config.yml`** (host bind mount) — your configuration.
-- **`./data/indexed_documents`** (host bind mount) — the original uploaded source
-  files.
-- **`./.cache/huggingface`** (host bind mount) — downloaded model weights,
-  including whatever `just init` fetched.
+---
 
-What `docker compose down -v` additionally destroys — the `-v` flag removes named
-volumes:
-
-- **`postgres_data`** — every document record, chat session, and the task queue.
-  Gone.
-- **`chroma_data`** — the entire vector index. Recoverable only by re-ingesting
-  every document from scratch (a full re-embed of the corpus).
-
-The bind-mounted host directories (`data/indexed_documents`, `config.yml`,
-`.cache/huggingface`) are **not** touched by `-v` — they live on the host
-filesystem, not in a Docker-managed volume, and survive until you delete them
-yourself.
+**Next:** [3. Configuration tour](03-configuration-tour.md).

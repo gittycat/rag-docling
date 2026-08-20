@@ -1,217 +1,182 @@
 # 6. The tuning workflow
 
-This is the chapter the rest of the guide exists to support.
+The loop: measure a baseline, change one thing, measure again, decide whether the
+change was real and worth it. Every part is easy except the deciding.
 
-The loop is simple to state: measure a baseline, change one thing, measure again,
-decide whether the change was real and worth it. Every part of that is easy except
-the deciding, and the deciding is where almost all RAG tuning goes wrong.
-
-The core difficulty is this: **RAGBench will happily show you a difference between
-two runs and tell you nothing about whether that difference means anything.** The
-`compare` command reports raw arithmetic deltas. It performs no significance
-testing — no confidence intervals, no paired tests, no variance accounting. A
-0.04 improvement measured over 10 questions and a 0.04 improvement measured over
-1000 questions are printed identically.
-
-So the judgement is yours. This chapter is about making it well.
+The tooling now helps with the deciding. `compare` reports paired bootstrap
+confidence intervals, McNemar's test on binary metrics, and a Benjamini-Hochberg
+correction across the metric family (chapter 5). That removes the worst failure
+mode — treating a raw delta as a result. It does not remove your judgement: a
+statistic on ten questions is still uninformative, and the tooling cannot choose
+your primary metric for you.
 
 ---
 
 ## Why one variable at a time
 
-If you change the embedding model and `top_k` together and the score improves, you
-have learned that the pair is better than the pair. You have not learned which one
-helped, whether one hurt, or whether you would do better with one and not the
-other.
+Change the embedding model and `top_k` together, see the score improve, and you
+have learned that the pair beats the pair. You have not learned which one helped,
+whether one hurt, or whether one alone would do better. Two changes give four
+combinations and you have tested one.
 
-This is tedious and it is not negotiable. Two changes give you four combinations
-and you have tested one of them.
-
-There is one legitimate exception: when two settings are mechanically coupled and
-cannot be varied independently. In this system, `retrieval.top_k` is the clearest
-case — it sets both the retrieval pool and, through a hardcoded formula, how many
-chunks reach the model. You cannot separate those. Note the coupling in your
-record rather than pretending you changed one thing.
+Tedious, and not negotiable.
 
 ---
 
 ## Step 1: establish a baseline
 
-A baseline is not just a number. It is a number plus everything required to
-reproduce it.
+A baseline is a number plus everything needed to reproduce it.
 
-**Pin these, and do not change them for the duration of your experiment:**
+**Pin these for the duration of the experiment:**
 
 | What | Why |
 |---|---|
-| `--datasets` | Different questions, different scores. Obviously. |
-| `--samples` | Sample count changes which questions are drawn. |
-| `--seed` | Same seed, same questions. **This is the one people forget**, and forgetting it means your two runs asked different questions. |
-| `--tier` | `generation` and `end_to_end` are not comparable. |
-| Your corpus | If you ingest documents mid-experiment, an `end_to_end` comparison is void. |
-| The judge model | Changing `active.eval` changes the grader, not the system. |
-
-Run it, and give it a name you will recognize:
+| `--datasets` | Different questions, different scores |
+| `--samples` | Sample count changes which questions are drawn |
+| `--seed` | Same seed, same questions. **The one people forget** — forgetting it means your two runs asked different questions. |
+| `--tier` | `generation` and `end_to_end` are not comparable |
+| Your corpus | Ingesting documents mid-experiment voids an `end_to_end` comparison |
+| The judge model | Changing `active.eval` changes the grader, not the system |
+| `eval.scoring` | Editing weights or thresholds is a scoring change; runs across it are not comparable |
 
 ```bash
 just eval --tier generation --datasets golden --samples 30 \
-  --seed 42 --name "baseline-2026-08-01"
+  --seed 42 --name "baseline-2026-08-20"
 ```
 
-**Then record the configuration by hand.** This is not optional, and here is why.
+The saved run records the models and the retrieval settings it read live from the
+RAG server — `retrieval_top_k`, `hybrid_search_enabled`,
+`contextual_retrieval_enabled` and the rest are captured from
+`GET /metrics/system`, not fabricated. If the server does not report its retrieval
+configuration, those fields record as `Unknown` rather than a guess, and query
+caching is refused for that run.
 
-### The config snapshot is partly fabricated
-
-Every saved run contains a `config` block that looks like a record of what you
-ran. Three of its fields are not: `retrieval_top_k`, `hybrid_search_enabled`, and
-`contextual_retrieval_enabled` are **hardcoded constants** in the eval runner,
-written into every run regardless of your actual configuration. The source
-comments acknowledge this — the values are not available through the API the
-runner queries.
-
-The consequence is severe for this workflow: **a saved run does not reliably tell
-you what configuration produced it**, and those three fields cover several of the
-most common things you would want to tune. The dashboard's config-diff view
-inherits the same problem — it can show "no change" between two runs that differed
-in exactly these settings.
-
-So keep your own record. A file, a spreadsheet, a comment in your notes — anything
-that captures: what `config.yml` said, which run ID resulted, and what you were
-testing. Without it you will have a directory of eight-character run IDs and no
-idea what any of them mean.
-
-This is logged as a defect in [`docs/suggestions.md`](../suggestions.md).
+Still keep a short note of what you were testing. The config snapshot tells you
+what the system was; it does not tell you what question you were asking.
 
 ### Establish your noise floor
 
-Before you change anything, **run the baseline a second time with nothing
-different.**
-
-This is the single most useful thing in this chapter, and almost nobody does it.
+**Run the baseline a second time with nothing changed.** This is the single most
+useful thing in this chapter, and almost nobody does it.
 
 Two identical runs will not produce identical numbers. The judge is an LLM;
-`temperature=0` reduces variation but does not eliminate it. Judge calls
-occasionally fail and get excluded, changing which questions contributed. Latency
-varies with load.
+`temperature=0` reduces variation without eliminating it. Judge calls occasionally
+fail and get excluded, changing which questions contributed. Latency varies with
+load.
 
-The difference between two identical runs is your **noise floor**: the amount a
-metric moves for no reason at all. Any change smaller than that is not a result.
+That difference is your **noise floor** — how much a metric moves for no reason at
+all. Anything smaller is not a result.
 
-You do not need statistics to use this. If faithfulness moved 0.03 between two
-runs of the same configuration, then a 0.02 improvement from your clever tuning
-change is noise, and you can stop wondering. If the two identical runs came within
-0.005 of each other, a 0.04 improvement is worth taking seriously.
+```bash
+just eval --tier generation --datasets golden --samples 30 \
+  --seed 42 --no-judge-cache --name "baseline-repeat"
+```
 
-Do this once per dataset and sample size. It takes one extra run and it calibrates
-every judgement you make afterward.
+**Use `--no-judge-cache` here.** Judge-call caching is on by default, so a plain
+re-run reuses identical judge calls and reports an artificially low noise floor —
+it measures everything *except* the judge variance you are trying to see.
+
+The noise floor catches run-to-run variance that the paired significance test
+cannot: a paired test compares two runs and treats each as a fixed measurement.
+Do this once per dataset and sample size; it calibrates every later judgement.
 
 ---
 
 ## Step 2: change exactly one thing
 
-Edit `config.yml`. **Wait for the change to take effect before running anything.**
+Edit `config.yml`. **Wait for the change to land before running anything.**
 
-The config loader checks the file's modification time on each access and reloads
-when it changes. That means most edits apply without a restart — and it also means
-**editing `config.yml` while an evaluation is running will change the system
-mid-run.** The first fifty questions get the old configuration and the rest get
-the new one, producing a result that describes neither. Make your edit, confirm
-it, then start the run.
-
-Some changes need more than a save:
+The loader reloads on modification, so most edits apply without a restart — and
+that also means **editing `config.yml` during a run changes the system mid-run.**
+The first fifty questions get the old configuration and the rest get the new one,
+producing a result that describes neither.
 
 | Change | Requires |
 |---|---|
 | Most `config.yml` edits | Nothing — auto-reload handles it |
-| `active.embedding` | Restart **and a full re-ingest**. Existing vectors came from the old model. |
-| Reranker model | Restart, and `just init` to pre-cache the new model |
-| `chunk_size` / `chunk_overlap` | A code edit and an image rebuild — these are not in `config.yml` |
+| `active.embedding` | Restart **and a full re-ingest** — existing vectors came from the old model |
+| Reranker model | Restart, plus `just init` to pre-cache the new model |
+| `chunk_size` / `chunk_overlap` | A code edit and image rebuild — these are not in `config.yml` |
 | Anything checked at startup | Restart |
 
-Confirm the change landed:
+Confirm it landed:
 
 ```bash
 just show-config-full
 ```
 
-With two caveats you already know from chapter 3: it prints the *configured*
-reranker `top_n`, which is not the value in use, and it omits the `database` and
-`chat_memory` sections entirely.
+It prints the effective reranker `top_n` alongside the configured value. It omits
+the `database` and `chat_memory` sections — read `config.yml` for those.
 
 ---
 
 ## Step 3: re-measure identically
 
-Same command, same everything, new name:
-
 ```bash
 just eval --tier generation --datasets golden --samples 30 \
-  --seed 42 --name "topk-20"
+  --seed 42 --name "topn-10"
 ```
 
 Things that quietly break comparability:
 
-- **A different seed.** Different questions.
-- **Documents added or removed** between runs, for `end_to_end`.
-- **A different judge model.**
-- **Running one comparison on a busy machine and the other on an idle one**, if
-  you care about the latency numbers.
-- **A `config.yml` edit mid-run**, as above.
-
-There is no caching of query responses or judge calls, so every run genuinely
-re-executes everything. That is good for validity — you are not comparing against
-a stale cached result — and it means runs cost real time and real money each time.
+- A different seed — different questions.
+- Documents added or removed between `end_to_end` runs.
+- A different judge model, or an edited `eval.scoring` block.
+- A `config.yml` edit mid-run.
+- `--cache-queries` after re-ingesting — the cache key does not cover the corpus.
+- Running one comparison on a busy machine and the other on an idle one, if you
+  care about latency.
 
 ---
 
 ## Step 4: decide whether the difference is real
 
-Here is the actual work.
-
 ### Look at the right things, in the right order
 
-**First, `sample_size` on every metric you care about.** If judge calls failed,
-that metric's average covers fewer questions than you ran — and the ones that
-succeeded are not a random subset. A metric with a materially reduced sample size
-is not comparable to one without.
-
-**Second, `error_count`.** Failed queries mean a partial run.
-
-**Third, the metric you decided in advance to care about.** Which brings us to the
-most important discipline in this chapter.
+1. **`sample_size` on every metric you care about.** Judge failures shrink it, and
+   the questions that survived are not a random subset. A metric with a materially
+   reduced sample size is not comparable to one without.
+2. **`error_count`.** Failed queries mean a partial run.
+3. **The metric you decided in advance to care about.**
 
 ### Decide what you are measuring before you run
 
 Write down, before starting, which metric would have to move for the change to be
 worth keeping.
 
-If you skip this, you will run the comparison, scan fifteen metrics, find the one
-that moved most, and construct a story about why that was the real effect all
-along. This feels like analysis. It is not.
+Skip this and you will scan fifteen metrics, find the biggest mover, and construct
+a story about why that was the real effect. This feels like analysis. It is not.
 
-The arithmetic is unforgiving. If you check twenty metrics and treat each as an
-independent test at the conventional 5% threshold, the probability that at least
-one moves "significantly" **by pure chance is about 64%** — you are more likely
-than not to find a spurious winner. The eval framework reports roughly fifteen to
-twenty metrics per run. **Choosing your metric after seeing the results makes a
-false conclusion the likely outcome, not a rare accident.**
+The arithmetic is unforgiving. Testing twenty metrics at the conventional 5%
+threshold gives a **64% chance** that at least one moves "significantly" by pure
+chance (1 − 0.95²⁰). Each run reports roughly fifteen to twenty metrics.
+**Choosing your metric after seeing the results makes a false conclusion the likely
+outcome, not a rare accident.**
 
-Pick one primary metric. Look at the others as secondary evidence — particularly
-to check that nothing important got worse — but do not let a secondary metric
-become the headline after the fact.
+`compare` applies Benjamini-Hochberg across the metric family and marks anything
+that fails it `nominal (fails BH)`. Treat those as leads to re-run, not results.
 
-### Judge the size of the difference
+### Read the interval, not the delta
 
-With your noise floor from step 1, this is mostly arithmetic:
+```bash
+just eval-compare <baseline_id> <changed_id>
+```
 
-| Difference vs. your noise floor | Read it as |
+| What you see | What it means |
 |---|---|
-| Smaller | Nothing happened. |
-| Comparable | Nothing you can demonstrate. Do not act on it. |
-| Several times larger, in the direction you predicted | A real effect, probably. |
-| Large, and consistent across related metrics | A real effect. |
+| CI excludes zero, marked `significant` | The comparison established a difference |
+| CI spans zero | No difference established, however large the delta looks |
+| `underpowered` | Fewer than 100 paired questions. The interval is real but wide; treat as indicative. |
+| `nominal (fails BH)` | Excluded zero, did not survive multiple-comparison correction |
+| *not tested* | No per-question data — aggregate metrics like P50 latency, or older runs |
 
-That last row deserves emphasis. **Coherence across metrics is strong evidence.**
+Cross-check against your noise floor. The paired test cannot see run-to-run
+variance; your noise floor can. If faithfulness moves 0.03 between two *identical*
+runs, be sceptical of a 0.02 "significant" improvement no matter what the interval
+says.
+
+### Coherence across metrics is strong evidence
+
 If reranking improved `recall_at_5`, `mrr`, `ndcg_at_10`, and `faithfulness`
 together, that is a mechanism doing what it should. If exactly one metric moved
 while its close relatives sat still, be suspicious — that pattern is what noise
@@ -219,108 +184,74 @@ looks like.
 
 ### Sample size determines what you can detect
 
-This is not a limitation of RAGBench; it is a property of measurement. Some
-grounding, from the general statistics literature rather than from this system:
+A property of measurement, not a limitation of RAGBench. For a paired test at the
+conventional 5% threshold and 80% power:
 
-- Detecting a **large** effect with reasonable confidence takes on the order of
-  **15–25** paired questions.
-- Detecting a **moderate** effect takes roughly **34** paired questions.
-- Detecting a **small** effect takes **150–200 or more**.
+| Effect size | Paired questions needed |
+|---|---|
+| Large (d = 0.8) | ~15 |
+| Moderate (d = 0.5) | ~34 |
+| Small (d = 0.2) | ~199 |
 
-The shipped golden dataset has **ten entries.** At that size only a dramatic,
-obvious change is distinguishable from chance. This is the strongest practical
-argument for the golden-set work in chapter 5: below roughly 30 questions you are
-not really measuring, and practitioner guidance converges on 100 or more.
+The shipped golden dataset has **ten entries.** At that size only a dramatic change
+is distinguishable from chance. Below roughly 30 questions you are not really
+measuring; practitioner guidance converges on 100 or more, which is why `compare`
+flags anything below that as underpowered.
 
-There is also a specific warning in the research literature against the naive fix.
-Computing a mean and a standard error and treating the result as a confidence
-interval **substantially understates the true uncertainty** on evaluation sets
-below a few hundred datapoints. The comfortable-looking error bar is the wrong
-size. Do not compute one and trust it.
+Do not compute a mean and standard error and treat it as a confidence interval.
+On evaluation sets below a few hundred datapoints that **substantially understates
+true uncertainty** — the comfortable-looking error bar is the wrong size. The
+bootstrap in `compare` exists precisely to avoid that assumption.
 
 ### Digging out the variance
 
-The framework does compute a per-metric standard deviation across per-question
-scores. It stores it in the run JSON and then never shows it to you in any
-comparison — the CLI table omits it, the API deltas omit it, and the dashboard
-shows it only for generation metrics.
-
-You can retrieve it:
+The framework computes a per-metric standard deviation across per-question scores.
+The dashboard shows it in the metric breakdown; the CLI comparison table does not.
 
 ```bash
-cat data/eval_runs/<run_id>_*.json | python3 -m json.tool | grep -A3 std_dev
+python3 -m json.tool < data/eval_runs/<run_id>_*.json | grep -A3 std_dev
 ```
 
-A metric with a large standard deviation across questions needs a bigger
-difference before you believe it. A metric where nearly every question scores the
-same needs less.
+A metric with a large standard deviation across questions needs a bigger difference
+before you believe it.
 
 ### Weigh the cost
 
-A change that improves faithfulness by 0.04 and doubles your latency is not
-automatically good. Look at `latency_p95_ms` and `cost_per_query` alongside your
-primary metric, remembering from chapter 4 that eval latency is inflated by
-concurrency and cost is estimated from hardcoded rate tables.
+A change that improves faithfulness by 0.04 and doubles latency is not
+automatically good. Check `latency_p95_ms` and `cost_per_query` alongside your
+primary metric, remembering that eval latency is inflated by concurrency and cost
+comes from hardcoded rate tables.
 
-The weighted score attempts this trade-off for you, with latency weighted at 0.05
-and cost at 0.10. If those weights do not match your situation — and for a
-latency-sensitive deployment they do not — ignore the weighted score and make the
-trade-off yourself.
+The weighted score attempts this trade-off for you. If its weights do not match
+your situation, edit `eval.scoring` — but do that *before* the experiment, not
+after seeing results, and remember it makes earlier runs incomparable.
 
 ---
 
-## Step 5: keep it, or revert it, and write it down
+## Step 5: keep it, revert it, and write it down
 
-Three outcomes:
+| Outcome | Action |
+|---|---|
+| **Clear improvement, acceptable cost** | Keep it. Record the new baseline; your next experiment measures against this. |
+| **No detectable difference** | A real result. Revert to the simpler, cheaper, or faster configuration — if contextual retrieval showed no measurable benefit, turning it off saves substantial ingestion cost for nothing. |
+| **Worse** | Revert. Note what you tried, so you do not try it again in four months. |
 
-**Clear improvement, acceptable cost.** Keep it. Record the new baseline. Your
-next experiment measures against this.
-
-**No detectable difference.** This is a real result and worth recording. Reverting
-to the simpler, cheaper, or faster of the two configurations is usually correct —
-if contextual retrieval showed no measurable benefit on your corpus, turning it off
-saves substantial ingestion cost for nothing.
-
-**Worse.** Revert. Note what you tried, so you do not try it again in four months.
-
-Write down what you did either way. A one-line record — *what changed, which run
-IDs, what moved, what you decided* — takes seconds and is the only thing that stops
-the sixth experiment from repeating the second.
+A one-line record — *what changed, which run IDs, what moved, what you decided* —
+takes seconds and stops the sixth experiment from repeating the second.
 
 ---
 
 ## Confounds specific to this system
 
-Collected, because each has cost somebody a wrong conclusion:
-
-**The config snapshot is partly hardcoded.** Covered above. Keep your own record.
-
-**`config.yml` auto-reloads on modification.** An edit during a run changes the
-system mid-run.
-
-**`reranker.top_n` does nothing.** If you "tuned" it and saw no effect, that is
-because the value is ignored — the reranker's output size derives from
-`retrieval.top_k`.
-
-**`eval.abstention_phrases` does nothing** for eval scoring. The metrics use a
-hardcoded list.
-
-**Citation metrics measure retrieval by default.** With `eval.citation_scope` at
-its default of `retrieved`, every retrieved chunk counts as a citation. And on a
-dataset with no gold passages — including the golden set — citation precision and
-recall both return a meaningless 1.0.
-
-**Retrieval metrics are meaningless in the `generation` tier**, because retrieval
-does not run.
-
-**The judge may favour its own family.** The shipped defaults use OpenAI models
-for both generation and judging. Judges are documented in the research literature
-to score outputs from their own model family more favourably, even when the models
-are not identical. If you are comparing an OpenAI generator against a local one
-using an OpenAI judge, that comparison is not neutral. Using a judge from a
-different vendor than the generator is the standard mitigation.
-
-**Latency is measured under eval concurrency**, not under user conditions.
+| Confound | Effect |
+|---|---|
+| **`config.yml` auto-reloads** | An edit during a run changes the system mid-run |
+| **Judge caching is on by default** | A re-run reuses identical judge calls, hiding judge variance. Use `--no-judge-cache` for noise-floor runs. |
+| **Citation metrics measure retrieval by default** | With `eval.citation_scope: retrieved`, every retrieved chunk counts as a citation |
+| **Retrieval metrics are meaningless in `generation` tier** | Retrieval does not run |
+| **The judge may favour its own family** | Shipped defaults use OpenAI for both generation and judging. The runner warns and records this on the run; using a judge from a different vendor is the standard mitigation. |
+| **Latency is measured under eval concurrency** | Not under user conditions |
+| **Changing `eval.abstention_phrases` is a scoring change** | Narrowing the list makes the model look worse at abstaining without anything having changed |
 
 ---
 
@@ -329,81 +260,62 @@ different vendor than the generator is the standard mitigation.
 Deciding whether the reranker earns its latency. **The numbers below are
 illustrative — they are not measurements from this system.**
 
-**Set up.** 40 questions from `ragbench`, seed pinned at 42, **`end_to_end`
-tier** — this matters, because reranking sits in the retrieval path, and the
-`generation` tier bypasses retrieval entirely. Testing a reranker change in the
-`generation` tier would measure nothing at all.
+**Set up.** 40 questions from `ragbench`, seed 42, **`end_to_end` tier** — this
+matters, because reranking sits in the retrieval path and the `generation` tier
+bypasses retrieval entirely. Primary metric chosen in advance: `faithfulness`.
+Secondary: `latency_p95_ms`. Decision rule written down beforehand: keep reranking
+if faithfulness improves by more than twice the noise floor without more than
+doubling p95 latency.
 
-Primary metric chosen in advance: `faithfulness`. Secondary: `latency_p95_ms`.
-Decision rule written down beforehand — keep reranking if faithfulness improves by
-more than twice the noise floor without more than doubling p95 latency.
+**Noise floor.** Two identical baseline runs with `--no-judge-cache`. Faithfulness
+comes back 0.81 and 0.83 — a spread of 0.02. Nothing below 0.04 will be believed.
 
-**Noise floor.** Two identical baseline runs. Faithfulness comes back at 0.81 and
-0.83 — a spread of 0.02. So the noise floor is about 0.02, and nothing below 0.04
-will be believed.
-
-**Baseline.** `reranker.enabled: true`. Faithfulness 0.82, p95 1400 ms. Run
-recorded, config written down by hand.
+**Baseline.** `reranker.enabled: true`. Faithfulness 0.82, p95 1400 ms.
 
 **Change one thing.** `reranker.enabled: false`. Save, confirm with
 `just show-config-full`.
 
-**Re-measure.** Same seed, same dataset, same sample count.
-
-**Compare.**
+**Re-measure.** Same seed, dataset, sample count.
 
 ```bash
 just eval-compare <baseline_id> <no_rerank_id>
 ```
 
-Faithfulness 0.74, p95 900 ms.
+Faithfulness 0.74, p95 900 ms. The interval on the faithfulness delta is
+`[-0.121, -0.043]`, excluding zero and surviving BH. It is flagged `underpowered`
+at n = 40 — real, but wider than it would be at 100 questions.
 
-**Decide.** Faithfulness dropped 0.08 — four times the noise floor, and in the
-predicted direction. `recall_at_5` and `mrr` dropped alongside it, which is the
-coherent pattern a real retrieval effect should produce rather than an isolated
-mover. Sample sizes matched the question count on both runs, so no judge failures
-distorted either.
+**Decide.** Faithfulness dropped 0.08 — four times the noise floor, in the
+predicted direction, with an interval that excludes zero. `recall_at_5` and `mrr`
+dropped alongside it: the coherent pattern a real retrieval effect produces rather
+than an isolated mover. Sample sizes matched the question count on both runs, so no
+judge failures distorted either.
 
 Latency improved by 500 ms, which is genuine. But the decision rule was set in
-advance: a 0.08 faithfulness loss exceeds what that latency saves in this
-deployment.
+advance, and a 0.08 faithfulness loss exceeds what that latency saves here.
 
-**Keep reranking.** Record: *reranker off, 40q golden, seed 42 — faithfulness
-0.82 → 0.74, p95 1400 → 900 ms. Kept reranking. Runs `a1b2c3d4` / `e5f6a7b8`.*
+**Keep reranking.** Record: *reranker off, 40q ragbench, seed 42 — faithfulness
+0.82 → 0.74 (CI [-0.121, -0.043], underpowered), p95 1400 → 900 ms. Kept
+reranking. Runs `a1b2c3d4` / `e5f6a7b8`.*
 
-Note what made this decision defensible. It was not the tooling — the tooling
-printed two numbers. It was the noise floor, the metric chosen in advance, the
-coherence check across related metrics, and the sample-size check.
+What made this defensible was not the interval alone. It was the noise floor, the
+metric chosen in advance, the coherence check, and the sample-size check.
 
 ---
 
-## Recommendations (not currently implemented)
+## Still not available
 
-Practices RAGBench does not support today. Listed separately so they are not
-mistaken for features.
+- **Ensemble judging** with inter-rater agreement. One judge scores every
+  generation metric; nothing measures how much a second would have disagreed.
+- **Multi-turn evaluation**, so question condensation is exercised.
+- **Significance in the dashboard.** The API returns it; the analytics UI shows
+  point deltas only. Use the CLI.
 
-- **Paired bootstrap confidence intervals.** For a paired design like this one,
-  resampling the per-question score differences with replacement and taking the
-  2.5th and 97.5th percentiles gives an honest interval on the mean difference,
-  without assuming normality. This is the standard tool for exactly this problem
-  and would be a modest addition to `compare`.
-- **McNemar's test for binary metrics.** For hit/miss metrics like recall@k, the
-  informative quantity is the number of questions that *flipped* between
-  configurations and in which direction — not the aggregate rate.
-- **A minimum sample size before claiming a difference**, with underpowered
-  comparisons flagged as indicative only.
-- **A multiple-comparisons correction**, or at minimum surfacing the fact that
-  scanning twenty metrics makes a spurious winner more likely than not.
-- **Cross-family judging.** Using a judge from a different vendor than the
-  generation model is the standard mitigation for self-preference bias.
-
-These are recorded as concrete proposals in
-[`docs/suggestions.md`](../suggestions.md).
+Recorded as proposals in [`docs/suggestions.md`](../suggestions.md).
 
 ---
 
 **Next:** [7. Experiment cookbook](07-experiment-cookbook.md) — the loop applied to
 specific questions.
 
-See also [11. Limits and caveats](11-limits-and-caveats.md) for what none of this
-can establish.
+See also [11. Limits and caveats](11-limits-and-caveats.md).

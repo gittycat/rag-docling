@@ -386,7 +386,7 @@ pii:
   # real PII (e.g. synthetic questions).
   allow_cloud_judge: false
 
-  # Entity types to detect and mask. Full list: https://microsoft.github.io/presidio/supported_entities/
+  # Entity types to detect and mask. Full list: https://presidio.dataprivacystack.org/supported_entities/
   entities:
     - PERSON
     - EMAIL_ADDRESS

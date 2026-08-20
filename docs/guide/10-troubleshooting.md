@@ -1,338 +1,285 @@
-# Troubleshooting
+# 10. Troubleshooting
 
-Symptom, likely cause, how to check, and the fix — grouped by where in the
-system's lifecycle the problem shows up.
+Symptom → cause → check → fix, grouped by where in the lifecycle the problem shows
+up.
+
+---
 
 ## Startup
 
-### A service exits immediately, or `docker compose up` reports a missing secret
+### A service exits immediately, or Compose reports a missing secret
 
-**Likely cause**: one of the required secret files under `secrets/` doesn't
-exist. Docker Compose secrets are declared as `file: secrets/<NAME>` — if the
-source file is missing, the container that mounts it cannot start.
+**Cause.** A required file under `secrets/` does not exist. Compose secrets are
+declared as `file: secrets/<NAME>`; a missing source file blocks the container that
+mounts it.
 
-**Check**:
 ```bash
 ls secrets/
 ```
-Confirm `POSTGRES_SUPERUSER`, `POSTGRES_SUPERPASSWORD`, `RAG_SERVER_DB_USER`,
-`RAG_SERVER_DB_PASSWORD` all exist (required for every deployment), plus
+
+`POSTGRES_SUPERUSER`, `POSTGRES_SUPERPASSWORD`, `RAG_SERVER_DB_USER`, and
+`RAG_SERVER_DB_PASSWORD` are required for every deployment, plus
 `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` if your active models need them.
 
-**Fix**: create the missing file(s) — see "Secrets you must create before first
-start" in the Getting Running chapter — then `just up` again.
+**Fix.** Create the missing files — see [chapter 2](02-getting-running.md#create-secrets-first)
+— then `just up`.
 
-### rag-server or task-worker exits with "Ollama is not reachable"
+### "Ollama is not reachable"
 
-**Likely cause**: `active.inference` or `active.embedding` in `config.yml`
-points at an `ollama`-provider model, but Ollama isn't running or isn't
-reachable at the configured `base_url` (default
-`http://host.docker.internal:11434`). The app checks this at startup
-(`check_ollama_reachable`) and calls `sys.exit(1)` with a clear message rather
-than starting in a broken state.
+**Cause.** `active.inference` or `active.embedding` points at an `ollama` model,
+but Ollama is not running or not reachable at the configured `base_url` (default
+`http://host.docker.internal:11434`). The app checks at startup and calls
+`sys.exit(1)` rather than starting broken.
 
-**Check**:
 ```bash
 curl -sf http://localhost:11434/api/version
 ```
-If this fails, Ollama itself isn't up. If it succeeds but the container still
-fails, check that the model's `base_url` in `config.yml` actually matches how
-your Docker setup reaches the host (this can differ between Docker Desktop,
-OrbStack, and Podman).
 
-**Fix**: start Ollama (`ollama serve`, or open the Ollama app), then restart
-the affected services (`docker compose restart rag-server task-worker`). You
-can also catch this before it happens with `just preflight`, which runs the
-same check ahead of `just up`/`just deploy`.
+If that fails, Ollama is down. If it succeeds and the container still fails, check
+that the model's `base_url` matches how your Docker setup reaches the host — this
+differs between Docker Desktop, OrbStack, and Podman.
 
-### rag-server exits with "Reranker model not found in local cache"
+**Fix.** Start Ollama (`ollama serve` or the app), then
+`docker compose restart rag-server task-worker`. `just preflight` catches this
+before it happens.
 
-**Likely cause**: reranking is enabled (`reranker.enabled: true`, the default)
-and the active reranker model was never pre-fetched into
-`.cache/huggingface`. The boot-time check (`ensure_reranker_model_cached`)
-deliberately fails fast here — `HF_HUB_OFFLINE=1` is set whenever
-`USE_CACHED_RERANKER` is true (which it is in the base compose file), so the
-container will not silently fall back to a live Hugging Face download.
+### "Reranker model not found in local cache"
 
-**Check**:
+**Cause.** Reranking is enabled (the default) and the active reranker was never
+pre-fetched. `HF_HUB_OFFLINE=1` is set whenever `USE_CACHED_RERANKER` is true — as
+it is in the base compose file — so the container will not silently fall back to a
+live download.
+
 ```bash
 ls .cache/huggingface
 ```
-Look for a directory matching the active reranker model name (default
+
+Look for a directory matching the active reranker (default
 `cross-encoder/ms-marco-MiniLM-L-6-v2`).
 
-**Fix**:
+**Fix.**
+
 ```bash
-just init
+just init                                    # default model
+just init MODEL=BAAI/bge-reranker-base       # if you changed active.reranker
 ```
-then restart. If you've changed `active.reranker` to a different model, run
-`just init MODEL=<huggingface-model-id>` for that model instead.
 
-### rag-server exits with "Embedding dimension mismatch"
+Then restart.
 
-**Likely cause**: you switched `active.embedding` to a model with a different
-output dimension than the one used to build the existing ChromaDB collection
-(e.g. moving between `nomic-embed` and an OpenAI embedding model). This check
-(`check_embedding_dimension_match`) runs at startup whenever the ChromaDB
-collection already holds vectors — it peeks one stored vector, measures its
-dimension, and compares it against a live probe embedding from the currently
-active model.
+### "Embedding dimension mismatch"
 
-**Check**: the startup log will state both dimensions directly, e.g. "stores
-768-dimensional vectors, but the active embedding model ... produces
-1536-dimensional vectors."
+**Cause.** You switched `active.embedding` to a model whose output dimension
+differs from the one that built the existing ChromaDB collection. The startup check
+peeks one stored vector, measures its dimension, and compares against a live probe
+from the active model.
 
-**Fix**: either switch `active.embedding` back to the model that built the
-existing index, or delete and fully re-ingest the corpus under the new
-embedding model. There is no in-place re-embedding path — this is a hard
-either/or.
+**Check.** The startup log states both dimensions, e.g. "stores 768-dimensional
+vectors, but the active embedding model ... produces 1536-dimensional vectors."
 
-### A cloud model choice fails at boot even though the API key file exists
+**Fix.** Either switch back to the model that built the index, or delete and fully
+re-ingest under the new model. There is no in-place re-embedding path.
 
-**Likely cause**: you set `active.inference` (or `active.eval`) to
-`gemini-pro`, `deepseek-chat`, or `moonshot-v1`. The application code knows how
-to read `GOOGLE_API_KEY`/`DEEPSEEK_API_KEY`/`MOONSHOT_API_KEY`, but no compose
-file declares any of the three as a Docker secret — there is no supported way
-to deliver these three keys into the containers without hand-editing the
-compose file yourself to add a `secrets:` entry and mount.
-
-**Check**: `docker compose config` will show you the secrets actually wired to
-each service; confirm the key you need isn't in that list.
-
-**Fix**: pick a different model (`gemma3-4b`, `llama3-8b`, `gpt5-mini`,
-`claude-sonnet`, `claude-opus` are all fully wired), or edit the relevant
-compose file to add the missing secret declaration and container mount
-yourself.
+Note the check cannot catch a **same-dimension** swap between different models —
+that passes and silently degrades retrieval. Always re-ingest after an embedding
+change.
 
 ### rag-server refuses to boot after enabling PII masking
 
-**Likely cause 1 — cloud embedding + PII**: `pii.enabled: true` is rejected at
-config-load time if the active embedding provider isn't local (`ollama`).
-Masking only covers the generation path by design; the embedding path and
-reranker always stay local, so pairing `pii.enabled: true` with a cloud
-embedding model is a hard invariant violation, not a soft warning.
+Two conditions trip this, and the startup error names which:
 
-**Likely cause 2 — GLiNER enabled but not installed**: `pii.gliner.enabled:
-true` is rejected at boot if the `gliner` package isn't importable in the
-image. This also fails fast rather than silently falling back to spaCy-only
-detection.
+| Cause | Fix |
+|---|---|
+| **Cloud embedding + PII.** `pii.enabled: true` is rejected at config-load time unless the active embedding provider is `ollama`. Masking covers only the generation path, so this is a hard invariant, not a warning. | Set `active.embedding` to an Ollama-backed model before enabling `pii.enabled` |
+| **GLiNER enabled but not installed.** `pii.gliner.enabled: true` is rejected if the `gliner` package is not importable — fails fast rather than falling back to spaCy-only. | Rebuild with `--build-arg INSTALL_GLINER=true` (or `uv sync --extra gliner` locally), or set `pii.gliner.enabled: false` |
 
-**Check**: the startup error states which of the two conditions tripped,
-naming either the embedding provider or the missing `gliner` package.
-
-**Fix**: for the first case, set `active.embedding` to an Ollama-backed model
-before enabling `pii.enabled`. For the second, either rebuild the image with
-`--build-arg INSTALL_GLINER=true` (or `uv sync --extra gliner` locally), or set
-`pii.gliner.enabled: false`.
+---
 
 ## Ingestion
 
-### Uploaded documents stay stuck in "processing" indefinitely
+### Uploaded documents stay "processing" indefinitely
 
-**Likely cause**: the task worker that was processing the document crashed or
-was killed mid-task, leaving a `job_tasks` row stuck in `processing` state.
-The worker runs a background check every 60 seconds
-(`check_stuck_tasks`/`STUCK_CHECK_INTERVAL`) that resets any task that has been
-`processing` for more than one hour (`STUCK_TIMEOUT = 3600` seconds) back to
-`pending` so another worker claim picks it up — unless it has already hit its
-retry limit (`max_attempts`), in which case it's marked `error` instead with
-the message "Task exceeded maximum retry attempts (stuck worker)."
+**Cause.** The task worker crashed or was killed mid-task, leaving a `job_tasks`
+row stuck in `processing`.
 
-**Check**:
+A background check runs every 60 seconds and resets any task processing for more
+than one hour back to `pending` for another worker to claim — unless it has already
+hit `max_attempts`, in which case it is marked `error` with "Task exceeded maximum
+retry attempts (stuck worker)."
+
 ```bash
 docker compose logs task-worker | grep -i "stuck"
-```
-A log line like `[WORKER] Reset N stuck task(s) to pending` confirms the
-recovery mechanism ran. You can also query task status directly:
-```bash
 curl http://localhost:8001/tasks/<batch_id>/status
 ```
 
-**Fix**: for a task genuinely stuck less than an hour, just wait — the
-one-hour reset is automatic. If a task keeps failing and eventually lands in
-`error`, check `docker compose logs task-worker` around the time it was
-processing for the underlying exception, then re-upload the document.
+A line like `[WORKER] Reset N stuck task(s) to pending` confirms recovery ran.
+
+**Fix.** Under an hour, wait — the reset is automatic. If a task keeps failing into
+`error`, check `docker compose logs task-worker` around its processing time for the
+underlying exception, then re-upload.
 
 ### Upload fails with a 503 mentioning Ollama
 
-**Likely cause**: the active embedding model is Ollama-backed and Ollama isn't
-reachable at ingestion time (as opposed to at container boot — this can happen
-if Ollama was up when the container started but has since stopped).
+**Cause.** The active embedding model is Ollama-backed and Ollama is unreachable at
+ingestion time — which can happen if it was up when the container started but has
+since stopped.
 
-**Check**:
 ```bash
 curl -sf http://localhost:11434/api/version
 ```
 
-**Fix**: restart Ollama, then retry the upload. The Upload page in the webapp
-shows a dedicated alert for this specific failure mode.
+**Fix.** Restart Ollama, then retry. The Upload page shows a dedicated alert for
+this failure mode.
+
+---
 
 ## Query
 
-### Chat answers seem to ignore keyword matches that should be an easy hit
+### Answers ignore keyword matches that should be an easy hit
 
-**Likely cause**: BM25 (the keyword half of hybrid search, via `pg_textsearch`)
-failed for that query and degraded silently. The BM25 retriever catches any
-exception around its SQL search, logs a warning, and returns an empty result
-list rather than raising — so the query proceeds with vector-only results
-fused through RRF, with no error surfaced to the API caller or the chat UI at
-all. This is easy to miss because nothing in the response indicates it
-happened.
+**Cause.** BM25 failed for that query and degraded silently. The retriever catches
+any exception around its SQL search, logs a warning, and returns an empty list
+rather than raising — so the query proceeds vector-only, with **nothing in the
+response indicating it happened.**
 
-**Check**:
 ```bash
+curl -s http://localhost:8001/metrics/system | jq '.component_status.bm25'
 docker compose logs rag-server | grep "\[BM25\] Search failed"
 ```
-If you see this, BM25 is broken for some or all queries. A broken or missing
-`idx_chunks_bm25` index, or a Postgres-side error in the `pg_textsearch`
-extension, is the usual cause.
 
-**Fix**: inspect the logged exception for the specific SQL error, then check
-that the `pg_textsearch` extension and the `idx_chunks_bm25` index exist and
-are valid in the `document_chunks` table. If hybrid search is not critical to
-your use case in the short term, you can set `retrieval.enable_hybrid_search:
-false` in `config.yml` to fall back to vector-only search explicitly (an
-explicit, known-quantity degrade rather than a silent, intermittent one) while
-you investigate.
+**Fix.** Read the logged exception for the specific SQL error, then check that the
+`pg_textsearch` extension and the `idx_chunks_bm25` index exist and are valid on
+`document_chunks`. While you investigate, setting
+`retrieval.enable_hybrid_search: false` gives you an explicit, known-quantity
+degrade rather than a silent intermittent one.
 
-### A query returns a generic connection error with no further detail
+### A query returns a generic connection error
 
-**Likely cause**: could be a downed Ollama instance (if the active LLM is
-Ollama-backed), a cloud provider outage/timeout, or a genuine backend crash —
-the chat UI's error handling doesn't distinguish these; a failed stream just
+**Cause.** Could be a downed Ollama, a cloud provider outage or timeout, or a
+backend crash. The chat UI does not distinguish these — a failed stream just
 appends `[Error: Connection interrupted]` to the partial message.
 
-**Check**:
 ```bash
 docker compose logs rag-server -f
 ```
-and reissue the same query to see the underlying exception in real time.
 
-**Fix**: depends on what the logs show — restart Ollama if that's the
-provider, check your cloud API key/quota if it's a cloud model, or check
-`docker compose ps` for a crashed rag-server container.
+Reissue the query to see the underlying exception in real time.
 
-## Eval
+**Fix.** Depends on the logs: restart Ollama, check your cloud API key and quota,
+or check `docker compose ps` for a crashed rag-server.
 
-### Starting an eval run returns HTTP 429 "Eval queue is full"
+---
 
-**Likely cause**: one eval runs at a time and the rest queue behind it. A `429`
-means the queue is at its depth limit (default 5, set by `EVAL_QUEUE_DEPTH`) —
-usually because an earlier job is hung and nothing behind it has advanced.
+## Evaluation
 
-**Check**:
+### HTTP 429 "Eval queue is full"
+
+**Cause.** One eval runs at a time and the rest queue behind it. A `429` means the
+queue hit its depth limit (default 5, set by `EVAL_QUEUE_DEPTH`) — usually because
+an earlier job is hung.
+
 ```bash
 curl http://localhost:8002/eval/runs/active   # the running job
 curl http://localhost:8002/eval/queue         # what is waiting
 ```
 
-**Fix**: drop queued jobs you no longer want, or cancel the active one so the
-queue advances:
+**Fix.**
+
 ```bash
-curl -X DELETE http://localhost:8002/eval/queue/<job_id>
-curl -X DELETE http://localhost:8002/eval/runs/active
+curl -X DELETE http://localhost:8002/eval/queue/<job_id>   # drop a queued job
+curl -X DELETE http://localhost:8002/eval/runs/active      # cancel the active one
 ```
 
-### A comparison reports "No paired per-question data available"
+### "No paired per-question data available"
 
-**Likely cause**: one or both runs predate per-question score capture, so there is
-nothing to pair on. Significance testing needs `details.per_question` in the
-scorecard, and the framework will not invent statistics without it.
+**Cause.** One or both runs predate per-question score capture, so there is nothing
+to pair on. Significance testing needs `details.per_question` in the scorecard, and
+the framework will not invent statistics without it.
 
-**Check**:
 ```bash
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); \
   print([m['name'] for m in d['scorecard']['metrics'] if m.get('details',{}).get('per_question')])" \
   data/eval_runs/<file>.json
 ```
 
-**Fix**: re-run both configurations. The point deltas in the table above the
-significance block are still correct; they just carry no uncertainty estimate.
+**Fix.** Re-run both configurations. The point deltas above the significance block
+are still correct; they just carry no uncertainty estimate.
 
-### A metric shows "n/a" instead of a number
+### A metric shows "n/a"
 
-**Not a fault.** The metric was undefined for that run's data — most often
-citation or retrieval metrics on a dataset with no gold passages. It reports `n/a`
-rather than 0.0 or 1.0 because either number would be a fabricated score.
+**Not a fault.** The metric was undefined for that run's data — most often citation
+or retrieval metrics on a dataset with no gold passages. It reports `n/a` rather
+than 0.0 or 1.0 because either would be a fabricated score.
 
 **Fix**, if you want it measured: annotate `gold_passages` or `gold_doc_ids` in
-`golden_qa.json` (see chapter 5), or run against a dataset that ships
-annotations.
+`golden_qa.json` ([chapter 5](05-running-evals.md#annotating-gold-passages)), or
+run against a dataset that ships annotations.
 
-### An eval run's judge-dependent metrics look sparse or incomplete
+### Judge-dependent metrics look sparse
 
-**Likely cause**: the eval judge model failed on some questions (timeout,
-rate limit, malformed response). Per this project's design, judge failures on
-individual questions are excluded from that metric's average rather than
-scored as 0 — so a bad run doesn't silently show as "the model did poorly," it
-shows as "fewer samples contributed to this metric's average" instead.
+**Cause.** The judge failed on some questions — timeout, rate limit, malformed
+response. Judge failures are excluded from that metric's average rather than scored
+0, so a bad run shows as "fewer samples contributed" rather than "the model did
+poorly."
 
-**Check**: the run's stored JSON result (under `data/eval_runs` on the host) —
-compare `sample_size` for the affected metric against the run's overall
-question count. The dashboard does not surface `sample_size` anywhere in the
-UI; you need the raw run detail or CLI to see it.
+**Check.** Compare the metric's `sample_size` against the run's `question_count` —
+in the run JSON, in `just eval-compare` output, or in the dashboard's metric
+breakdown, which prints `n=` on every metric.
 
-**Fix**: check `docker compose logs evals` around the run's timeframe for
-judge-call errors (rate limits, timeouts). If the judge provider is
-unreliable, consider re-running with a different `active.eval` model or after
-the provider issue clears.
+**Fix.** Check `docker compose logs evals` around the run for judge-call errors. If
+the provider is unreliable, re-run with a different `active.eval` or after the issue
+clears.
+
+---
 
 ## Performance
 
-### Ingestion of a document set is much slower than expected
+### Ingestion is much slower than expected
 
-**Likely cause**: contextual retrieval (if enabled,
-`retrieval.enable_contextual_retrieval: true`) issues one LLM call per chunk to
-generate a contextual prefix before embedding — this is the dominant cost of
-ingestion when it's on, and is proportional to your chunk count and the LLM's
-latency.
+**Cause.** Contextual retrieval issues one LLM call per chunk before embedding.
+When on, this dominates ingestion, proportional to chunk count and LLM latency.
 
-**Check**:
 ```bash
-just show-config-full
+just show-config-full   # check the Retrieval section
 ```
-Look at the "Retrieval" section for whether contextual retrieval is enabled.
 
-**Fix**: this is expected behavior, not a bug, if contextual retrieval is on —
-budget ingestion time accordingly, or turn it off
-(`retrieval.enable_contextual_retrieval: false`, also toggleable live via the
-Settings page or `PATCH /api/settings`) if you don't need the quality/recall
-improvement it's meant to provide. See the Configuration Tour and Experiment
-Cookbook chapters for the quality trade-off.
+**Fix.** Expected behaviour, not a bug. Budget for it, or turn it off
+(`retrieval.enable_contextual_retrieval: false`, also toggleable live from the
+Settings page or `PATCH /api/settings`). Raising
+`retrieval.contextual_concurrency` above its default of 8 speeds it up if your
+provider tolerates the parallelism. See
+[chapter 7 recipe 4](07-experiment-cookbook.md#recipe-4--contextual-retrieval-on-or-off)
+for the quality trade-off.
 
-### First query after startup is noticeably slower than subsequent ones
+### First query after startup is noticeably slower
 
-**Likely cause**: this is expected if the reranker model needed to load from
-disk into memory on its first use — the postprocessor is created and used
-lazily rather than during the earlier boot-time cache check, which only
-verifies the model files exist on disk. Fetching the model into the cache with
-`just init` avoids a network download, but does not avoid the one-time
-in-process model load.
+**Cause.** The reranker model loads from disk into memory on first use. The
+postprocessor is created lazily, not during the boot-time cache check, which only
+verifies the files exist. `just init` avoids a network download but not the
+in-process load.
 
-**Check**:
 ```bash
 docker compose logs rag-server | grep -i rerank
 ```
 
-**Fix**: nothing to fix — this is a one-time warm-up cost per container
-lifetime. If you need consistently low first-query latency, keep the
-container running rather than restarting it between sessions.
+**Fix.** Nothing — a one-time warm-up per container lifetime. Keep the container
+running rather than restarting between sessions if you need consistent first-query
+latency. Never include a cold first query in a latency measurement.
 
-### A stopped-and-restarted stack seems to be missing recent chat history or documents
+### A restarted stack is missing chat history or documents
 
-**Likely cause**: you ran `docker compose down -v` instead of `docker compose
-down` (or `just down`, which does not pass `-v`). The `-v` flag deletes named
-Docker volumes, including `postgres_data` (all chat/session/document metadata)
-and `chroma_data` (the vector index).
+**Cause.** You ran `docker compose down -v` rather than `docker compose down`
+(`just down` does not pass `-v`). The `-v` flag deletes named volumes, including
+`postgres_data` (chat, sessions, document metadata) and `chroma_data` (the vector
+index).
 
-**Check**:
 ```bash
 docker volume ls | grep -E "postgres_data|chroma_data"
 ```
-If these don't exist, they were removed.
 
-**Fix**: there is no recovery for a destroyed named volume in this project —
-no backup mechanism exists for `postgres_data` or `chroma_data`. You will need
-to re-ingest documents from scratch; original source files under
-`data/indexed_documents` (a host bind mount, not a named volume) survive `-v`
-and remain available to re-upload.
+**Fix.** There is no recovery — no backup mechanism exists for either volume. You
+must re-ingest. Original source files under `data/indexed_documents` are a host
+bind mount, survive `-v`, and remain available to re-upload.
+
+---
+
+**Next:** [11. Limits and caveats](11-limits-and-caveats.md).
