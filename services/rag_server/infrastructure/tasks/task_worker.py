@@ -170,8 +170,9 @@ async def run_worker():
 def main():
     """Entry point for the task worker."""
     # Deliberately not at import time: initialize_settings() reaches the network
-    # (Ollama reachability) and ChromaDB, which makes the module unimportable
-    # — and pytest collection unsurvivable — wherever those are not running.
+    # (Ollama reachability, plus an embedding call to check the model's dimension
+    # against the vector column), which makes the module unimportable — and pytest
+    # collection unsurvivable — wherever Ollama is not running.
     from app.settings import init_settings
     from core.config import initialize_settings
 

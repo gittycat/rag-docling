@@ -140,7 +140,7 @@ class TestDatabaseSchema:
         )
 
     def test_bm25_index_exists(self, integration_env, check_services):
-        """Verify BM25 index exists on document_chunks (vectors in ChromaDB)."""
+        """Verify BM25 index exists on document_chunks (alongside the embedding column)."""
         import asyncio
         from sqlalchemy import text
         from infrastructure.database.postgres import get_session, close_db

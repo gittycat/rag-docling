@@ -3,7 +3,7 @@ RAG Inference Pipeline
 
 Complete flow for query processing and answer generation:
 1. Initialize chat memory (session-based, PostgreSQL-backed)
-2. Build hybrid retriever (pg_textsearch BM25 + ChromaDB with RRF fusion)
+2. Build hybrid retriever (pg_textsearch BM25 + pgvector with RRF fusion)
 3. Create reranker postprocessor (optional)
 4. Build chat engine (condense_plus_context mode)
 5. Query processing (retrieval → reranking → LLM generation)
@@ -19,7 +19,6 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from llama_index.core import VectorStoreIndex
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core import Settings
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
@@ -309,12 +308,12 @@ def get_chat_history(session_id: str) -> List:
 
 
 # ============================================================================
-# STEP 2: HYBRID RETRIEVAL (pg_textsearch BM25 + ChromaDB + RRF)
+# STEP 2: HYBRID RETRIEVAL (pg_textsearch BM25 + pgvector + RRF)
 # ============================================================================
 
-def create_hybrid_retriever(index: VectorStoreIndex, similarity_top_k: int = 10):
+def create_hybrid_retriever(similarity_top_k: int = 10):
     """
-    Create hybrid retriever combining pg_textsearch BM25 + ChromaDB with RRF fusion.
+    Create hybrid retriever combining pg_textsearch BM25 + pgvector with RRF fusion.
 
     Research (Pinecone benchmark):
     - 48% improvement in retrieval quality vs vector-only
@@ -322,25 +321,26 @@ def create_hybrid_retriever(index: VectorStoreIndex, similarity_top_k: int = 10)
     - Vector search excels at: semantic understanding, context
     - RRF (Reciprocal Rank Fusion): simple, robust fusion
 
-    Returns None if hybrid search disabled (falls back to vector-only).
+    Returns a bare PgVectorRetriever if hybrid search is disabled (vector-only).
     """
     config = get_inference_config()
 
     if not config['hybrid_search_enabled']:
+        from infrastructure.search.vector_retriever import PgVectorRetriever
+
         logger.info("[HYBRID] Hybrid search disabled - using vector-only retrieval")
-        return None
+        return PgVectorRetriever(similarity_top_k=similarity_top_k)
 
     logger.info(f"[HYBRID] Creating hybrid retriever (top_k={similarity_top_k}, rrf_k={config['rrf_k']})")
 
     from infrastructure.search.hybrid_retriever import create_hybrid_retriever as _create_hybrid
 
     retriever = _create_hybrid(
-        vector_index=index,
         similarity_top_k=similarity_top_k,
         rrf_k=config['rrf_k'],
     )
 
-    logger.info("[HYBRID] Hybrid retriever created (pg_textsearch BM25 + ChromaDB + RRF)")
+    logger.info("[HYBRID] Hybrid retriever created (pg_textsearch BM25 + pgvector + RRF)")
     return retriever
 
 
@@ -583,7 +583,6 @@ class _AsyncSafeCondensePlusContextChatEngine(CondensePlusContextChatEngine):
 
 
 def create_chat_engine(
-    index: VectorStoreIndex,
     session_id: str,
     retrieval_top_k: int = 10,
     is_temporary: bool = False,
@@ -599,7 +598,7 @@ def create_chat_engine(
     1. Load LlamaIndex native prompts (system, context, condense)
     2. Get or create chat memory for session (or use memory_override, a
        throwaway memory pre-seeded with masked history for the PII tier)
-    3. Create hybrid retriever (or None for vector-only fallback)
+    3. Create hybrid retriever (or a bare vector retriever when hybrid is off)
     4. Create reranker postprocessor (if enabled), then PII masking
        postprocessor (if pii_token_mapping given) — masking always runs
        after reranking, since the reranker needs original text for quality
@@ -641,8 +640,8 @@ def create_chat_engine(
         ensure_metadata=ensure_metadata,
     )
 
-    # Create retriever (hybrid or vector-only)
-    retriever = create_hybrid_retriever(index, similarity_top_k=retrieval_top_k)
+    # Create retriever (hybrid, or vector-only when hybrid search is disabled)
+    retriever = create_hybrid_retriever(similarity_top_k=retrieval_top_k)
 
     # Reranker first, PII masking last (must see reranked, pre-mask node text)
     node_postprocessors = list(create_reranker_postprocessor() or [])
@@ -651,30 +650,20 @@ def create_chat_engine(
     node_postprocessors = node_postprocessors or None
 
     # Create chat engine
-    if retriever is not None:
-        logger.info("[CHAT_ENGINE] Using hybrid retriever (pg_textsearch BM25 + ChromaDB + RRF)")
-        engine_class = _AsyncSafeCondensePlusContextChatEngine if async_safe else CondensePlusContextChatEngine
-        chat_engine = engine_class.from_defaults(
-            retriever=retriever,
-            memory=memory,
-            node_postprocessors=node_postprocessors,
-            system_prompt=system_prompt,
-            context_prompt=context_prompt,
-            condense_prompt=condense_prompt,
-            verbose=False
-        )
+    if config['hybrid_search_enabled']:
+        logger.info("[CHAT_ENGINE] Using hybrid retriever (pg_textsearch BM25 + pgvector + RRF)")
     else:
         logger.info("[CHAT_ENGINE] Using vector retriever only")
-        chat_engine = index.as_chat_engine(
-            chat_mode="condense_plus_context",
-            memory=memory,
-            similarity_top_k=retrieval_top_k,
-            node_postprocessors=node_postprocessors,
-            system_prompt=system_prompt,
-            context_prompt=context_prompt,
-            condense_prompt=condense_prompt,
-            verbose=False
-        )
+    engine_class = _AsyncSafeCondensePlusContextChatEngine if async_safe else CondensePlusContextChatEngine
+    chat_engine = engine_class.from_defaults(
+        retriever=retriever,
+        memory=memory,
+        node_postprocessors=node_postprocessors,
+        system_prompt=system_prompt,
+        context_prompt=context_prompt,
+        condense_prompt=condense_prompt,
+        verbose=False
+    )
 
     logger.info("[CHAT_ENGINE] Chat engine created successfully")
     return chat_engine
@@ -794,13 +783,12 @@ def query_rag(
     Execute RAG query pipeline (synchronous, non-streaming).
 
     Flow:
-    1. Get VectorStoreIndex from ChromaDB
-    2. Get inference configuration
-    3. Create chat engine (with hybrid search, reranking, memory)
-    4. Execute query (retrieval → reranking → LLM generation)
-    5. Extract sources from retrieved nodes
-    6. Update session metadata (touch timestamp, auto-generate title)
-    7. Return response with answer, sources, session_id, metrics
+    1. Get inference configuration
+    2. Create chat engine (with hybrid search, reranking, memory)
+    3. Execute query (retrieval → reranking → LLM generation)
+    4. Extract sources from retrieved nodes
+    5. Update session metadata (touch timestamp, auto-generate title)
+    6. Return response with answer, sources, session_id, metrics
 
     Returns:
         {
@@ -819,7 +807,6 @@ def query_rag(
             }
         }
     """
-    from infrastructure.search.vector_store import get_vector_index
     from services.session import touch_session, get_session_metadata, update_session_title
     from services.session_titles import generate_session_title
 
@@ -829,8 +816,6 @@ def query_rag(
     # Reset token counter before query
     reset_token_counter()
 
-    # Get index and config
-    index = get_vector_index()
     config = get_inference_config()
 
     logger.info(f"[QUERY] Config: top_k={config['retrieval_top_k']}, reranker={config['reranker_enabled']}, hybrid={config['hybrid_search_enabled']}")
@@ -841,7 +826,6 @@ def query_rag(
 
     # Create chat engine
     chat_engine = create_chat_engine(
-        index,
         session_id,
         retrieval_top_k=config['retrieval_top_k'],
         is_temporary=is_temporary,
@@ -942,7 +926,6 @@ async def query_rag_async(
     functions block via run_async_safely() and are only safe to call from a
     thread other than the main event loop's — which this coroutine runs on.
     """
-    from infrastructure.search.vector_store import get_vector_index
     from services.session import touch_session_async, get_session_metadata_async, update_session_title_async
     from services.session_titles import generate_session_title
 
@@ -951,7 +934,6 @@ async def query_rag_async(
 
     reset_token_counter()
 
-    index = get_vector_index()
     config = get_inference_config()
 
     logger.info(f"[QUERY] Config: top_k={config['retrieval_top_k']}, reranker={config['reranker_enabled']}, hybrid={config['hybrid_search_enabled']}")
@@ -959,7 +941,6 @@ async def query_rag_async(
     pii_ctx = await _prepare_pii_masking_async(session_id, is_temporary, ensure_metadata, query_text)
 
     chat_engine = create_chat_engine(
-        index,
         session_id,
         retrieval_top_k=config['retrieval_top_k'],
         is_temporary=is_temporary,
@@ -1120,19 +1101,16 @@ def query_rag_stream(
 
     Yields SSE-formatted strings for client consumption.
     """
-    from infrastructure.search.vector_store import get_vector_index
     from services.session import touch_session, get_session_metadata, update_session_title
     from services.session_titles import generate_session_title
 
     try:
         logger.info(f"[QUERY_STREAM] Starting streaming query for session: {session_id} (temporary={is_temporary})")
 
-        # Get index and create chat engine
-        index = get_vector_index()
+        # Create chat engine
         config = get_inference_config()
         pii_ctx = _prepare_pii_masking(session_id, is_temporary, ensure_metadata, query_text)
         chat_engine = create_chat_engine(
-            index,
             session_id,
             retrieval_top_k=config['retrieval_top_k'],
             is_temporary=is_temporary,
@@ -1231,18 +1209,15 @@ async def query_rag_stream_async(
     the sync generator in a thread with a queue bridge. Same SSE event shape
     as query_rag_stream().
     """
-    from infrastructure.search.vector_store import get_vector_index
     from services.session import touch_session_async, get_session_metadata_async, update_session_title_async
     from services.session_titles import generate_session_title
 
     try:
         logger.info(f"[QUERY_STREAM] Starting async streaming query for session: {session_id} (temporary={is_temporary})")
 
-        index = get_vector_index()
         config = get_inference_config()
         pii_ctx = await _prepare_pii_masking_async(session_id, is_temporary, ensure_metadata, query_text)
         chat_engine = create_chat_engine(
-            index,
             session_id,
             retrieval_top_k=config['retrieval_top_k'],
             is_temporary=is_temporary,
@@ -1319,13 +1294,13 @@ async def query_rag_stream_async(
 # BACKWARD COMPATIBILITY
 # ============================================================================
 
-def refresh_bm25_retriever(index: VectorStoreIndex = None) -> None:
+def refresh_bm25_retriever() -> None:
     """No-op for backward compatibility. pg_textsearch BM25 index refreshes automatically."""
     logger.debug("[HYBRID] refresh_bm25_retriever called - pg_textsearch handles this automatically")
     pass
 
 
-def initialize_bm25_retriever(index: VectorStoreIndex = None, similarity_top_k: int = 10):
+def initialize_bm25_retriever(similarity_top_k: int = 10):
     """No-op for backward compatibility. pg_textsearch BM25 is used instead."""
     logger.debug("[HYBRID] initialize_bm25_retriever called - pg_textsearch handles this automatically")
     return None

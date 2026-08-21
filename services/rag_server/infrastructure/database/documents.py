@@ -143,7 +143,7 @@ async def add_chunks(
     document_id: UUID,
     chunks: list[dict[str, Any]],
 ) -> list[DocumentChunk]:
-    """Add document chunks to PostgreSQL (embeddings stored in ChromaDB separately)."""
+    """Add document chunks to PostgreSQL, including their embedding vectors."""
     chunk_models = []
     for chunk in chunks:
         chunk_model = DocumentChunk(
@@ -151,6 +151,9 @@ async def add_chunks(
             chunk_index=chunk["chunk_index"],
             content=chunk["content"],
             metadata_=chunk.get("metadata", {}),
+            # Absent or None writes SQL NULL; such rows are skipped by the
+            # vector retriever and never enter the diskann index.
+            embedding=chunk.get("embedding"),
         )
         chunk_models.append(chunk_model)
 

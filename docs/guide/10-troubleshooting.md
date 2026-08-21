@@ -47,11 +47,44 @@ Restart after the download.
 
 ### “Embedding dimension mismatch”
 
-**Cause:** stored vectors came from a model with another output dimension.
+**Cause:** the active embedding model does not produce the dimension the schema
+was created with. `document_chunks.embedding` is declared `vector(768)` in
+`services/postgres/init.sql`, and `vector_store.dimension` in `config.yml` must
+state the same number.
 
-Switch back, or rebuild the index by fully re-ingesting with the active model.
-There is no in-place conversion. Same-dimension swaps are not detected, so always
-re-ingest after any embedding-model change.
+```bash
+just show-config
+docker compose exec postgres sh -c \
+  'psql -U "$(cat /run/secrets/POSTGRES_SUPERUSER)" -d ragbench -c "\\d document_chunks"'
+```
+
+Switch back to a model of that dimension, or change both the column type and
+`vector_store.dimension` and re-ingest everything. There is no in-place
+conversion, and `init.sql` does not re-run against an existing volume, so a
+dimension change means recreating the database. Same-dimension swaps are not
+detected, so always re-ingest after any embedding-model change.
+
+### The vector store reports `unavailable`
+
+**Cause:** the `vector` or `vectorscale` extension is missing, or the
+`idx_chunks_embedding` index was never created.
+
+```bash
+curl -s http://localhost:8001/metrics/system \
+  | jq '.component_status.vector_store'
+docker compose logs rag-server | grep "\[VECTOR\] Health probe failed"
+docker compose exec postgres sh -c \
+  'psql -U "$(cat /run/secrets/POSTGRES_SUPERUSER)" -d ragbench -c "\\dx"'
+```
+
+`\dx` must list `vector` and `vectorscale`. Both are installed by the `postgres`
+image and enabled by `init.sql` on first start only, so a database volume created
+before they were added will not have them. Rebuild the image
+(`docker compose build postgres`), then recreate the volume and re-ingest.
+
+A missing index is the other cause: the probe checks `idx_chunks_embedding` by
+name, because a dropped diskann index degrades to a sequential scan over every
+chunk rather than erroring. Recreate it with the statement in `init.sql`.
 
 ### The RAG server fails after enabling PII
 
@@ -102,6 +135,21 @@ docker compose logs rag-server | grep "\[BM25\] Search failed"
 Inspect the logged SQL error, the `pg_textsearch` extension, and the
 `idx_chunks_bm25` index on `document_chunks`. While investigating, disable hybrid
 search so the degraded mode is explicit.
+
+### Semantic matches are ignored
+
+**Cause:** vector search failed and the query continued with BM25 only.
+
+```bash
+curl -s http://localhost:8001/metrics/system \
+  | jq '.component_status.vector_store'
+docker compose logs rag-server | grep "\[VECTOR\]"
+```
+
+`unhealthy` means the probe works but the last real search failed — read the
+logged error, which is usually an unreachable embedding model. `unavailable`
+means the extension or the index itself is broken; see
+[the vector store section above](#the-vector-store-reports-unavailable).
 
 ### The chat shows a generic connection error
 
@@ -174,8 +222,8 @@ lifetime. Warm it before measuring latency.
 
 ### Documents or chat history disappeared after restart
 
-`docker compose down -v` deletes the PostgreSQL and ChromaDB volumes. `just down`
-does not. There is no built-in recovery; re-ingest the source files retained under
+`docker compose down -v` deletes the PostgreSQL volume, which holds the chunks
+and their embeddings as well. `just down` does not. There is no built-in recovery; re-ingest the source files retained under
 `data/indexed_documents`.
 
 **Next:** [11. Limits and caveats](11-limits-and-caveats.md).

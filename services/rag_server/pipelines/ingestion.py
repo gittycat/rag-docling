@@ -5,8 +5,11 @@ Complete flow for processing documents from upload to indexing:
 1. Validate file format and extract metadata
 2. Chunk document using Docling (complex) or SentenceSplitter (text)
 3. Optionally add contextual prefixes via LLM (Anthropic method)
-4. Generate embeddings and index in ChromaDB
-5. BM25 index is automatic via pg_textsearch
+4. Generate embeddings and attach them to each chunk
+
+The chunk rows, their metadata and their embedding vectors are written to
+Postgres in a single `add_chunks` call by the caller; the BM25 index is
+maintained automatically by pg_textsearch on that insert.
 """
 
 from pathlib import Path
@@ -25,7 +28,6 @@ from llama_index.node_parser.docling import DoclingNodeParser
 from llama_index.core import SimpleDirectoryReader, Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import TextNode, MetadataMode
-from llama_index.core import VectorStoreIndex
 
 from infrastructure.config.models_config import get_models_config
 from infrastructure.llm.factory import get_llm_client
@@ -103,10 +105,6 @@ def clean_metadata_for_storage(metadata: Dict[str, Any]) -> Dict[str, Any]:
             cleaned[key] = str(value)
 
     return cleaned
-
-
-# Backward compatibility alias
-clean_metadata_for_chroma = clean_metadata_for_storage
 
 
 # ============================================================================
@@ -426,7 +424,7 @@ def add_contextual_retrieval(nodes: List[TextNode], file_path: str) -> List[Text
 
 
 # ============================================================================
-# STEP 4: EMBEDDING & INDEXING
+# STEP 4: EMBEDDING
 # ============================================================================
 
 def add_document_metadata_to_chunks(
@@ -464,20 +462,22 @@ def add_document_metadata_to_chunks(
     return nodes
 
 
-def embed_and_index_chunks(
-    index: VectorStoreIndex,
+def embed_chunks(
     nodes: List[TextNode],
     progress_callback: Optional[Callable[[int, int], None]] = None
 ) -> None:
     """
-    Generate embeddings and index chunks in ChromaDB, in batches.
+    Generate embeddings for chunks in batches, assigning them to node.embedding.
 
     Flow:
     - For each batch of INGEST_BATCH_SIZE chunks:
       - Generate embeddings in a single batched call
-      - Bulk insert into ChromaDB vector store
+      - Assign each embedding to its node
       - Call progress callback for tracking
     - Includes retry logic for Ollama connection errors, at batch granularity
+
+    Nothing is persisted here: the embeddings ride along with the chunk rows
+    into Postgres in a single add_chunks() write.
 
     This is the second most time-consuming step (~15% of processing time).
     """
@@ -500,7 +500,7 @@ def embed_and_index_chunks(
         logger.info(f"[EMBEDDING] Embedding batch {batch_num} ({len(batch)} chunks, {batch_start + 1}-{batch_start + len(batch)}/{total_nodes})...")
 
         try:
-            _process_batch_with_retry(index, batch, max_retries=3, base_delay=2.0)
+            _process_batch_with_retry(batch, max_retries=3, base_delay=2.0)
         except Exception as e:
             raise Exception(f"Failed to embed batch {batch_num} (chunks {batch_start + 1}-{batch_start + len(batch)}/{total_nodes}): {str(e)}") from e
 
@@ -520,9 +520,9 @@ def embed_and_index_chunks(
     logger.info(f"[EMBEDDING] Embedding complete ({total_duration:.2f}s, avg: {avg_per_node:.2f}s per chunk)")
 
 
-def _process_batch_with_retry(index: VectorStoreIndex, batch: List[TextNode], max_retries: int = 3, base_delay: float = 2.0):
+def _process_batch_with_retry(batch: List[TextNode], max_retries: int = 3, base_delay: float = 2.0):
     """
-    Embed and insert a batch of nodes with exponential backoff retry for connection errors.
+    Embed a batch of nodes with exponential backoff retry for connection errors.
     """
     last_error = None
 
@@ -532,7 +532,6 @@ def _process_batch_with_retry(index: VectorStoreIndex, batch: List[TextNode], ma
             embeddings = Settings.embed_model.get_text_embedding_batch(texts)
             for node, embedding in zip(batch, embeddings):
                 node.embedding = embedding
-            index.insert_nodes(batch)
             return  # Success
         except Exception as e:
             last_error = e
@@ -557,26 +556,11 @@ def _process_batch_with_retry(index: VectorStoreIndex, batch: List[TextNode], ma
 
 
 # ============================================================================
-# STEP 5: HYBRID SEARCH INDEX REFRESH (NO-OP for pg_textsearch)
-# ============================================================================
-
-def refresh_hybrid_search_index(index: VectorStoreIndex) -> None:
-    """
-    No-op for pg_textsearch. BM25 index refreshes automatically with inserts.
-
-    pg_textsearch maintains the BM25 index automatically when rows are
-    inserted/updated/deleted, so no manual refresh is needed.
-    """
-    logger.debug("[HYBRID] pg_textsearch BM25 index refreshes automatically - no manual refresh needed")
-
-
-# ============================================================================
 # MAIN INGESTION PIPELINE
 # ============================================================================
 
 def ingest_document(
     file_path: str,
-    index: VectorStoreIndex,
     document_id: str,
     filename: str,
     progress_callback: Optional[Callable[[int, int], None]] = None
@@ -589,12 +573,15 @@ def ingest_document(
     2. Chunk document (Docling or SentenceSplitter)
     3. Add contextual prefixes (optional, LLM-based)
     4. Add document metadata to chunks
-    5. Generate embeddings and index in ChromaDB
-    6. BM25 index auto-refreshes via pg_textsearch
+    5. Generate embeddings and attach them to each chunk
+
+    Nothing is persisted here. The returned `chunks_data` carries the text,
+    metadata and embedding of every chunk; the caller writes all three to
+    Postgres in one add_chunks() call, which is also what refreshes the
+    pg_textsearch BM25 index and populates the vector index.
 
     Args:
         file_path: Path to document file
-        index: VectorStoreIndex for ChromaDB
         document_id: Unique document identifier
         filename: Display name for document
         progress_callback: Optional callback for progress tracking (current, total)
@@ -636,24 +623,22 @@ def ingest_document(
     nodes = add_document_metadata_to_chunks(nodes, document_id, metadata)
     logger.info(f"[INGESTION] Step 4 complete")
 
-    # Sanitize metadata for ChromaDB (only scalar values allowed)
+    # Flatten metadata to scalars. Postgres JSONB would happily take nested
+    # structures — this is kept only because changing the shape of persisted
+    # chunk metadata is out of scope here, and downstream consumers (retrievers,
+    # eval tooling, the dashboard) currently assume flat scalar values.
     for node in nodes:
         node.metadata = {
             k: v for k, v in node.metadata.items()
             if isinstance(v, (str, int, float, bool)) or v is None
         }
 
-    # STEP 5: Embed and index
-    logger.info(f"[INGESTION] Step 5: Generating embeddings and indexing in ChromaDB...")
+    # STEP 5: Embed
+    logger.info(f"[INGESTION] Step 5: Generating embeddings...")
     embed_start = time.time()
-    embed_and_index_chunks(index, nodes, progress_callback)
+    embed_chunks(nodes, progress_callback)
     embed_duration = time.time() - embed_start
     logger.info(f"[INGESTION] Step 5 complete ({embed_duration:.2f}s)")
-
-    # STEP 6: BM25 index auto-refreshes (no-op)
-    logger.info(f"[INGESTION] Step 6: BM25 index auto-refreshes via pg_textsearch")
-    refresh_hybrid_search_index(index)
-    logger.info(f"[INGESTION] Step 6 complete")
 
     # Summary
     pipeline_duration = time.time() - pipeline_start
@@ -674,6 +659,7 @@ def ingest_document(
             "chunk_index": i,
             "content": node.get_content(),
             "metadata": dict(node.metadata),
+            "embedding": node.embedding,
         })
 
     return {

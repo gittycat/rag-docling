@@ -37,21 +37,16 @@ services:
       - DATABASE_HOST=postgres
       - DATABASE_PORT=5432
       - DATABASE_NAME=ragbench
-      - CHROMADB_HOST=chromadb
-      - CHROMADB_PORT=8000
       - OLLAMA_URL=http://host.docker.internal:11434
       - LOG_LEVEL=WARNING
       - MAX_UPLOAD_SIZE=80
       - SHARED_UPLOAD_DIR=/tmp/shared
       - USE_CACHED_RERANKER=true
-      - ANONYMIZED_TELEMETRY=False
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
-      chromadb:
-        condition: service_started
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
       interval: 2s
@@ -67,7 +62,7 @@ services:
       - docs_repo:/tmp/shared
       - ./.cache/huggingface:/home/appuser/.cache/huggingface
 
-  # PostgreSQL 17 with pg_textsearch (BM25)
+  # PostgreSQL 17 with pg_textsearch (BM25) and pgvector/pgvectorscale
   postgres:
     build:
       context: ./services/postgres
@@ -98,18 +93,6 @@ services:
       - private
     restart: unless-stopped
 
-  # ChromaDB - Vector database for embeddings
-  chromadb:
-    image: chromadb/chroma:latest
-    environment:
-      - ANONYMIZED_TELEMETRY=False
-      - LOG_LEVEL=WARNING
-    volumes:
-      - chroma_data:/data
-    networks:
-      - private
-    restart: unless-stopped
-
   # Task Worker - Async document processing via SKIP LOCKED
   task-worker:
     build:
@@ -127,22 +110,17 @@ services:
       - DATABASE_HOST=postgres
       - DATABASE_PORT=5432
       - DATABASE_NAME=ragbench
-      - CHROMADB_HOST=chromadb
-      - CHROMADB_PORT=8000
       - OLLAMA_URL=http://host.docker.internal:11434
       - LOG_LEVEL=WARNING
       - MAX_UPLOAD_SIZE=80
       - SHARED_UPLOAD_DIR=/tmp/shared
       - USE_CACHED_RERANKER=true
-      - ANONYMIZED_TELEMETRY=False
       - WORKER_CONCURRENCY=2
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
-      chromadb:
-        condition: service_started
       rag-server:
         condition: service_healthy
     networks:
@@ -202,8 +180,6 @@ networks:
 # Persistent volumes
 volumes:
   postgres_data:
-    driver: local
-  chroma_data:
     driver: local
   docs_repo:
     driver: local

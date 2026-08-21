@@ -54,7 +54,7 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 |-------|-----------|
 | **API & Backend** | Python 3.13, FastAPI |
 | **RAG Pipeline** | LlamaIndex, Docling (document parsing) |
-| **Vector Search** | ChromaDB (dense embeddings) |
+| **Vector Search** | PostgreSQL 17 + pgvector, indexed with pgvectorscale StreamingDiskANN |
 | **Keyword Search** | PostgreSQL 17 + pg_textsearch (BM25) |
 | **Fusion & Rerank** | Reciprocal Rank Fusion (RRF) + SentenceTransformers cross-encoder |
 | **Async Processing** | PostgreSQL `SKIP LOCKED` work queue |
@@ -91,8 +91,7 @@ RAGBench ships as a set of Docker Compose services:
 - **RAG server** (FastAPI) — retrieval and answer generation
 - **Task worker** — async document ingestion
 - **Evaluation service** (FastAPI) — automated quality scoring
-- **PostgreSQL 17** — BM25 search, chat, queue, and metadata
-- **ChromaDB** — vector store
+- **PostgreSQL 17** — vector search, BM25 search, chat, queue, and metadata
 - **Ollama** (on the host) — local model inference
 
 Minimum footprint for local development: Docker, Ollama, ~4 GB RAM, ~2 GB disk. Production on-prem deployments benefit from a GPU server sized for larger open-source models.

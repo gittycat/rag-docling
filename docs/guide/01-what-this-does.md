@@ -4,7 +4,7 @@ This is not an introduction to RAGs.  We try to focus the writing to the core el
 
 The core caracteristics of this RAG are:
 
-- Modular pipeline:  RAGBench is a pipeline with plug and play components. You can replace chunker, vector database, embedding model, re-ranker.
+- Modular pipeline:  RAGBench is a pipeline with plug and play components. You can replace chunker, embedding model, re-ranker. Retrieval itself is not pluggable: both the keyword (BM25) and vector legs are Postgres indexes over the same table.
 - Can run fully locally: The RAG can be hosted fully on a local server, avoiding leaking any document info to the cloud. This mode requires a fairly well spec'd server  (at least 32GB of RAM)
 - Can be run hybrid:  Local execution can make use of frontier models from the likes of Anthropic, OpenAI for the embedding or inference part.
 
@@ -18,7 +18,7 @@ The core caracteristics of this RAG are:
 This is currently a research project. It is not aimed at production. The following features would need to be implemented.
 
 - Auth: User authentication and authorisation are missing. The current RAG is wide open.
-- Live document updates: Updating the vector db and keyword search systems as documents are added, removed or modified.
+- Live document updates: Re-indexing as documents are added, removed or modified. Deletion is handled (the foreign key cascade clears chunks and their embeddings), but there is no watch-and-reingest path for documents that change on disk.
 - Observability: logs and alerts on both the infrastructure of the RAG and its internal behaviour, including the generation speed on load (tokens per minute).
 - Continuous Integration
 
@@ -34,8 +34,8 @@ Before the first query, the task worker prepares each uploaded document:
 
 1. Docling parses its structure.
 2. The text is split into chunks.
-3. Each chunk is embedded into ChromaDB for vector search.
-4. The chunk text is stored in PostgreSQL for BM25 search.
+3. Each chunk is embedded and the vector is stored in PostgreSQL for vector search.
+4. The same PostgreSQL row holds the chunk text for BM25 search.
 5. If contextual retrieval is enabled, an LLM-generated description is added to
    each chunk before embedding.
 
@@ -51,8 +51,7 @@ requires re-ingestion.
 | RAG server | 8001 | Retrieval, generation, sessions, and metrics |
 | Task worker | — | Background document processing |
 | Eval service | 8002 | Evaluation runs and saved results |
-| PostgreSQL | — | Documents, chunks, chat history, tasks, and BM25 index |
-| ChromaDB | — | Vector index |
+| PostgreSQL | — | Documents, chunks, embeddings, chat history, tasks, and both search indexes |
 | Ollama | 11434 | Optional local inference on the host |
 
 The eval service calls the same RAG server endpoint as the application. An

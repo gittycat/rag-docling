@@ -112,7 +112,7 @@ Both recipes call `print_config_banner()`, which renders from the `ModelsConfig`
 ## Common development loops
 
 - **Backend code change, no rebuild needed for tests:** edit under `services/rag_server`, run `just test-unit` against the local venv — no Docker involved.
-- **Backend code change, needs the running stack:** `docker compose build rag-server && just up` to pick up the change, or run `.venv/bin/uvicorn main:app --reload --port 8001` directly against a stack whose other services (`postgres`, `chromadb`) are already up via `just up`.
+- **Backend code change, needs the running stack:** `docker compose build rag-server && just up` to pick up the change, or run `.venv/bin/uvicorn main:app --reload --port 8001` directly against a stack whose other services (`postgres` in particular) are already up via `just up`.
 - **Frontend change:** `cd services/webapp && npm run dev` for hot-reload against a live backend (proxies `/api/*` to `http://localhost:8001` in dev). `npm run check` runs `svelte-check` — there is no frontend test framework or `test` npm script; type-checking is the only automated frontend check.
 - **Ingestion/retrieval change:** `just up`, upload a test document through the webapp or `curl`, then `just test-eval` for a fast 5-sample sanity check before a full `just test-eval-full`.
 - **Config-only change:** edit `config.yml`, then `just show-config` to confirm it parsed as expected before restarting affected services.

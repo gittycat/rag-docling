@@ -8,11 +8,11 @@ in `chat-and-memory.md`.
 
 ## Query flow overview
 
-A query request resets the token counter, loads the ChromaDB-backed vector
-index and the current inference config, optionally masks the query and chat
-history for PII, then builds a chat engine: chat memory, a hybrid retriever
-(BM25 + vector, fused with RRF), a reranker postprocessor, and a PII-masking
-postprocessor. The chat engine's `achat()` call is where condensation,
+A query request resets the token counter, loads the current inference config,
+optionally masks the query and chat history for PII, then builds a chat engine:
+chat memory, a hybrid retriever (BM25 + vector, fused with RRF), a reranker
+postprocessor, and a PII-masking postprocessor. Both retrievers issue their own
+SQL against the same Postgres table; there is no vector index object to load. The chat engine's `achat()` call is where condensation,
 retrieval, reranking, and answer synthesis all happen. After the response
 comes back, source nodes and the answer text are unmasked if PII masking was
 active, sources are extracted for the response payload, and — if numeric
@@ -72,27 +72,69 @@ records the failure for `/metrics/system` (`component_status.bm25`), and
 returns an empty list rather than propagating the error (see "Failure
 modes" below).
 
-## Vector retrieval via ChromaDB
+## Vector retrieval via pgvector + pgvectorscale
 
-The vector leg is LlamaIndex's standard `VectorStoreIndex` retriever, backed
-by a `ChromaVectorStore` wrapping a `chromadb.HttpClient`. Query embedding is
-handled internally by LlamaIndex (`Settings.embed_model.get_query_embedding`)
-— there is no custom embedding call in the retrieval code. The embedding
-model is whatever `active.embedding` resolves to in `config.yml` (default
-Ollama-served `nomic-embed-text`).
+The vector leg is **not** a LlamaIndex `VectorStoreIndex`. It is
+`PgVectorRetriever` (`infrastructure/search/vector_retriever.py`), a
+`BaseRetriever` subclass that issues its own SQL — deliberately built as a
+mirror of `PgSearchBM25Retriever`, with the same module shape, the same
+health-tracking globals and the same node construction.
 
-**No metadata filters are applied.** The vector retriever is constructed with
-only `similarity_top_k` — no `MetadataFilters` of any kind are passed
-anywhere in this retrieval path. A query has no way to narrow by document,
-file type, upload date, or any other stored metadata field at retrieval time.
+Embeddings live on `document_chunks.embedding`, a `vector(768)` column indexed
+with pgvectorscale's StreamingDiskANN (`USING diskann (embedding
+vector_cosine_ops)`) — see `database.md`. The same table, in the same database,
+that the BM25 index covers.
+
+The query is embedded explicitly by the retriever via
+`await Settings.embed_model.aget_query_embedding(query_str)`. The async variant is
+required, not stylistic: the synchronous call blocks the event loop for the whole
+Ollama round-trip, which serialises the `asyncio.gather()` in
+`HybridRRFRetriever._aretrieve` and stops the BM25 leg running concurrently. The
+embedding model is
+whatever `active.embedding` resolves to in `config.yml` (default Ollama-served
+`nomic-embed-text`). The resulting vector is bound as a pgvector text literal
+(`"[0.1,0.2,…]"`) and cast server-side, because no pgvector codec is registered
+on the asyncpg engine.
+
+The live retrieval query:
+
+```sql
+SELECT dc.id, dc.document_id, dc.chunk_index, dc.content, dc.metadata,
+       dc.created_at,
+       d.file_name, d.file_type, d.file_path, d.file_size_bytes,
+       d.file_hash, d.uploaded_at,
+       1 - (dc.embedding <=> CAST(:qvec AS vector)) AS similarity
+FROM document_chunks dc
+JOIN documents d ON dc.document_id = d.id
+WHERE dc.embedding IS NOT NULL
+ORDER BY dc.embedding <=> CAST(:qvec AS vector)
+LIMIT :limit
+```
+
+`<=>` is pgvector's cosine-distance operator: lower is better, range `[0, 2]`.
+The query orders ascending on it and reports `1 - distance` as a conventional
+similarity score. `WHERE dc.embedding IS NOT NULL` excludes chunk rows whose
+embedding has not been written.
+
+**Node IDs must match BM25's byte for byte.** Both retrievers build
+`f"{document_id}-chunk-{chunk_index}"`, and RRF fusion dedupes on
+`node.node_id`. If the two ever diverge, every hybrid result is double-counted
+and fusion breaks silently. The metadata dict is built identically for the same
+reason, so a fused result carries the same metadata regardless of which leg
+surfaced it.
+
+**No metadata filters are applied.** The retriever is constructed with only
+`similarity_top_k`, and the SQL has no filter predicate beyond the `IS NOT NULL`
+guard. A query has no way to narrow by document, file type, upload date, or any
+other stored metadata field at retrieval time.
 
 `similarity_top_k` for this leg equals `retrieval.top_k` from config — the
 same value used to size the BM25 leg before fusion.
 
-A startup check compares the currently configured embedding model's output
-dimension against whatever is already stored in the Chroma collection, and
-raises if they mismatch — this guards against silently corrupting the index
-after switching embedding models mid-deployment.
+Failure posture matches BM25: any exception — including a failure to embed the
+query, which is the common case when the embedding provider is down — is
+recorded, logged at `ERROR`, and turned into an empty list, so the query
+degrades to BM25-only rather than 500ing. See "Failure modes" below.
 
 ## RRF fusion
 
@@ -122,9 +164,10 @@ combines two `top_k`-sized lists and returns a `top_k`-sized result, not a
 larger merged pool.
 
 If `retrieval.enable_hybrid_search` is `false` (default `true`), fusion is
-skipped entirely and the chat engine falls back to a vector-only retriever
-via LlamaIndex's own `index.as_chat_engine(...)` path — a structurally
-different code path, not just BM25 contributing zero weight.
+skipped entirely: `create_hybrid_retriever()` in `pipelines/inference.py`
+returns a bare `PgVectorRetriever` instead of the fusion retriever. The chat
+engine is otherwise assembled the same way, so this is one retriever fewer,
+not a structurally different path.
 
 ## Cross-encoder reranker
 
@@ -179,7 +222,7 @@ unmasked text for scoring quality.
 | Knob | Default | Config key | Notes |
 |---|---|---|---|
 | Fused candidate pool size | `10` | `retrieval.top_k` | Used for both the BM25 and vector legs, and as the post-fusion cap |
-| Hybrid search on/off | `true` | `retrieval.enable_hybrid_search` | `false` skips BM25/RRF entirely, falls back to vector-only |
+| Hybrid search on/off | `true` | `retrieval.enable_hybrid_search` | `false` skips BM25/RRF entirely, leaving a bare `PgVectorRetriever` |
 | RRF constant `k` | `60` | `retrieval.rrf_k` | |
 | BM25 source weight | `1.0` | not exposed | Hardcoded; no config key |
 | Vector source weight | `1.0` | not exposed | Hardcoded; no config key |
@@ -210,6 +253,29 @@ The probe (`probe_bm25`) runs the same `<@>`/`to_bm25query` pair against
 `idx_chunks_bm25`, so a dropped index or missing extension surfaces there
 even if no user query has run yet. The key is absent from `component_status`
 when hybrid search is disabled.
+
+**Vector errors degrade to BM25-only, and are equally visible.**
+`PgVectorRetriever` wraps both the query-embedding call and the SQL in
+`except Exception`, records the failure in module state (`get_vector_health()`),
+logs at `ERROR` with a `[VECTOR]` prefix, and returns an empty list.
+`/metrics/system` reports it as `component_status.vector_store`, on the same
+three-valued scale as BM25:
+
+| Value | Meaning |
+|---|---|
+| `healthy` | probe query works and the last real search succeeded |
+| `unhealthy` | probe works but the most recent search failed |
+| `unavailable` | the probe itself fails — extension, index or permissions |
+
+The probe (`probe_vector_index`) does two things: it checks that
+`idx_chunks_embedding` exists in `pg_class`, then runs the same `<=>` ordering
+the retriever uses against a probe vector built at `vector_store.dimension`. The
+existence check is not redundant — a dropped diskann index does not raise, it
+silently turns every vector query into a sequential scan, so its absence has to
+be looked for. Building the probe vector from the config value also means a
+mismatch between `vector_store.dimension` and the column's declared dimension
+surfaces here. Unlike `component_status.bm25`, this key is always present:
+with hybrid search off, the vector leg is the only retriever there is.
 
 **There is no similarity or score threshold anywhere in the retrieval path.**
 Neither the vector retriever nor the BM25 retriever applies a minimum-score

@@ -40,7 +40,7 @@ preflight:
     fi
     echo "Preflight OK: Docker daemon running$($needs_ollama && echo ", Ollama reachable" || true)"
 
-# Start all services (rag-server, task-worker, webapp, evals, postgres, chromadb)
+# Start all services (rag-server, task-worker, webapp, evals, postgres)
 [group('core')]
 up: preflight
     docker compose up -d
@@ -140,20 +140,6 @@ eval-compare +ARGS: up
 [group('eval')]
 eval-export RUN_ID FORMAT="report": up
     docker compose exec evals .venv/bin/python -m evals.cli export --run-id {{RUN_ID}} --format {{FORMAT}}
-
-# ============================================================================
-# Maintenance
-# ============================================================================
-
-# Report ChromaDB vectors with no matching Postgres document (dry run, no deletions)
-[group('maintenance')]
-reconcile-vectors: up
-    docker compose exec rag-server .venv/bin/python scripts/reconcile_vectors.py
-
-# Delete orphaned ChromaDB vectors reported by `just reconcile-vectors`
-[group('maintenance')]
-reconcile-vectors-apply: up
-    docker compose exec rag-server .venv/bin/python scripts/reconcile_vectors.py --apply
 
 # ============================================================================
 # Config

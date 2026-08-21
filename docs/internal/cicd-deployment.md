@@ -60,7 +60,7 @@ networks.
 
 | File | Kind | Purpose |
 |---|---|---|
-| `docker-compose.yml` | base | The full local/dev stack: `webapp`, `rag-server`, `postgres`, `chromadb`, `task-worker`, `evals`. Everything runs on a `public` bridge network plus a `private` bridge network that is `internal: true` (no gateway, no internet access) — Postgres and ChromaDB sit only on `private`. |
+| `docker-compose.yml` | base | The full local/dev stack: `webapp`, `rag-server`, `postgres`, `task-worker`, `evals`. Everything runs on a `public` bridge network plus a `private` bridge network that is `internal: true` (no gateway, no internet access) — Postgres sits only on `private`. |
 | `docker-compose.bench.yml` | standalone | An ephemeral benchmark stack (`postgres-bench` on `tmpfs`, `rag-server-bench` on host port 8003, `task-worker-bench`), on its own `bench-public`/`bench-private` networks and its own volume names, so a benchmark run never touches dev data. There is no `just` recipe for it — bring it up with `docker compose -f docker-compose.bench.yml up -d` and down with the matching `down`. Everything in it is meant to be thrown away. |
 | `docker-compose.ci.yml` | standalone | Forgejo (git host + CI web UI, port 3000, plus SSH on 222) and `forgejo-runner` (mounts the host Docker socket to execute CI jobs, runs as root). Its network is a plain bridge, not isolated. Long-lived infrastructure, independent of the application stack's lifecycle. |
 | `docker-compose.cloud.yml` | overlay | Replaces local `build:` with `image:` for `webapp`, `rag-server`, and `task-worker` (pulling `<service>:${VERSION:-latest}` from a registry) so a cloud host runs pre-built images instead of building on the target machine. Also templates `OLLAMA_HOST` into `extra_hosts` so Ollama can run on a separate host. |
@@ -107,8 +107,8 @@ Two things are conspicuously absent anywhere in this repository's compose files,
 justfile:
 
 - **Backups.** No volume-backup mechanism exists for any of the named Docker volumes —
-  `postgres_data` (all application state: documents metadata, chat sessions, the task queue),
-  `chroma_data` (the vector index), or `forgejo_data` (the entire self-hosted git host: repos,
+  `postgres_data` (all application state: document metadata, chunks and their embedding
+  vectors, chat sessions, the task queue) or `forgejo_data` (the entire self-hosted git host: repos,
   users, PRs, Actions run history). There is no `pg_dump` script, no snapshot job, no backup
   service defined in any compose file. If any of these named volumes is lost, its contents are
   gone; the only data that survives independently of Docker volumes is what lives in host bind

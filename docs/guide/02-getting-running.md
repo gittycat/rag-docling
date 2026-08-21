@@ -155,13 +155,13 @@ This removes containers but preserves:
 
 | Storage | Contents |
 |---|---|
-| `postgres_data` volume | Documents, chat sessions, and task state |
-| `chroma_data` volume | Vector index |
+| `postgres_data` volume | Documents, chunks, embeddings, chat sessions, and task state |
 | `config.yml` | Configuration |
 | `data/indexed_documents` | Uploaded source files |
 | `.cache/huggingface` | Downloaded models |
 
-`docker compose down -v` deletes the PostgreSQL and ChromaDB volumes. There is no
-built-in backup, so recovery requires re-ingestion. Host bind mounts remain.
+`docker compose down -v` deletes the PostgreSQL volume, which now holds the
+embeddings as well. There is no built-in backup, so recovery requires
+re-ingestion. Host bind mounts remain.
 
 **Next:** [3. Configure the RAG pipeline](03-configuration-tour.md).

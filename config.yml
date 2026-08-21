@@ -102,7 +102,7 @@ models:
   embedding:
     # Ollama embeddings (local)
     # NOTE: Switching the active embedding model invalidates every stored vector —
-    # the ChromaDB collection must be dropped and all documents re-ingested.
+    # the schema must be re-created and all documents re-ingested.
     nomic-embed:
       provider: ollama
       model: nomic-embed-text:latest
@@ -273,10 +273,12 @@ retrieval:
   contextual_concurrency: 8            # Max concurrent LLM calls during contextual prefix generation
 
 # ============================================================================
-# ChromaDB Vector Store
+# Vector Store (pgvector + pgvectorscale StreamingDiskANN, in Postgres)
 # ============================================================================
-chromadb:
-  collection: document_chunks    # ChromaDB collection name for embeddings
+vector_store:
+  dimension: 768                 # MUST match the active embedding model's output
+                                 # dimension. Changing it requires re-creating the
+                                 # schema and re-ingesting every document.
 
 # ============================================================================
 # Database Connection Pooling

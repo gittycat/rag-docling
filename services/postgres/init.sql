@@ -1,8 +1,10 @@
 -- PostgreSQL initialization script for RAG system
 -- Run by docker-entrypoint-initdb.d on first container start
 
--- Extensions: pg_textsearch for BM25 search
+-- Extensions: pg_textsearch for BM25 search, pgvector + pgvectorscale for vectors
 CREATE EXTENSION IF NOT EXISTS pg_textsearch;
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
 
 -- Documents table (source files)
 CREATE TABLE IF NOT EXISTS documents (
@@ -16,7 +18,7 @@ CREATE TABLE IF NOT EXISTS documents (
     metadata JSONB DEFAULT '{}'
 );
 
--- Document chunks (text content for BM25 search; vectors stored in ChromaDB)
+-- Document chunks (text content for BM25 search plus its embedding vector)
 CREATE TABLE IF NOT EXISTS document_chunks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -25,6 +27,9 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     -- text before it is stored, so this column is what the BM25 index covers.
     content TEXT NOT NULL,
     metadata JSONB DEFAULT '{}',
+    -- Nullable: a chunk row can exist before its embedding is written. NULL
+    -- rows are neither indexed nor returned by the vector retriever.
+    embedding vector(768),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(document_id, chunk_index)
 );
@@ -32,6 +37,10 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 -- BM25 index via pg_textsearch (Timescale) for ranked full-text search
 CREATE INDEX idx_chunks_bm25 ON document_chunks
 USING bm25 (content) WITH (text_config='english');
+
+-- Vector index via pgvectorscale StreamingDiskANN; cosine distance only
+CREATE INDEX idx_chunks_embedding ON document_chunks
+USING diskann (embedding vector_cosine_ops);
 
 -- Chat sessions
 CREATE TABLE IF NOT EXISTS chat_sessions (

@@ -1,10 +1,22 @@
 # Database
 
-RAGBench's relational store is PostgreSQL, extended with the `pg_textsearch`
-(Timescale) extension for BM25 full-text search. Vector embeddings live
-separately in ChromaDB — Postgres never stores embedding vectors, only chunk
-text, metadata, and application state (documents, chat sessions, the task
-queue). Schema is created by a single init script
+RAGBench's relational store is PostgreSQL, and it holds everything: chunk text,
+chunk embeddings, and application state (documents, chat sessions, the task
+queue). Three extensions are enabled by `init.sql`:
+
+| Extension | Provides |
+|---|---|
+| `pg_textsearch` (Timescale) | the `bm25` index access method and `to_bm25query()` for BM25 full-text search |
+| `vector` (pgvector) | the `vector` column type and the `<=>` cosine-distance operator |
+| `vectorscale` (pgvectorscale, installed `CASCADE` on `vector`) | the `diskann` index access method — StreamingDiskANN |
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_textsearch;
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
+```
+
+There is no separate vector database. Schema is created by a single init script
 (`services/postgres/init.sql`), run once by `docker-entrypoint-initdb.d` on
 first container start; there is no migration tool wired up despite an Alembic
 scaffold existing in the tree (see "Migrations" below).
@@ -28,8 +40,8 @@ Source-file records, one row per uploaded document.
 
 ### `document_chunks`
 
-Chunk text and metadata; the corresponding embedding vector for each row
-lives in ChromaDB under the same `document_id`, not here.
+Chunk text, metadata, and the chunk's embedding vector — one row carries all
+three, so BM25 and vector search read the same table.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -38,7 +50,20 @@ lives in ChromaDB under the same `document_id`, not here.
 | `chunk_index` | `INTEGER` | 0-based position within the document |
 | `content` | `TEXT` | chunk text, contextual-retrieval prefix included inline when enabled |
 | `metadata` | `JSONB` | default `{}` |
+| `embedding` | `vector(768)` | nullable — a chunk row can exist before its embedding is written; `NULL` rows are neither indexed nor returned |
 | `created_at` | `TIMESTAMPTZ` | default `NOW()` |
+
+The `768` is a schema constant matching the active embedding model
+(`nomic-embed-text`), and `vector_store.dimension` in `config.yml` must state the
+same number — the retriever's health probe builds its probe vector from the
+config value, so a divergence surfaces there. Changing embedding models already
+required a full re-ingest; with the dimension in the DDL it additionally requires
+recreating the schema, because `init.sql` does not re-run against an existing
+volume.
+
+The `ON DELETE CASCADE` on `document_id` is what removes embeddings when a
+document is deleted. There is no separate vector-deletion step and no way for an
+orphaned vector to exist.
 
 Unique constraint on `(document_id, chunk_index)`. A `content_with_context`
 column existed until `docs/suggestions.md` #4.3: it was written from a
@@ -73,6 +98,33 @@ that the retriever negates. A second implementation in this module
 no caller and was deleted — see `docs/suggestions.md` #4.4 and
 `rag-pipeline.md`/`retrieval.md` for the retrieval-side detail. No manual
 reindex step is needed after insert — the index maintains itself.
+
+### Vector index
+
+```sql
+CREATE INDEX idx_chunks_embedding ON document_chunks
+USING diskann (embedding vector_cosine_ops);
+```
+
+`diskann` is pgvectorscale's StreamingDiskANN access method. The operator class
+is `vector_cosine_ops` and **cosine distance is the only supported metric here** —
+the retriever's `<=>` operator and the index must agree, so an L2 or inner-product
+query would not use this index. All index parameters are left at their defaults;
+none are exposed in `config.yml`.
+
+StreamingDiskANN is why the embeddings can live in Postgres at all. It keeps the
+graph on disk and only an SBQ-compressed representation resident in RAM — roughly
+96 bytes per vector at 768 dimensions, against roughly 3.2 KB for a fully
+in-memory HNSW index. On a 16 GB machine that is the difference between a corpus
+ceiling around 150k documents and one around 765k — assuming 10-page documents
+(~11 chunks each); the real unit is chunks, so larger documents scale the figures
+down proportionally. See `architecture.md` for the full basis.
+
+Like the BM25 index, this one is created once in `init.sql` and maintains itself
+on insert; no manual reindex step exists. It is checked by name by
+`probe_vector_index()` — a *dropped* diskann index does not error, it silently
+degrades every vector query to a sequential scan, so absence has to be detected
+rather than caught.
 
 ### `chat_sessions` / `chat_messages`
 
@@ -179,24 +231,20 @@ incident where fire-and-forget async tasks exhausted Postgres connections;
 see `design-decisions.md` for the full context/problem/resolution/lesson
 writeup. This document only states the current configuration.
 
-### `database.max_connections` is dead configuration
+### Where the server-side connection limit lives
 
-`config.yml` also defines `database.max_connections: 200`, documented inline
-as "PostgreSQL server-side max_connections (applied via docker-compose
-command)". **This key is parsed into `DatabaseConfig` but never read by any
-application code.** The actual server-side connection limit is a separate,
-hardcoded literal in `docker-compose.yml`:
+The PostgreSQL server-side limit is a literal in the Postgres service's compose
+command, and nowhere else:
 
 ```
 command: postgres -c max_connections=200
 ```
 
-Editing `config.yml`'s `database.max_connections` changes nothing — it does
-not template into the compose command, and no code path consumes it. The two
-values (`config.yml`'s `200` and the compose command's `200`) currently
-happen to agree only because they were set to match by hand; **they must be
-edited in lockstep** if either changes. There is no mechanism that would
-catch or warn about them drifting apart.
+`config.yml` used to carry a `database.max_connections` key that looked like it
+set this. It never did — nothing read it — and it was removed (commit `e26a4d2`).
+`config.yml`'s `database:` block now carries only the application-side pool
+settings and an inline comment pointing here. To change the server limit, edit the
+compose `command:` line; there is no config-file route to it.
 
 ## The `SKIP LOCKED` task queue
 
@@ -288,13 +336,17 @@ path:
 - Chunk counts and sort-by-chunk-count listings (`list_documents`) build an
   explicit subquery with `func.count()` and an `outerjoin`, rather than
   loading `Document.chunks` and counting in Python.
-- BM25 search and the `SKIP LOCKED` claim are both raw, explicit SQL via
-  `text()` — deliberately, since both depend on PostgreSQL-specific syntax
-  (`pg_textsearch`'s `<@>`/`to_bm25query()` pair, `FOR UPDATE SKIP LOCKED`)
-  that a query builder can't express portably.
+- BM25 search, vector search, and the `SKIP LOCKED` claim are all raw, explicit
+  SQL via `text()` — deliberately, since each depends on PostgreSQL-specific
+  syntax (`pg_textsearch`'s `<@>`/`to_bm25query()` pair, pgvector's `<=>`
+  operator, `FOR UPDATE SKIP LOCKED`) that a query builder can't express
+  portably. The query embedding is bound as a pgvector text literal
+  (`"[0.1,0.2,…]"`) and cast server-side with `CAST(:qvec AS vector)`, because no
+  pgvector asyncpg codec is registered on this engine.
 - `Document.chunks` is declared as an ORM relationship
   (`cascade="all, delete-orphan"`) purely so that deleting a `Document` row
-  cascades to its chunks; nothing in the codebase eagerly loads or iterates
+  cascades to its chunks — and therefore to their embeddings; nothing in the
+  codebase eagerly loads or iterates
   that relationship for query purposes — chunk reads go through the explicit
   `get_chunks_for_document()`/`get_all_chunks()` query-builder functions
   instead.

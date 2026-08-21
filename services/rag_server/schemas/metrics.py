@@ -55,8 +55,9 @@ class VectorSearchConfig(BaseModel):
     enabled: bool = Field(True, description="Vector search is always enabled")
     chunk_size: int = Field(..., description="Chunk size in tokens")
     chunk_overlap: int = Field(..., description="Chunk overlap in tokens")
-    vector_store: str = Field("ChromaDB", description="Vector database used")
-    collection_name: str = Field("documents", description="Collection name")
+    vector_store: str = Field("pgvector", description="Vector database used")
+    index_type: str = Field("diskann", description="Vector index type (pgvectorscale StreamingDiskANN)")
+    table_name: str = Field("document_chunks", description="Table holding chunk embeddings")
 
 
 class BM25Config(BaseModel):
@@ -208,5 +209,5 @@ class SystemMetrics(BaseModel):
     health_status: str = Field("healthy", description="Overall system health")
     component_status: dict[str, str] = Field(
         default_factory=dict,
-        description="Status of each component (postgres, bm25, ollama)"
+        description="Status of each component (postgres, bm25, vector_store, ollama)"
     )

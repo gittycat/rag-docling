@@ -174,7 +174,7 @@ of the key (or just the last 3 for very short keys), never the full value.
 
 | Method & path | Purpose | Request | Response | Notable status codes |
 |---|---|---|---|---|
-| `GET /health` | Liveness check, unauthenticated | none | `{"status": "healthy"}` | Always 200 if the process is up — does not probe Postgres, Ollama, or ChromaDB |
+| `GET /health` | Liveness check, unauthenticated | none | `{"status": "healthy"}` | Always 200 if the process is up — does not probe Postgres or Ollama |
 | `GET /models/info` | Model + pricing summary for the active LLM | none | `ModelsInfoResponse { llm_model, llm_provider, llm_hosting, embedding_model, reranker_model, reranker_enabled, cost_per_1m_input_tokens, cost_per_1m_output_tokens }` | — |
 | `GET /config` | Server-side operational config exposed to clients | none | `ConfigResponse { max_upload_size_mb }` (from env var `MAX_UPLOAD_SIZE`, default `80`) | — |
 | `GET /metrics/system` | Full system overview: models, retrieval config, doc/chunk counts, component health | none | `SystemMetrics` (nests `ModelsConfig`, `RetrievalConfig`, `document_count`, `chunk_count`, `health_status`, `component_status: dict[str, str]`) | 500 on error |

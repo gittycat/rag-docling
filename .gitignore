@@ -52,7 +52,6 @@ docker-compose.override.yml
 # Project specific data and volumes
 /data/
 /volumes/
-/chroma_db_data/
 /indexed_documents/
 /services/evals/.deepeval/
 /services/evals/data/results
@@ -75,11 +74,9 @@ docker-compose.override.yml
 /services/*/temp/
 /services/*/cache/
 
-# ChromaDB data
+# Local SQLite scratch files
 *.sqlite
 *.sqlite3
-chroma.sqlite3
-/chromadb_data/
 
 # Document processing temporary files
 *.tmp

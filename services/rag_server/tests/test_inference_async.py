@@ -46,8 +46,7 @@ def test_query_rag_async_happy_path():
     mock_response.__str__.return_value = "the answer"
     mock_chat_engine.achat = AsyncMock(return_value=mock_response)
 
-    with patch("infrastructure.search.vector_store.get_vector_index", return_value=MagicMock()), \
-         patch("pipelines.inference.get_inference_config", return_value={
+    with patch("pipelines.inference.get_inference_config", return_value={
              "reranker_enabled": True, "reranker_model": "x", "reranker_top_n": 5,
              "retrieval_top_k": 10, "hybrid_search_enabled": True, "rrf_k": 60,
          }), \
@@ -86,8 +85,7 @@ def test_query_rag_stream_async_yields_sse_events():
             events.append(chunk)
         return events
 
-    with patch("infrastructure.search.vector_store.get_vector_index", return_value=MagicMock()), \
-         patch("pipelines.inference.get_inference_config", return_value={
+    with patch("pipelines.inference.get_inference_config", return_value={
              "reranker_enabled": True, "reranker_model": "x", "reranker_top_n": 5,
              "retrieval_top_k": 10, "hybrid_search_enabled": True, "rrf_k": 60,
          }), \

@@ -27,7 +27,7 @@ venv.
 ### Integration tests
 
 Integration tests live in `services/rag_server/tests/integration/` and exercise the real stack —
-Postgres, ChromaDB/Ollama, and the rag-server HTTP API — through a disposable container that
+Postgres, Ollama, and the rag-server HTTP API — through a disposable container that
 reuses the `rag-server` service's own image and environment (see "Integration test design"
 below). The main compose stack (`just up`) must already be running.
 
@@ -157,7 +157,7 @@ interpolated into the SQL string (`docs/suggestions.md` #4.4).
 
 `infrastructure/tasks/task_worker.py` used to call `init_settings()`/`initialize_settings()` at
 module scope, which reached the network (an Ollama reachability probe that `sys.exit(1)`s on
-failure) and ChromaDB. Importing it without those services running took down the whole pytest
+failure). Importing it without Ollama running took down the whole pytest
 collection with `INTERNALERROR`/`SystemExit`, and the tests worked around it by patching during
 the import. Both calls now happen in `main()`; `test_task_worker_concurrency.py` asserts the
 import stays inert (`docs/suggestions.md` #4.9).

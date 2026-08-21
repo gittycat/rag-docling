@@ -13,8 +13,7 @@ RRF, reranking) are covered in `rag-pipeline.md` and `retrieval.md`.
 |---|---|---|---|
 | `webapp` | SvelteKit frontend, server-side proxy to the two backend APIs | Yes | Only service most users touch directly |
 | `rag-server` | FastAPI app: document API, query/chat API, sessions, settings, health/metrics | Yes | Owns the ingestion queue and the inference pipeline |
-| `postgres` | Relational store: documents, chat sessions/history, task queue, BM25 index | Yes | Never exposed outside the `private` network |
-| `chromadb` | Vector store for chunk embeddings | Yes | Never exposed outside the `private` network |
+| `postgres` | Everything with state: documents, chunks and their embeddings, chat sessions/history, task queue, BM25 and vector indexes | Yes | Never exposed outside the `private` network |
 | `task-worker` | Background ingestion processor | Yes | Same Docker image as `rag-server`, different entrypoint/command |
 | `evals` | Evaluation API + CLI for RAG quality assessment | Yes | A plain HTTP client of `rag-server` — see below |
 
@@ -24,7 +23,7 @@ mapping (both process-local, both bounded — see `chat-and-memory.md` and
 `pii-masking.md`); `evals` holds the active-job state and an in-memory index of
 past runs rebuilt from disk at startup (see `eval-framework.md`). `task-worker` is
 long-lived but stateless between tasks — all task state lives in Postgres.
-`postgres` and `chromadb` are the only services with real persisted state.
+`postgres` is the only service with real persisted state.
 
 ## Docker topology and the network split
 
@@ -34,14 +33,14 @@ The base `docker-compose.yml` defines two bridge networks:
   sit on it — `rag-server` and `task-worker` need it to reach Ollama at
   `host.docker.internal` when using local models.
 - **`private`**: `internal: true` — no default gateway, no internet access, fully
-  isolated. `postgres` and `chromadb` sit only here, reachable exclusively from
+  isolated. `postgres` sits only here, reachable exclusively from
   `rag-server`, `task-worker`, and `evals` (all three are also attached to
   `private`).
 
 `webapp` is the only service published to the host by default (`8000:3000`);
 `rag-server` (`8001:8001`) and `evals` (`8002:8002`) also publish ports for direct
-API access in the local/dev tier. Named volumes (`postgres_data`, `chroma_data`,
-`docs_repo`) are Docker-managed; bind mounts (`config.yml`, `data/indexed_documents`,
+API access in the local/dev tier. Named volumes (`postgres_data`, `docs_repo`)
+are Docker-managed; bind mounts (`config.yml`, `data/indexed_documents`,
 `.cache/huggingface`) are host directories, chosen deliberately so PII masking
 config, source documents, and downloaded model weights survive `docker compose
 down -v` even though the named volumes would not.
@@ -67,14 +66,14 @@ service — resource limiting is unconfigured across the whole stack.
 
 1. Client sends a chat message to `webapp`, which proxies `/api/*` to `rag-server`
    (and `/api/eval/*` to `evals`).
-2. `rag-server` runs hybrid retrieval (BM25 via `pg_textsearch` in Postgres + vector
-   search in ChromaDB, fused with RRF), reranks with a cross-encoder, and assembles
-   a prompt.
+2. `rag-server` runs hybrid retrieval (BM25 via `pg_textsearch` and vector search
+   via pgvector, both against `document_chunks` in Postgres, fused with RRF),
+   reranks with a cross-encoder, and assembles a prompt.
 3. The LLM (local via Ollama, or a cloud provider) generates the answer, optionally
    streamed over SSE.
 4. The response, with sources, returns to the client through `webapp`.
 
-Postgres and ChromaDB are only ever reached from `rag-server` / `task-worker` /
+Postgres is only ever reached from `rag-server` / `task-worker` /
 `evals`, never directly from `webapp` or the client — the `private` network
 enforces this at the infrastructure level, not just by convention.
 
@@ -85,7 +84,8 @@ enforces this at the infrastructure level, not just by convention.
    `/tmp/shared`) and creates a row in the Postgres task queue (`job_tasks`).
 3. `task-worker` claims the task via `SELECT ... FOR UPDATE SKIP LOCKED`, then runs
    Docling parsing → chunking → optional contextual enrichment → embedding →
-   indexing (chunk text + BM25 into Postgres, embeddings into ChromaDB).
+   a single Postgres insert per batch carrying the chunk text and its embedding
+   together; both indexes maintain themselves from that write.
 4. The client polls task/batch status by ID until ingestion completes.
 
 `rag-server` and `task-worker` share the same Docker image and codebase — only the
@@ -100,7 +100,7 @@ single dependency set avoids version drift between the two.
 API (`/health`, `/models/info`, `/upload`, `/query`, `/query/with-context`,
 `/tasks/{batch_id}/status`, `/documents/{id}`) to run evaluations, and has no
 special internal access, no shared in-process state, and no direct connection to
-Postgres or ChromaDB for RAG data (it does have its own on-disk JSON persistence
+Postgres for RAG data (it does have its own on-disk JSON persistence
 for eval runs — see `eval-framework.md`). It was split into its own service
 specifically so its heavier dependencies (`datasets`, HuggingFace downloads) don't
 bloat the `rag-server` image, and so a long eval run can't compete with `rag-server`
@@ -119,7 +119,7 @@ older documentation.
 | API framework | FastAPI | 0.118.3+ |
 | Database | PostgreSQL | 17 |
 | Full-text search | pg_textsearch (Timescale extension) | — |
-| Vector store | ChromaDB | 1.5.0+ |
+| Vector store | pgvector (`vector` extension) + pgvectorscale (`vectorscale`, StreamingDiskANN) | pgvectorscale 0.9.0 |
 | Task queue | PostgreSQL `SKIP LOCKED` | — |
 | Document parser | Docling | 2.53.0+ |
 | RAG framework | LlamaIndex core | 0.14.4+ |
@@ -135,13 +135,35 @@ older documentation.
 | Frontend charting | layerchart | 2.0.1+ |
 | Frontend adapter | @sveltejs/adapter-node | 5.2.12+ |
 
-The `rag-server` `pyproject.toml` also lists `pgvector` and
-`llama-index-vector-stores-postgres` as dependencies, and there is a
-`llama-index-vector-stores-postgres` import path available, but the code does not
-use either for the actual vector index — `infrastructure/search/vector_store.py`
-constructs a `ChromaVectorStore` backed by `chromadb`, and that is the only vector
-store instantiated anywhere in the request path. Treat the pgvector dependency as
-present-but-unused for this purpose.
+No vector-store abstraction is instantiated anywhere in the request path.
+`infrastructure/search/vector_retriever.py` issues SQL against
+`document_chunks.embedding` directly; the pgvector and pgvectorscale extensions
+are installed into the `postgres` image, not pulled in as a Python client.
+
+### Why the embeddings live in Postgres
+
+Until Aug 2026 the stack ran a separate vector-database service, whose HNSW
+index had to be resident in RAM in its entirety — capping the stack at roughly
+150k documents on a 16 GB machine. pgvectorscale's StreamingDiskANN keeps the
+index on disk and only an SBQ-compressed representation in RAM — about 96 bytes
+per vector at 768 dimensions against about 3.2 KB — which lifts the same machine
+to roughly 765k documents.
+
+Both document figures assume a 10-page document (~5,000 tokens, ~11 chunks at the
+current `chunk_size=500`/`chunk_overlap=50`) and subtract a ~7 GB fixed floor for
+the OS and the other services. They scale with chunks, not documents: a corpus of
+100-page documents divides them by ten. Treat them as an order of magnitude, not a
+guarantee — and note that on CPU, ingestion throughput (Docling parsing) binds well
+before either ceiling does.
+
+The second-order effects mattered as much as the ceiling. Chunk text was stored
+three times (the Postgres row, the vector store's copy, the original file on
+disk) and is now stored twice. Deleting a document needed an explicit vector-delete against
+a second store that could fail independently; it is now the `ON DELETE CASCADE`
+that was already on `document_chunks.document_id`, so orphaned vectors are
+structurally impossible rather than merely swept up. And the two retrieval legs
+now read one table in one database, so there is no cross-store synchronisation
+problem left to get wrong.
 
 LLM providers, selected per role (`llm`, `embedding`, `eval`) in `config.yml`:
 Ollama (default, local), OpenAI, Anthropic, Google Gemini, DeepSeek, Moonshot, and
@@ -152,13 +174,20 @@ vLLM (OpenAI-compatible, self-hosted).
 `services/rag_server/main.py` logs, on every startup:
 
 ```
-[STARTUP] Hybrid search enabled (pg_textsearch BM25 + ChromaDB vectors)
+[STARTUP] Hybrid search enabled (pg_textsearch BM25 + pgvector vectors)
 ```
 
-It used to read "pg_search BM25 + pgvector", which was wrong on both counts:
-there is no `pg_search` extension (full-text search runs through the Timescale
-`pg_textsearch` extension) and no `pgvector` column or index (vectors live
-entirely in ChromaDB via the `ChromaVectorStore` integration described above).
-Corrected per `docs/suggestions.md` #4.6; `/metrics/retrieval` carried the same
-wrong `vector_store` value and now reports `ChromaDB` with the collection name
-from `config.yml`.
+Both halves are meant to name real extensions, and the line has been wrong
+before: it once read "pg_search BM25 + pgvector" when neither was accurate —
+full-text search runs through the Timescale `pg_textsearch` extension, and at
+that point vectors lived in a separate vector service with no pgvector column or
+index anywhere (`docs/suggestions.md` #4.6). Since the pgvector migration the second half is
+accurate again. `/metrics/retrieval` reports the matching values:
+`vector_store: "pgvector"`, `index_type: "diskann"`, `table_name:
+"document_chunks"`.
+
+When hybrid search is disabled the line instead reads:
+
+```
+[STARTUP] Hybrid search disabled, using vector-only retrieval
+```

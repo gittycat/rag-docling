@@ -16,7 +16,6 @@ from pathlib import Path
 from uuid import UUID
 
 from pipelines.ingestion import ingest_document, extract_file_metadata
-from infrastructure.search.vector_store import get_vector_index
 from infrastructure.database.postgres import get_session
 from infrastructure.database import jobs as db_jobs
 from infrastructure.database import documents as db_docs
@@ -30,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 async def process_document_async(file_path: str, filename: str, batch_id: str, task_id: str) -> dict:
     """
-    Process a document: chunks + BM25 rows in PostgreSQL, vectors in ChromaDB.
+    Process a document: chunk text, metadata, BM25 rows and embedding vectors,
+    all written to PostgreSQL.
 
     Args:
         file_path: Path to temporary file in /tmp/shared
@@ -58,9 +58,6 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
         doc_id = task_id
         logger.info(f"[TASK {task_id}] Using document ID: {doc_id}")
 
-        # Get vector index
-        index = get_vector_index()
-
         # ingest_document() runs in an executor thread (see below), so this
         # callback fires from that thread — schedule its async DB updates back
         # onto the main event loop thread-safely rather than using
@@ -78,9 +75,9 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
         # Extract file metadata for Document record
         metadata = extract_file_metadata(file_path)
 
-        # Reset any partial state from a previous failed retry attempt (Postgres
-        # row + any ChromaDB vectors a prior attempt managed to index before
-        # failing later in the pipeline).
+        # Reset any partial state from a previous failed retry attempt. Deleting
+        # the documents row cascades to its chunks — and therefore to their
+        # embeddings, which now live in the same rows — in one statement.
         logger.info(f"[TASK {task_id}] Preparing document record in database...")
         async with get_session() as session:
             await document_service.delete_document(session, UUID(doc_id))
@@ -108,14 +105,14 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
             functools.partial(
                 ingest_document,
                 file_path=file_path,
-                index=index,
                 document_id=doc_id,
                 filename=filename,
                 progress_callback=embedding_progress,
             ),
         )
 
-        # Persist chunk text/metadata in PostgreSQL for BM25 and document introspection
+        # Persist chunk text/metadata/embeddings in PostgreSQL — this single write
+        # populates the BM25 index, the vector index and document introspection
         chunks_data = result.get("chunks_data", [])
         if chunks_data:
             logger.info(f"[TASK {task_id}] Storing {len(chunks_data)} chunks in PostgreSQL...")

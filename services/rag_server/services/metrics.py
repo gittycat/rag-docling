@@ -272,15 +272,13 @@ def get_retrieval_config() -> RetrievalConfig:
     inference_config = get_inference_config()
     ingestion_config = get_ingestion_config()
 
-    # Local import: the module-level get_models_config() is the API-shaped one.
-    from infrastructure.config.models_config import get_models_config as get_config
-
     vector_config = VectorSearchConfig(
         enabled=True,
         chunk_size=500,
         chunk_overlap=50,
-        vector_store="ChromaDB",
-        collection_name=get_config().chromadb.collection,
+        vector_store="pgvector",
+        index_type="diskann",
+        table_name="document_chunks",
     )
 
     bm25_config = BM25Config(
@@ -354,6 +352,35 @@ async def _check_bm25() -> str:
     return "healthy"
 
 
+async def _check_vector_store() -> str:
+    """Probe the pgvector index, then fold in the last live retrieval outcome.
+
+    "unavailable" = the extension/index cannot be queried at all.
+    "unhealthy"   = the probe works but the most recent real search failed.
+    """
+    from infrastructure.database.postgres import get_session
+    from infrastructure.search.vector_retriever import get_vector_health, probe_vector_index
+
+    try:
+        async with get_session() as session:
+            probe = await probe_vector_index(session)
+    except Exception as e:
+        logger.error(f"Vector store health check error: {e}")
+        return "unavailable"
+
+    if probe["status"] != "healthy":
+        return "unavailable"
+
+    health = get_vector_health()
+    if health["status"] == "unhealthy":
+        logger.warning(
+            f"Vector index is queryable but the last search failed "
+            f"({health['consecutive_failures']} consecutive): {health['last_error']}"
+        )
+        return "unhealthy"
+    return "healthy"
+
+
 async def get_system_metrics() -> SystemMetrics:
     """Get complete system metrics overview."""
     from infrastructure.database.postgres import get_session
@@ -391,6 +418,11 @@ async def get_system_metrics() -> SystemMetrics:
     # into a vector-only one.
     if retrieval.hybrid_search.enabled:
         component_status["bm25"] = await _check_bm25()
+
+    # Check the vector half of retrieval (pgvector extension + diskann index).
+    # Unlike BM25 this is always meaningful: with hybrid search off it is the
+    # only retriever, and with it on a broken index degrades queries to BM25-only.
+    component_status["vector_store"] = await _check_vector_store()
 
     # Check Ollama
     ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")

@@ -21,18 +21,20 @@ worker for each queued document. It runs synchronously inside a worker thread
 4. **Add document metadata to chunks** — attaches `document_id`, `chunk_index`,
    `uploaded_at`, file metadata, and a node ID of the form
    `{document_id}-chunk-{index}` to every chunk, then sanitizes the metadata
-   dict down to scalar types (`str`, `int`, `float`, `bool`, `None`) before it
-   is handed to ChromaDB — any list/dict metadata Docling attached is dropped
-   at this point.
-5. **Embed and index** — batches chunks, calls the embedding model, and
-   inserts the resulting nodes into the ChromaDB vector store.
-6. **BM25 refresh (no-op)** — a placeholder step; the `pg_textsearch` BM25
-   index in Postgres updates itself automatically on chunk insert, so no
-   manual refresh call is actually needed here.
+   dict down to scalar types (`str`, `int`, `float`, `bool`, `None`) — any
+   list/dict metadata Docling attached is dropped at this point. Postgres JSONB
+   would take nested structures; the flattening is retained because downstream
+   consumers (the retrievers, eval tooling, the dashboard) assume flat scalars,
+   not because the store requires it.
+5. **Embed** — batches chunks, calls the embedding model, and assigns the
+   result to each node's `embedding`. Nothing is written here.
 
-The function returns a dict containing `document_id`, `filename`, a chunk
-count, and `chunks_data` — one entry per chunk with `chunk_index`, `content`
-and `metadata` — which the task worker then persists to Postgres.
+`ingest_document()` persists nothing itself. It returns a dict containing
+`document_id`, `filename`, a chunk count, and `chunks_data` — one entry per
+chunk with `chunk_index`, `content`, `metadata` and `embedding` — which the task
+worker then hands to `add_chunks()` for a single write per chunk row. Both the
+BM25 index and the diskann vector index maintain themselves from that insert;
+there is no separate index-refresh call, and there never needs to be.
 
 ## Docling: reader configuration and the JSON export constraint
 
@@ -182,16 +184,16 @@ but only for errors that look connection-related (matching
 case-insensitive); any other error, or the third failure, propagates
 immediately and aborts the whole document's ingestion.
 
-## ChromaDB collection and per-chunk metadata
+## Where chunks land, and per-chunk metadata
 
-All documents share a single ChromaDB collection — the name comes from
-`chromadb.collection` in `config.yml` (default `document_chunks`) — created
-via `get_or_create_collection`. Documents are distinguished within that one
-collection purely by metadata, not by separate per-document collections. The
-client connects over HTTP only (`chromadb.HttpClient`); there is no
-persistent/embedded-mode code path in this codebase.
+Every chunk becomes one row in `document_chunks`: the text in `content`, the
+metadata in `metadata` (JSONB), and the embedding in `embedding`, a
+`vector(768)` column indexed with pgvectorscale's StreamingDiskANN. There is no
+second store and no collection concept — documents are distinguished by the
+`document_id` foreign key. See `database.md` for the schema and `retrieval.md`
+for how the two indexes are queried.
 
-Per-chunk metadata stored in Chroma (after the scalar-only sanitize pass):
+Per-chunk metadata persisted with the row (after the scalar-only sanitize pass):
 
 - `file_name`, `file_type`, `path`, `file_size_bytes`, `file_hash`
 - `chunk_index` (0-based position within the document)
@@ -200,7 +202,7 @@ Per-chunk metadata stored in Chroma (after the scalar-only sanitize pass):
 - node ID: `{document_id}-chunk-{chunk_index}`
 
 Any non-scalar metadata Docling attached upstream is dropped at this stage —
-only `str`, `int`, `float`, `bool`, and `None` survive into Chroma.
+only `str`, `int`, `float`, `bool`, and `None` survive.
 
 ## Task worker
 
@@ -279,19 +281,15 @@ chunking function itself if that check is ever bypassed.
 ## Deletion and re-ingestion
 
 Deleting a document (`DELETE /documents/{document_id}`) removes the
-`Document` row from Postgres; its `DocumentChunk` rows cascade-delete via a
-foreign key. The route then best-effort removes the on-disk stored original
-file (a failure here is logged, not fatal).
+`Document` row from Postgres; its `DocumentChunk` rows — and therefore their
+embeddings, which are a column on those rows — cascade-delete via the foreign
+key, in one statement. The route then best-effort removes the on-disk stored
+original file (a failure here is logged, not fatal).
 
-### Defect: ChromaDB vectors are never removed on delete
-
-Nothing in the deletion path — neither the route nor the underlying
-document-deletion function — calls into ChromaDB to remove the vectors that
-correspond to the deleted document. Postgres and the on-disk file are
-cleaned up; the embeddings are not. In practice this means a "deleted"
-document's chunks can continue to surface in vector search indefinitely,
-even though the document no longer exists anywhere else in the system. There
-is no cleanup job or endpoint that reconciles this.
+There is no separate vector-deletion step and no reconciliation job, because an
+orphaned vector is not a state this schema can reach. The same cascade covers
+the worker's pre-retry reset, where a failed ingestion attempt's partial chunks
+are cleared before the document is processed again.
 
 Duplicate detection is advisory only: a `check-duplicates` endpoint lets a
 client pre-check file hashes before uploading, but the upload endpoint itself

@@ -1,12 +1,15 @@
-"""Tests for document deletion cleaning up ChromaDB vectors (docs/suggestions.md 4.1).
+"""Tests for the document deletion path (docs/suggestions.md 4.1).
+
+Embeddings live in document_chunks.embedding, so deletion is one statement
+against `documents` and the ON DELETE CASCADE on document_chunks.document_id
+removes the chunks and their vectors with it. There is no second store to clean
+up and therefore no partial-delete state to order around.
 
 Covers:
-- vector_store.delete_document_vectors() deletes by the "document_id" metadata key
-  (via ChromaVectorStore.delete(ref_doc_id=...), which llama-index implements as
-  collection.delete(where={"document_id": ref_doc_id}))
-- vector_store.list_chroma_document_ids() paginates over the collection
-- document_service.delete_document() deletes vectors before the Postgres row,
-  and aborts the Postgres delete when vector deletion fails
+- document_service.delete_document() is a straight delegation to the Postgres
+  delete — no vector-store step to fail between the two
+- infrastructure.database.documents.delete_document() issues exactly one DELETE,
+  against documents, and reports whether a row was actually removed
 """
 import sys
 from pathlib import Path
@@ -17,112 +20,63 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from infrastructure.search import vector_store
+from infrastructure.database import documents as db_docs
 from services import document_service
 
 
-@pytest.fixture(autouse=True)
-def _reset_vector_store_singleton():
-    vector_store.reset_vector_store()
-    yield
-    vector_store.reset_vector_store()
-
-
-def test_delete_document_vectors_deletes_by_ref_doc_id():
-    """document_id must be passed through as ChromaVectorStore's ref_doc_id, which
-    llama-index resolves to collection.delete(where={"document_id": ref_doc_id}) —
-    the metadata key add_document_metadata_to_chunks() writes during ingestion."""
-    mock_store = MagicMock()
-
-    with patch("infrastructure.search.vector_store.get_vector_store", return_value=mock_store):
-        vector_store.delete_document_vectors("doc-123")
-
-    mock_store.delete.assert_called_once_with(ref_doc_id="doc-123")
-
-
-def test_delete_document_vectors_propagates_chroma_errors():
-    """A ChromaDB connection failure must surface to the caller, not be swallowed."""
-    mock_store = MagicMock()
-    mock_store.delete.side_effect = ConnectionError("chromadb unreachable")
-
-    with patch("infrastructure.search.vector_store.get_vector_store", return_value=mock_store):
-        with pytest.raises(ConnectionError):
-            vector_store.delete_document_vectors("doc-123")
-
-
-def _mock_config():
-    config = MagicMock()
-    config.chromadb.collection = "document_chunks"
-    return config
-
-
-def test_list_chroma_document_ids_paginates_and_dedupes():
-    fake_collection = MagicMock()
-    page_size = 1000
-    first_page = {"metadatas": [{"document_id": "a"}] * page_size}
-    # Second page has fewer than page_size rows -> loop stops after this page
-    second_page = {"metadatas": [{"document_id": "b"}, {"document_id": "a"}, {}]}
-    fake_collection.get.side_effect = [first_page, second_page]
-    fake_client = MagicMock()
-    fake_client.get_or_create_collection.return_value = fake_collection
-
-    with patch("infrastructure.search.vector_store.get_chroma_client", return_value=fake_client), \
-         patch("infrastructure.search.vector_store.get_models_config", return_value=_mock_config()):
-        result = vector_store.list_chroma_document_ids()
-
-    assert result == {"a", "b"}
-    assert fake_collection.get.call_count == 2
-
-
-def test_list_chroma_document_ids_empty_collection():
-    fake_collection = MagicMock()
-    fake_collection.get.return_value = {"metadatas": []}
-    fake_client = MagicMock()
-    fake_client.get_or_create_collection.return_value = fake_collection
-
-    with patch("infrastructure.search.vector_store.get_chroma_client", return_value=fake_client), \
-         patch("infrastructure.search.vector_store.get_models_config", return_value=_mock_config()):
-        result = vector_store.list_chroma_document_ids()
-
-    assert result == set()
-
-
 @pytest.mark.asyncio
-async def test_delete_document_service_deletes_vectors_before_postgres_row():
+async def test_delete_document_service_delegates_to_postgres():
     document_id = UUID("11111111-1111-1111-1111-111111111111")
-    call_order = []
-
-    def fake_delete_vectors(doc_id):
-        call_order.append(("vectors", doc_id))
-
-    async def fake_db_delete(session, doc_id):
-        call_order.append(("postgres", doc_id))
-        return True
-
     fake_session = AsyncMock()
 
-    with patch("services.document_service.delete_document_vectors", side_effect=fake_delete_vectors) as mock_vec, \
-         patch("services.document_service.db_docs.delete_document", side_effect=fake_db_delete) as mock_db:
+    with patch("services.document_service.db_docs.delete_document", new=AsyncMock(return_value=True)) as mock_db:
         result = await document_service.delete_document(fake_session, document_id)
 
     assert result is True
-    assert call_order == [("vectors", str(document_id)), ("postgres", document_id)]
-    mock_vec.assert_called_once_with(str(document_id))
-    mock_db.assert_called_once_with(fake_session, document_id)
+    mock_db.assert_awaited_once_with(fake_session, document_id)
 
 
 @pytest.mark.asyncio
-async def test_delete_document_service_aborts_postgres_delete_on_vector_failure():
-    """If ChromaDB is unreachable, the Postgres row must NOT be deleted — the
-    document stays visible and the caller must not report success."""
+async def test_delete_document_service_reports_missing_document():
+    """A delete that removed nothing must not be reported as success."""
     document_id = UUID("22222222-2222-2222-2222-222222222222")
     fake_session = AsyncMock()
 
-    with patch(
-        "services.document_service.delete_document_vectors",
-        side_effect=ConnectionError("chromadb unreachable"),
-    ), patch("services.document_service.db_docs.delete_document", new=AsyncMock()) as mock_db:
-        with pytest.raises(ConnectionError):
-            await document_service.delete_document(fake_session, document_id)
+    with patch("services.document_service.db_docs.delete_document", new=AsyncMock(return_value=False)):
+        result = await document_service.delete_document(fake_session, document_id)
 
-    mock_db.assert_not_called()
+    assert result is False
+
+
+def _session_with_rowcount(rowcount):
+    session = AsyncMock()
+    result = MagicMock()
+    result.rowcount = rowcount
+    session.execute.return_value = result
+    return session
+
+
+@pytest.mark.asyncio
+async def test_db_delete_document_issues_a_single_delete_on_documents():
+    """Chunks and embeddings go via the FK cascade, so the row delete is the only
+    statement — a second explicit delete would mean the cascade isn't relied on."""
+    document_id = UUID("33333333-3333-3333-3333-333333333333")
+    session = _session_with_rowcount(1)
+
+    result = await db_docs.delete_document(session, document_id)
+
+    assert result is True
+    assert session.execute.await_count == 1
+    statement = session.execute.await_args.args[0]
+    compiled = str(statement).lower()
+    assert compiled.startswith("delete from documents")
+    assert "document_chunks" not in compiled
+
+
+@pytest.mark.asyncio
+async def test_db_delete_document_returns_false_when_no_row_matched():
+    session = _session_with_rowcount(0)
+
+    result = await db_docs.delete_document(session, UUID("44444444-4444-4444-4444-444444444444"))
+
+    assert result is False

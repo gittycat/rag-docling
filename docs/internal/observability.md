@@ -14,18 +14,19 @@ logging to stdout. There is no external log aggregation, no tracing, and (see
 | `GET /health` | evals | Nothing — returns `{"status": "ok"}` unconditionally, no dependency checks. |
 
 Both are trivial liveness probes: they confirm the process is up and serving
-HTTP, not that its dependencies (Postgres, ChromaDB, Ollama) are reachable.
+HTTP, not that its dependencies (Postgres, Ollama) are reachable.
 Docker's own healthchecks for `rag-server` and `evals` poll exactly these
 endpoints (via a Python `urllib` one-liner), so the Docker-level "healthy"
 status inherits the same limitation — it verifies the uvicorn process
 responds, nothing more. The `postgres` service's Docker healthcheck is the
 one real dependency check in the stack: it runs `pg_isready` against the
-actual database. `webapp`, `chromadb`, and `task-worker` have no Docker
-healthcheck defined at all.
+actual database. `webapp` and `task-worker` have no Docker healthcheck defined
+at all.
 
 Real component health lives elsewhere: `GET /metrics/system` (below) actually
 issues a `SELECT 1` against Postgres, a BM25 probe query against
-`idx_chunks_bm25`, and a `GET /api/tags` against Ollama, and reports both an
+`idx_chunks_bm25`, a vector probe against `idx_chunks_embedding`, and a
+`GET /api/tags` against Ollama, and reports both an
 overall `health_status` (`"healthy"` / `"degraded"`) and a per-component
 `component_status` dict. If you need to know whether the system is actually
 working, use `/metrics/system`, not `/health`.
@@ -37,13 +38,23 @@ most recent real retrieval failed — BM25 errors never fail a query, they
 silently degrade it to vector-only, so this key is the only signal short of
 reading logs (`docs/suggestions.md` #4.5).
 
+`vector_store` is the mirror image on the dense side, on the same three-valued
+scale, and is always present: with hybrid search off the vector leg is the only
+retriever there is. Its probe checks that `idx_chunks_embedding` exists in
+`pg_class` and then runs a `<=>` ordering against a probe vector built at
+`vector_store.dimension`, so a missing `vector`/`vectorscale` extension, a
+dropped diskann index, or a dimension mismatch between `config.yml` and the
+column all land as `unavailable`. The index-existence check is not redundant: a
+dropped diskann index does not error, it silently turns every vector query into
+a sequential scan.
+
 ## Metrics API surface
 
 All under `services/rag_server/api/routes/metrics.py`:
 
 | Route | Returns |
 |---|---|
-| `GET /metrics/system` | Model config, retrieval config, `document_count`, `chunk_count`, `health_status`, and `component_status` (`postgres`, `bm25`, `ollama`) — the one endpoint that actually checks dependencies, described above. |
+| `GET /metrics/system` | Model config, retrieval config, `document_count`, `chunk_count`, `health_status`, and `component_status` (`postgres`, `bm25`, `vector_store`, `ollama`) — the one endpoint that actually checks dependencies, described above. |
 | `GET /metrics/models` | Per-model detail (LLM, embedding, reranker, eval): name, provider, parameter count, disk size (queried live from Ollama where applicable), context window, a reference URL, and a load/availability status. |
 | `GET /metrics/retrieval` | Current retrieval configuration: hybrid search (BM25 + vector + RRF) on/off, contextual retrieval on/off, reranker enabled/model/`top_n`, `top_k`. |
 

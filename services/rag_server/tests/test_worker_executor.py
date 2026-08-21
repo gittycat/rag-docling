@@ -35,8 +35,7 @@ def test_ingest_document_runs_off_the_event_loop_thread(tmp_path):
         async def __aexit__(self, *args):
             return False
 
-    with patch("infrastructure.tasks.worker.get_vector_index", return_value=MagicMock()), \
-         patch("infrastructure.tasks.worker.extract_file_metadata", return_value={}), \
+    with patch("infrastructure.tasks.worker.extract_file_metadata", return_value={}), \
          patch("infrastructure.tasks.worker.get_session", return_value=_FakeSessionCtx()), \
          patch("infrastructure.tasks.worker.db_docs") as mock_db_docs, \
          patch("infrastructure.tasks.worker.document_service") as mock_document_service, \

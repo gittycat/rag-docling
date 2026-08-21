@@ -1,7 +1,7 @@
 """End-to-end PII masking test against a real cloud LLM.
 
 Gated behind --run-eval (needs ANTHROPIC_API_KEY) rather than --run-integration:
-it doesn't touch ChromaDB/Postgres, only the mask -> real cloud LLM -> unmask
+it doesn't touch Postgres, only the mask -> real cloud LLM -> unmask
 round trip that Task 2.3 exists to protect.
 """
 

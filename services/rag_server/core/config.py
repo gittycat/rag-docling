@@ -48,39 +48,37 @@ def check_ollama_reachable():
 def check_embedding_dimension_match():
     """Guard against silent retrieval corruption from switching embedding models.
 
-    If the ChromaDB collection already holds vectors, their dimension must match
-    the active embedding model's output dimension.
+    document_chunks.embedding is declared vector(N) where N is
+    vector_store.dimension, so the active embedding model must produce exactly
+    that many dimensions. Postgres would reject the mismatched INSERT anyway, but
+    only once the first document is ingested — this fails at startup instead.
+
+    Deliberately not a Postgres round-trip: this runs synchronously from inside
+    the FastAPI startup coroutine (and from the worker before its loop exists),
+    where bridging to the async engine would deadlock or bind the pool to a
+    throwaway event loop. Server-side verification of the extension, the column
+    and the diskann index lives in probe_vector_index(), on the health surface.
     """
-    from infrastructure.search.vector_store import get_chroma_client
     from infrastructure.config.models_config import get_models_config
 
     config = get_models_config()
+    schema_dim = config.vector_store.dimension
 
     try:
-        client = get_chroma_client()
-        collection = client.get_or_create_collection(config.chromadb.collection)
-        count = collection.count()
+        active_dim = len(Settings.embed_model.get_text_embedding("dim-probe"))
     except Exception as e:
-        logger.warning(f"[SETTINGS] Could not reach ChromaDB to verify embedding dimension, skipping check: {e}")
+        logger.warning(
+            f"[SETTINGS] Could not probe the embedding model's dimension, skipping check: {e}"
+        )
         return
 
-    if count == 0:
-        return
-
-    existing = collection.peek(limit=1)
-    embeddings = existing.get("embeddings")
-    if embeddings is None or len(embeddings) == 0:
-        return
-
-    stored_dim = len(embeddings[0])
-    active_dim = len(Settings.embed_model.get_text_embedding("dim-probe"))
-
-    if stored_dim != active_dim:
+    if schema_dim != active_dim:
         raise ValueError(
-            f"Embedding dimension mismatch: ChromaDB collection '{config.chromadb.collection}' "
-            f"stores {stored_dim}-dimensional vectors, but the active embedding model "
-            f"'{config.embedding.model}' produces {active_dim}-dimensional vectors. "
-            f"Delete and re-index the collection, or switch the embedding model back."
+            f"Embedding dimension mismatch: document_chunks.embedding is declared "
+            f"vector({schema_dim}) (config.yml vector_store.dimension), but the active "
+            f"embedding model '{config.embedding.model}' produces {active_dim}-dimensional "
+            f"vectors. Update vector_store.dimension, re-create the schema and re-ingest "
+            f"every document, or switch the embedding model back."
         )
 
 

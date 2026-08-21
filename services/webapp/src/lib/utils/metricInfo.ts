@@ -72,7 +72,8 @@ export const STAGE_INFO: Record<StageId, StageInfo> = {
 	embedding: {
 		title: 'Embedding',
 		description: 'Converts chunk text into vectors for semantic (similarity) search.',
-		whatItDoes: 'An embedding model turns each chunk (and each query) into a dense vector stored in ChromaDB.',
+		whatItDoes:
+			'An embedding model turns each chunk (and each query) into a dense vector, stored in the document_chunks table in Postgres (pgvector) and indexed with pgvectorscale StreamingDiskANN.',
 		ifWeak:
 			'Low retrieval recall/relevance can mean the embedding model is too weak for your domain — try a stronger or domain-tuned embedding model.'
 	},

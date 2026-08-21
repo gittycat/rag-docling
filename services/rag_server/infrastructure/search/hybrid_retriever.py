@@ -111,15 +111,15 @@ class HybridRRFRetriever(BaseRetriever):
 
 
 def create_hybrid_retriever(
-    vector_index,
     similarity_top_k: int = 10,
     rrf_k: int = 60,
 ) -> HybridRRFRetriever:
     """
-    Create a hybrid retriever combining BM25 (pg_textsearch) and vector search (ChromaDB).
+    Create a hybrid retriever combining BM25 (pg_textsearch) and vector search
+    (pgvector + pgvectorscale). Both retrievers read document_chunks directly, so
+    there is nothing to pass in.
 
     Args:
-        vector_index: VectorStoreIndex for vector similarity search
         similarity_top_k: Number of results to return
         rrf_k: RRF constant (default 60)
 
@@ -127,12 +127,10 @@ def create_hybrid_retriever(
         HybridRRFRetriever instance
     """
     from infrastructure.search.bm25_retriever import PgSearchBM25Retriever
+    from infrastructure.search.vector_retriever import PgVectorRetriever
 
-    # Create BM25 retriever using pg_textsearch
     bm25_retriever = PgSearchBM25Retriever(similarity_top_k=similarity_top_k)
-
-    # Create vector retriever from ChromaDB index
-    vector_retriever = vector_index.as_retriever(similarity_top_k=similarity_top_k)
+    vector_retriever = PgVectorRetriever(similarity_top_k=similarity_top_k)
 
     return HybridRRFRetriever(
         bm25_retriever=bm25_retriever,

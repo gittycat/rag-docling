@@ -44,6 +44,12 @@ This document outlines planned features and enhancements for the RAG system, org
 - Auto-refresh after uploads/deletes
 - ~48% retrieval improvement over single-method
 
+### Vector Store Moved into PostgreSQL (Aug 2026)
+- Embeddings live in an `embedding vector(768)` column on `document_chunks`, indexed with pgvectorscale StreamingDiskANN; the separate vector-database service is gone
+- BM25 and vector search now read one table in one database, fused by the unchanged RRF
+- Corpus ceiling on a 16 GB machine rises from roughly 150k to roughly 765k documents (assuming 10-page documents, ~11 chunks each — the real unit is chunks) — StreamingDiskANN keeps the index on disk with an SBQ-compressed representation in RAM (~96 bytes/vector at 768 dims, against ~3.2 KB for a fully in-memory HNSW index)
+- Chunk text is stored twice instead of three times, and deletion is the existing `ON DELETE CASCADE`, so orphaned vectors are structurally impossible
+
 ### Contextual Retrieval (Oct 2025)
 - LLM-generated chunk context before embedding
 - ~49% reduction in retrieval failures
@@ -73,15 +79,9 @@ This document outlines planned features and enhancements for the RAG system, org
 
 Improvements to the integration test suite and CI pipeline. The current 25 integration tests cover the core RAG loop (infrastructure, pipeline, sessions, async upload). The items below extend coverage to resilience, tiering, and CI automation.
 
-### Fix or Remove Broken test_hybrid_search.py
+### Fix or Remove Broken test_hybrid_search.py — resolved
 
-**Description:** `test_hybrid_search.py` imports `infrastructure.database.chroma`, a dead module from the ChromaDB → PostgreSQL migration. Tests fail at import time.
-
-**Effort Estimate:** Small (1 session)
-
-**Options:**
-1. **Delete** — Hybrid search is already tested via the canary test (BM25 keyword hit) and pipeline tests. Remove the file.
-2. **Rewrite** — Rewrite to use the HTTP API like all other integration tests (POST /query with include_chunks, verify both BM25 and vector results contribute).
+**Description:** `test_hybrid_search.py` imported a dead database module and failed at import time. The file has since been deleted; hybrid search is covered by the canary test (BM25 keyword hit) and the pipeline tests. No action remains.
 
 ### Test Tiering: Smoke vs Full Markers
 

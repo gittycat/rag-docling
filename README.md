@@ -30,7 +30,7 @@ These metrics allow admins to determine the best combinations of LLM models and 
 - **Backend**: Python, FastAPI, PostgreSQL (pg_textsearch for BM25)
 - **Frontend**: SvelteKit, Tailwind CSS, DaisyUI
 - **RAG Pipeline**: Docling, LlamaIndex
-- **Vector DB**: ChromaDB
+- **Vector store**: pgvector + pgvectorscale StreamingDiskANN, inside the same PostgreSQL
 - **Search**: Hybrid (BM25 + Vector + RRF)
 - **LLM**: Ollama (local) or cloud providers (OpenAI, Anthropic, etc.)
 - **Infrastructure**: Docker compose

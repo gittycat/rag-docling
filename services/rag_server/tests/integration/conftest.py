@@ -14,12 +14,6 @@ from pathlib import Path
 from sqlalchemy import text
 
 
-@pytest.fixture(scope="module")
-def test_collection_name():
-    """Generate unique collection name for test isolation."""
-    return f"test_documents_{uuid.uuid4().hex[:8]}"
-
-
 @pytest.fixture(scope="function")
 def unique_doc_id():
     """Generate unique document ID for each test."""

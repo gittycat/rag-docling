@@ -13,7 +13,8 @@ Nothing here is a documentation task. These are changes to the product.
 
 Every actionable entry carries a **Status** line: `Open`, `Partially done`, or
 `✅ Done` with the date and commit. Statuses were last reconciled against the code
-on **2026-08-03** (section 4 implementation pass).
+on **2026-08-21** (pgvector migration — section 4 was previously reconciled on
+2026-08-03).
 
 ---
 
@@ -569,37 +570,45 @@ Still open: neither banner prints the `database` or `chat_memory` sections.
 
 ## 4. Correctness defects
 
-### 4.1 ★ Deleting a document leaves its vectors in ChromaDB
-**What.** Document deletion removes the Postgres rows and the stored file. Nothing
-removes the corresponding ChromaDB embeddings.
+### 4.1 ★ Deleting a document leaves its vectors in the separate vector store
+**What.** Document deletion removed the Postgres rows and the stored file. Nothing
+removed the corresponding embeddings, which at the time lived in a second, separate
+vector service.
 **Why it matters.** Orphaned vectors accumulate indefinitely and remain retrievable,
 so deleted content can still surface in answers. For a system whose selling point is
 data control, "delete does not delete" is a serious defect — and a plausible
 compliance problem for anyone relying on deletion.
 **Effort.** S.
-**Where.** `services/rag_server/infrastructure/database/documents.py`,
-`services/rag_server/infrastructure/search/vector_store.py`.
-**Status.** ✅ Done — 2026-08-02, commit `e26a4d2`. Pre-existing orphans still need
-a manual `just reconcile-vectors-apply`.
+**Where.** `services/rag_server/infrastructure/database/documents.py`.
+**Status.** ✅ Done — 2026-08-02, commit `e26a4d2`; **superseded 2026-08-21** by the
+pgvector migration, which makes the class of defect unreachable.
 
-**✅ FIXED (2026-08-02).** Vectors are keyed on the `document_id` metadata field
-written at `pipelines/ingestion.py:459` — which is also exactly what llama-index's
-`ChromaVectorStore.delete(ref_doc_id)` filters on (`collection.delete(where={"document_id": ...})`,
-verified in the installed package), so no ingestion change was needed. A new
-`services/document_service.py` is the single entry point used by both call sites
+**✅ FIXED (2026-08-02).** Vectors were keyed on the `document_id` metadata field
+written during ingestion, which is exactly what the vector store's
+`delete(ref_doc_id)` filtered on, so no ingestion change was needed. A new
+`services/document_service.py` became the single entry point used by both call sites
 (the HTTP route and the worker's pre-retry reset — the latter now also cleans up
 vectors a *failed* ingestion left behind, the same bug in another guise).
 
-**Ordering:** vectors first, then the Postgres row. If ChromaDB is unreachable the
-call raises before Postgres is touched, so the document stays visible and the delete
-is retryable, and the route returns 500 instead of "deleted successfully". The
-accepted tradeoff is that a Postgres failure after a successful vector delete leaves
-a listed document with no vectors — a silent dead entry, far less bad than a phantom
-retrievable one.
+**Ordering:** vectors first, then the Postgres row. If the vector service was
+unreachable the call raised before Postgres was touched, so the document stayed
+visible and the delete was retryable, and the route returned 500 instead of "deleted
+successfully". The accepted tradeoff was that a Postgres failure after a successful
+vector delete left a listed document with no vectors — a silent dead entry, far less
+bad than a phantom retrievable one.
 
-**Pre-existing orphans** (anything deleted before this shipped) are not swept
-automatically: run `just reconcile-vectors` to see what would be deleted, then
-`just reconcile-vectors-apply`. Covered by `services/rag_server/tests/test_document_deletion.py`.
+**Pre-existing orphans** (anything deleted before that fix shipped) were not swept
+automatically; a `reconcile-vectors` script and its `just` recipes existed for that.
+
+**✅ SUPERSEDED (2026-08-21).** Embeddings moved into an `embedding vector(768)`
+column on `document_chunks`, indexed with pgvectorscale StreamingDiskANN. Deleting a
+document is now the `ON DELETE CASCADE` that was always on
+`document_chunks.document_id`: one statement removes the row, the chunks and the
+vectors together. The explicit vector-delete step, its ordering tradeoff, the
+reconcile script and both `just` recipes are all deleted — an orphaned vector is no
+longer a state the schema can reach. `services/document_service.py` remains as the
+shared entry point; `services/rag_server/tests/test_document_deletion.py` still
+covers it.
 
 ### 4.2 ★ CI and Makefile reference a test file that no longer exists
 **What.** Both the Forgejo CI eval job and the `Makefile` eval targets point at
@@ -704,18 +713,24 @@ boot rather than after a confusing eval. The key is omitted when hybrid search
 is disabled. Covered by `tests/test_bm25_health.py`.
 
 ### 4.6 The startup banner names the wrong technologies
-**What.** `services/rag_server/main.py` logs "pg_search BM25 + pgvector". The actual
-stack is `pg_textsearch` and ChromaDB; `pgvector` is a listed but unused dependency.
+**What.** `services/rag_server/main.py` logged "pg_search BM25 + pgvector". Neither
+half was true at the time: there is no `pg_search` extension, and `pgvector` was a
+listed but unused dependency while the vectors lived in a separate service.
 **Effort.** S.
-**Status.** ✅ Done — 2026-08-03. Banner now reads "pg_textsearch BM25 +
-ChromaDB vectors".
+**Status.** ✅ Done — 2026-08-03; re-checked after the 2026-08-21 pgvector
+migration.
 
 **✅ FIXED (2026-08-03).** The same wrong claim was also served by the API:
 `VectorSearchConfig.vector_store` defaulted to `"PostgreSQL (pgvector)"` and
 `get_retrieval_config()` passed that literal, so `/metrics/retrieval` — which
-the dashboard renders — named a store the system does not use. Both now say
-`ChromaDB`, and `collection_name` is read from `config.yml` instead of being
-hardcoded to `"documents"`.
+the dashboard renders — named a store the system did not use. Both were corrected
+to name the store actually in use.
+
+**Follow-up (2026-08-21).** The migration made the original wording accurate by
+accident, but the values were re-derived rather than reverted. The banner reads
+"pg_textsearch BM25 + pgvector vectors", and `/metrics/retrieval` now reports
+`vector_store: "pgvector"`, `index_type: "diskann"` and `table_name:
+"document_chunks"` — the collection-name field is gone with the collection concept.
 
 ### 4.7 Documentation and code disagree on whether contextual enrichment is masked
 **What.** The repository contradicts itself. The `config.yml` comment and the
@@ -780,7 +795,7 @@ itself stays eager *within* `main()` — a worker that cannot reach its embeddin
 provider should fail at boot, not on the first document — the defect was where
 it ran, not that it runs. The test-level workaround
 (`test_task_worker_concurrency.py`'s import-time patching of
-`check_ollama_reachable` and `get_chroma_client`) is deleted and replaced by a
+`check_ollama_reachable` and the vector-store client) is deleted and replaced by a
 regression test asserting the import stays inert.
 
 ### 4.10 `ConfigSnapshot` in the rag-server schemas is dead code
@@ -865,7 +880,7 @@ at that corpus size. It cannot support any claim about either feature.
 
 | Item | Why it matters | Effort | Status |
 |---|---|---|---|
-| **No backups for any volume.** Postgres data, ChromaDB vectors, eval runs, and the Forgejo CI history are all unbacked-up named volumes. | Total data loss on volume removal. `docker compose down -v` is one flag away from destroying everything. | M | Open |
+| **No backups for any volume.** Postgres data (which since 2026-08-21 includes the embedding vectors), eval runs, and the Forgejo CI history are all unbacked-up named volumes. | Total data loss on volume removal. `docker compose down -v` is one flag away from destroying everything. | M | Open |
 | **No resource limits on any container** in any compose file. | One runaway service can starve the host. | S | Open |
 | **No request or correlation IDs** anywhere in logging. | Tracing a single request across webapp → rag-server → task-worker is impossible; debugging relies on timestamp correlation. | M | Open |
 | **`EMBEDDING_MODEL` is never set** by any compose file, so `/models/info` always reports `unknown`. | The API misreports the active embedding model, and any consumer relying on it — including run records — gets nothing. | S | Open |
@@ -880,7 +895,8 @@ If picking a handful, these give the most value per unit of effort.
 **Done (2026-08-02, commit `e26a4d2`):**
 
 1. ~~**2.1** — the fabricated config snapshot.~~ ✅
-2. ~~**4.1** — deleted documents leaving retrievable vectors.~~ ✅
+2. ~~**4.1** — deleted documents leaving retrievable vectors.~~ ✅ (superseded
+   2026-08-21: the second vector store is gone, so the cascade handles it)
 3. ~~**3.2** — provider keys with no supported path.~~ ✅
 4. ~~**4.2** — the broken CI eval job.~~ ✅ (also **3.3**, which was not on this list)
 

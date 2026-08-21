@@ -19,6 +19,12 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from pgvector.sqlalchemy import Vector
+
+# Embedding dimension for the active model (nomic-embed-text). Changing it
+# requires re-creating the schema and re-ingesting every document.
+EMBEDDING_DIMENSION = 768
+
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
@@ -54,7 +60,7 @@ class Document(Base):
 
 
 class DocumentChunk(Base):
-    """Document chunks (embeddings stored in ChromaDB)."""
+    """Document chunks, with their embedding vector stored alongside the text."""
     __tablename__ = "document_chunks"
 
     id: Mapped[UUID] = mapped_column(
@@ -73,6 +79,11 @@ class DocumentChunk(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default="{}"
     )
+    # Nullable: a chunk row can exist before its embedding is written. NULL rows
+    # are excluded by the vector retriever and never indexed.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSION), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -87,7 +98,8 @@ class DocumentChunk(Base):
             "chunk_index",
             unique=True,
         ),
-        # BM25 index created via init.sql (pg_textsearch extension)
+        # BM25 index (pg_textsearch) and the diskann vector index on
+        # `embedding` are both created via init.sql
     )
 
     def __repr__(self) -> str:

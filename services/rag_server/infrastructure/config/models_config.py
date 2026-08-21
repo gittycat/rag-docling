@@ -224,10 +224,12 @@ class ChatMemoryConfig(BaseModel):
     )
 
 
-class ChromaDBConfig(BaseModel):
-    """Configuration for ChromaDB vector store."""
+class VectorStoreConfig(BaseModel):
+    """Configuration for the pgvector/pgvectorscale vector store."""
 
-    collection: str = "document_chunks"
+    # MUST match the active embedding model's output dimension. Changing it
+    # requires re-creating the schema and re-ingesting every document.
+    dimension: int = 768
 
 
 # Embedding providers that never leave the local/VM trust boundary. Cloud
@@ -416,7 +418,7 @@ class ModelsConfig(BaseModel):
     eval: EvalConfig
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
-    chromadb: ChromaDBConfig = Field(default_factory=ChromaDBConfig)
+    vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     chat_memory: ChatMemoryConfig = Field(default_factory=ChatMemoryConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
@@ -594,9 +596,9 @@ class ModelsConfig(BaseModel):
         if "retrieval" in data:
             resolved["retrieval"] = data["retrieval"]
 
-        # Copy ChromaDB settings unchanged
-        if "chromadb" in data:
-            resolved["chromadb"] = data["chromadb"]
+        # Copy vector store settings unchanged
+        if "vector_store" in data:
+            resolved["vector_store"] = data["vector_store"]
 
         # Copy database pool settings unchanged
         if "database" in data:

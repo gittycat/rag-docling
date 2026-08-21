@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def test_importing_task_worker_has_no_side_effects():
-    """Importing the worker must not touch the network, ChromaDB or Settings.
+    """Importing the worker must not touch the network, Postgres or Settings.
 
     Regression guard for docs/suggestions.md #4.9: initialize_settings() used to
     run at module scope, which took down the whole pytest collection wherever

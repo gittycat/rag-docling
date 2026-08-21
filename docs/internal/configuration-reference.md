@@ -49,13 +49,13 @@ Resolution order, most to least authoritative:
 
 4. **Environment variables** (docker-compose `environment:` blocks) — apply to
    a disjoint set of concerns that `config.yml` does not cover at all: DB
-   host/port, ChromaDB host/port, log level, worker concurrency, upload-size
-   reporting, telemetry toggles, auth-token file path. There is no
+   host/port, log level, worker concurrency, upload-size reporting, auth-token
+   file path. There is no
    overlap/precedence conflict between `config.yml` and environment variables
    for any single setting — they partition the surface rather than layering
-   on the same key. The one quasi-exception is `database.max_connections`
-   versus the hardcoded compose `command:` value (see Dead configuration
-   below) — that is a duplication, not a precedence relationship.
+   on the same key. The Postgres server-side connection limit lives only in the
+   compose `command:` value; there is no `config.yml` counterpart to conflict
+   with it.
 
 5. **Compose-file overlays** (`-f docker-compose.yml -f
    docker-compose.<tier>.yml`) — standard Compose merge semantics, later file
@@ -84,7 +84,7 @@ Resolution order, most to least authoritative:
 
 Root file: `config.yml` at the repo root. Roughly 123 leaf keys total: 73
 across the 19 named model definitions under `models.*`, plus about 50 across
-`active`, `eval`, `reranker`, `retrieval`, `chromadb`, `database`,
+`active`, `eval`, `reranker`, `retrieval`, `vector_store`, `database`,
 `chat_memory`, `prompts`, and `pii`. Every key is listed below, grouped by
 top-level section.
 
@@ -194,17 +194,24 @@ evals'), but `config.yml` always sets it explicitly to `false`, so the
 schema-default divergence never surfaces in practice — a dataclass default
 only matters if the key were absent from the file.
 
-### `chromadb.*`
+### `vector_store.*`
 
 | key | type | default | effect |
 |---|---|---|---|
-| `chromadb.collection` | str | `document_chunks` | ChromaDB collection name used for embeddings |
+| `vector_store.dimension` | int | 768 | output dimension of the active embedding model; must match the `vector(768)` declaration of `document_chunks.embedding` in `init.sql` |
+
+`dimension` is not a knob that reshapes anything at runtime — the column type is
+the real constraint, and `init.sql` does not re-run against an existing volume.
+The value is read by `probe_vector_index()` to build its probe vector, which is
+what makes a divergence between config and schema visible in
+`/metrics/system`'s `component_status.vector_store` rather than only at query
+time. Changing embedding models means recreating the schema and re-ingesting
+every document.
 
 ### `database.*`
 
 | key | type | default | effect |
 |---|---|---|---|
-| `database.max_connections` | int | 200 | documented as the PostgreSQL server-side connection limit — dead, see below |
 | `database.pool_size` | int | 10 | SQLAlchemy async engine persistent pool size |
 | `database.max_overflow` | int | 20 | SQLAlchemy burst capacity above the persistent pool |
 | `database.pool_pre_ping` | bool | `true` | health-check a pooled connection before handing it out |
@@ -293,12 +300,9 @@ Python or `$env/dynamic/private` in the webapp.
 | `DATABASE_PORT` | Postgres port | `5432` | `docker-compose.yml`, `.bench.yml` |
 | `DATABASE_NAME` | Postgres database name | `ragbench` | `docker-compose.yml`, `.bench.yml` |
 | `SHARED_UPLOAD_DIR` | shared tmp directory for uploads between rag-server and task-worker | `/tmp/shared` | `docker-compose.yml` (both services) |
-| `CHROMADB_HOST` | ChromaDB host | `localhost` | `docker-compose.yml`; not set in `.bench.yml` (bench rag-server has no ChromaDB dependency wired, falls back to `localhost`) |
-| `CHROMADB_PORT` | ChromaDB port | `8000` | `docker-compose.yml` |
 | `LOG_LEVEL` | log verbosity | `INFO` for the core logger, `WARNING` for the task worker and evals API | `docker-compose.yml` sets `WARNING` everywhere; the cloud overlay re-sets `WARNING` again (a no-op) |
 | `MAX_UPLOAD_SIZE` | max upload size in MB, surfaced via the config API | `80` | `docker-compose.yml` (rag-server, task-worker, and webapp — the webapp's copy is unread, see the auth-token gap below) |
 | `USE_CACHED_RERANKER` | when truthy, sets `HF_HUB_OFFLINE=1` to skip Hugging Face network calls for a pre-cached reranker | falsy (unset) | `docker-compose.yml` (`true`, rag-server + task-worker) |
-| `ANONYMIZED_TELEMETRY` | disables ChromaDB's own client telemetry (consumed by the `chromadb` package, not app code) | n/a | `docker-compose.yml` (`False`, rag-server/task-worker/chromadb) |
 | `OLLAMA_URL` | Ollama endpoint for metrics/cost lookups | `http://host.docker.internal:11434` | not set in `docker-compose.yml` (relies on the default); set only in test fixtures |
 | `WORKER_CONCURRENCY` | concurrent document-processing claim loops, capped by a hardcoded ceiling of 8 | `2` | `docker-compose.yml` (task-worker only) |
 | `RAG_SERVER_URL` | URL evals/webapp use to call rag-server | `http://localhost:8001` | `docker-compose.yml` (webapp, evals) |
@@ -354,8 +358,8 @@ Base file: `docker-compose.yml`.
 
 | file | relation to base | key differences | intended use |
 |---|---|---|---|
-| `docker-compose.yml` | base | webapp, rag-server, postgres, chromadb, task-worker, evals; `public`/`private` bridge networks; all ports published to host | local development / default `just up` |
-| `docker-compose.bench.yml` | standalone stack — own `-bench` service names, networks, and volumes, but shares the `secrets/` directory and `config.yml` mount | `postgres-bench` uses `tmpfs` for its data directory (ephemeral, wiped on stop); `rag-server-bench` published on host port 8003 instead of 8001; no `evals`, `webapp`, or `chromadb` services at all; `config.yml` mounted read-only | ephemeral benchmark runs, isolated from the main stack's data |
+| `docker-compose.yml` | base | webapp, rag-server, postgres, task-worker, evals; `public`/`private` bridge networks; all ports published to host | local development / default `just up` |
+| `docker-compose.bench.yml` | standalone stack — own `-bench` service names, networks, and volumes, but shares the `secrets/` directory and `config.yml` mount | `postgres-bench` uses `tmpfs` for its data directory (ephemeral, wiped on stop); `rag-server-bench` published on host port 8003 instead of 8001; no `evals` or `webapp` services at all; `config.yml` mounted read-only | ephemeral benchmark runs, isolated from the main stack's data |
 | `docker-compose.ci.yml` | fully independent stack, not an overlay — no `services:` in common with the base | own network for Forgejo + runner; nothing shared with the base | self-hosted CI/CD infrastructure, unrelated to the RAG application; run with its own `-f` flag, never combined with the base |
 | `docker-compose.cloud.yml` | overlay (`-f docker-compose.yml -f docker-compose.cloud.yml`) | replaces `build:` with `image: <name>:${VERSION:-latest}` for webapp, rag-server, and task-worker; parameterizes the webapp's `ORIGIN` via `WEBAPP_ORIGIN`; parameterizes the Ollama host via `OLLAMA_HOST` | deploying pre-built images to a cloud host instead of building on-target |
 | `docker-compose.server.yml` | overlay | adds a Caddy reverse-proxy service (automatic HTTPS via `SERVER_DOMAIN`); unpublishes ports on webapp, rag-server, and evals so only Caddy is internet-facing; adds the `RAG_SERVER_AUTH_TOKEN` secret and `RAG_SERVER_AUTH_TOKEN_FILE` environment variable to rag-server and webapp, turning on bearer-token auth | confidential-compute VM or thin-client tier, single public entrypoint through Caddy |
@@ -390,14 +394,6 @@ These keys are parsed by the config schema and, in most cases, even
 surfaced through an API response or the config-inspection banners — but
 nothing in the running system actually acts on the value. Changing them in
 `config.yml` has no effect on behavior.
-
-**`database.max_connections`** looks like it sets PostgreSQL's server-side
-connection limit. What actually happens: the field is parsed into the config
-object but nothing in the codebase reads it — the real limit is a separate,
-hand-maintained literal in the Postgres service's compose command
-(`max_connections=200`). An operator who changes `database.max_connections`
-in `config.yml` alone changes nothing; the compose file's `command:` line
-must be edited by hand, in lockstep, to actually change the limit.
 
 **`models.reranker.<name>.top_n`** (all three named rerankers set it to `5`)
 looks like it controls how many chunks the reranker keeps. What actually
@@ -468,5 +464,5 @@ change behavior.
 | Provider API-key validation calls (five call sites) | `httpx.AsyncClient(timeout=10.0)` | A fixed 10-second timeout for validating a provider API key at boot, independent of the per-model `timeout` set in `config.yml`. |
 | rag-server health route | an inline dict of roughly 14 hardcoded model price entries | Duplicates — with different, and drifting, values — the separate cost tables in the evals CLI config. Two independent hardcoded pricing tables exist for overlapping sets of models, neither sourced from `config.yml` or an external pricing feed. |
 | Evals CLI config (`evals/config.py`) | default scoring weights (accuracy, faithfulness, citation, retrieval, cost, latency) and per-model USD-per-token cost tables | Eval scoring weights and model costs are Python constants, editable only through the separate `EvalConfig.from_yaml()` / CLI surface described in the introduction above — not through `config.yml`. |
-| Postgres service compose command | `max_connections=200` | The only place that actually enforces a Postgres connection limit — duplicates, and is the real source of truth for, the dead `database.max_connections` key above. |
+| Postgres service compose command | `max_connections=200` | The only place that sets the Postgres server-side connection limit. It has no `config.yml` counterpart — the application-side pool (`database.pool_size` + `database.max_overflow`) must be kept under it by hand. |
 | Auth module | no token rotation or expiry; a single static secret file | Adequate for the stated scope, but there is no TTL or rotation configuration for `RAG_SERVER_AUTH_TOKEN` at all. |

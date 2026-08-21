@@ -112,7 +112,8 @@ export interface VectorSearchConfig {
 	chunk_size: number;
 	chunk_overlap: number;
 	vector_store: string;
-	collection_name: string;
+	index_type: string;
+	table_name: string;
 }
 
 export interface HybridSearchConfig {
