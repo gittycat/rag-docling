@@ -1,294 +1,231 @@
-# 3. Configuration tour
+# 3. Configure the RAG pipeline
 
-Everything tunable lives in `config.yml` at the repository root. This chapter
-groups the knobs by **what they move** — quality, speed, cost, privacy — because
-that is how you approach them when tuning. The file's own layout is organized for
-the code.
+`config.yml` selects the models and retrieval behaviour. This chapter follows the
+pipeline from generation and embeddings through search, reranking, and ingestion.
 
-The [last section](#things-you-cannot-configure) lists things you would reasonably
-expect to be configurable and are not. It will otherwise cost you an afternoon.
-
-For the exhaustive key-by-key reference, see
+For every key, see
 [`docs/internal/configuration-reference.md`](../internal/configuration-reference.md).
 
----
+## How changes take effect
 
-## How configuration works
+The file is bind-mounted and reloads after modification. Do not edit it during an
+evaluation: one run could then contain two configurations.
 
-`config.yml` is bind-mounted into the containers, not baked into the images. The
-loader checks the file's modification time on every access and reloads if it
-changed, **so most edits take effect without a restart.**
-
-| Change | Needs |
+| Change | Required action |
 |---|---|
-| Most keys | Nothing — save the file |
-| Startup-checked values (embedding dimension, reranker cache) | Restart |
-| `active.embedding` after documents are ingested | Restart **and full re-ingest** |
+| Most settings | Save `config.yml` |
+| Startup-validated setting | Restart the affected service |
+| Reranker model | Run `just init MODEL=<hugging-face-id>`, then restart |
+| Embedding model | Restart and fully re-ingest |
+| Chunk size or overlap | Edit code, rebuild, and fully re-ingest |
+| Contextual retrieval | Re-ingest documents to test its effect |
 
-That last one matters. Existing vectors came from the old model and are not
-comparable to queries embedded by a new one. A startup check refuses to boot on a
-dimension mismatch, but it cannot catch a same-dimension swap between different
-models — that fails silently as degraded retrieval.
+Never query an index built by another embedding model. A dimension mismatch fails
+at startup, but a same-dimension model swap can silently return poor results.
 
-API keys never go in `config.yml`. They are Docker secrets read only from
-`/run/secrets/`; an environment variable of the same name is deliberately ignored.
-`config.yml` chooses the model, the secret supplies the credential.
+API keys belong in Compose secret files, not `config.yml`.
 
-Exactly one key is changeable from the running application:
-`retrieval.enable_contextual_retrieval`, which the settings page toggles.
-
----
-
-## Knobs that move quality
-
-### `active.inference` — the model that writes answers
+## 1. Choose the generation model
 
 ```yaml
 active:
   inference: gpt5-mini
 ```
 
-People reach for this first, and it is usually not the biggest lever. If retrieval
-hands the model the wrong passages, a better model writes a better-worded wrong
-answer. Check retrieval before upgrading the generator — chapter 7 recipe 1 and 8
-separate the two.
+The inference model writes answers from retrieved context. Compare models on:
 
-Where it does matter: **instruction-following**. The context prompt tells the model
-to answer only from the provided passages and to abstain otherwise. Smaller models
-follow that less reliably, which shows up as a worse
-`abstention_false_negative_rate` — answering confidently when it should decline.
+- faithfulness and answer correctness;
+- abstention on unanswerable questions;
+- p95 latency and cost; and
+- whether document text may leave your network.
 
-### `active.embedding` — how meaning is matched
+A stronger model cannot recover a passage that retrieval missed. Check retrieval
+metrics before upgrading generation.
+
+## 2. Choose the embedding model
 
 ```yaml
 active:
   embedding: nomic-embed
 ```
 
-Defines what "similar" means for vector search, so it bounds what the vector half
-of hybrid retrieval can find at all. High leverage, most expensive to test —
-swapping it invalidates every stored vector.
+The embedding model defines similarity for vector search. It can have a large
+effect on retrieval, but changing it invalidates all stored vectors. Restart and
+re-ingest every document after a change.
 
-### `reranker.enabled` and `active.reranker`
+When `pii.enabled` is true, the embedding provider must be local. Startup fails if
+you select a cloud embedder because raw chunk text is embedded without masking.
 
-```yaml
-reranker:
-  enabled: true
-active:
-  reranker: minilm-l6
-```
+## 3. Configure retrieval
 
-A cross-encoder re-scores candidates by reading each one alongside the question.
-Fusion orders by rank position; reranking orders by actual relevance. It is the
-most reliable quality lever in the retrieval stage, and it costs latency on every
-query.
-
-| Key | Model | Parameters |
-|---|---|---|
-| `minilm-l6` (default) | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 22.7M |
-| `bge-reranker-base` | `BAAI/bge-reranker-base` | 278M |
-| `bge-reranker-large` | `BAAI/bge-reranker-large` | 560M |
-
-Larger rerankers generally rank better and are slower. Nothing in this repository
-measures the trade-off on your hardware — chapter 7 recipe 7 exists to answer that.
-
-The model must be in the local Hugging Face cache before the server starts. Run
-`just init`; the startup check fails fast rather than letting the first query eat a
-download.
-
-### `retrieval.top_k` and `reranker.top_n`
-
-```yaml
-retrieval:
-  top_k: 10        # candidates each search returns, and how many survive fusion
-models:
-  reranker:
-    minilm-l6:
-      top_n: 5     # chunks that reach the model after reranking
-```
-
-`top_n` is authoritative when set. When omitted it derives as
-`max(5, retrieval.top_k // 2)`. The shipped config sets it explicitly to `5`.
-
-Raising `top_k` gives retrieval more chances to include the right passage and gives
-the reranker more to work with. Raising `top_n` grows the prompt, which costs
-latency and money on every query and can dilute a good answer with marginal
-context. Both are genuine trade-offs, and because `top_n` is explicit you can now
-vary them independently.
-
-### `retrieval.enable_hybrid_search`
+### Hybrid search
 
 ```yaml
 retrieval:
   enable_hybrid_search: true
 ```
 
-Leave it on unless you are deliberately measuring its contribution. Turning it off
-does not down-weight keyword search — it routes the query down a structurally
-different path that skips BM25 and fusion entirely.
+Hybrid search combines:
 
-Keyword search is what saves you on rare terms: part numbers, error codes, proper
-nouns, anything an embedding model has no useful representation for.
+- **BM25 keyword search** for exact names, IDs, acronyms, and error codes; and
+- **vector search** for semantic matches.
 
-### `retrieval.rrf_k`
+Disabling hybrid search uses vector search only. Before comparing the two modes,
+confirm `component_status.bm25` is healthy; BM25 errors degrade silently.
+
+### Candidate count
+
+```yaml
+retrieval:
+  top_k: 10
+```
+
+Each search returns up to `top_k` candidates. A larger value can improve recall
+but adds search and reranking work. It does not control how many chunks reach the
+generation model; `top_n` does.
+
+### Rank fusion
 
 ```yaml
 retrieval:
   rrf_k: 60
 ```
 
-How sharply rank position is discounted during fusion: a chunk at rank *r*
-contributes `1 / (60 + r)`. Because 60 dwarfs a ten-item list, the discount is
-nearly flat — rank 1 scores `1/61 = 0.0164` and rank 10 scores `1/70 = 0.0143`,
-about 15% apart.
+RRF gives a result at rank *r* a contribution of `1 / (rrf_k + r)` from each
+search. The default makes rank discounts fairly flat over a ten-result list.
+Treat `rrf_k` as an advanced shape parameter, not a first tuning target.
 
-Leave it alone. It is a shape parameter, not a quality dial, and moving it is
-unlikely to produce a change you can distinguish from noise.
+## 4. Configure reranking
 
-### `retrieval.enable_contextual_retrieval`
+```yaml
+reranker:
+  enabled: true
+
+active:
+  reranker: minilm-l6
+```
+
+The reranker reads each candidate with the question and reorders the list by
+relevance. It usually improves ordering and adds latency to every query.
+
+| Key | Model | Parameters |
+|---|---|---:|
+| `minilm-l6` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 22.7M |
+| `bge-reranker-base` | `BAAI/bge-reranker-base` | 278M |
+| `bge-reranker-large` | `BAAI/bge-reranker-large` | 560M |
+
+The selected model defines `top_n`:
+
+```yaml
+models:
+  reranker:
+    minilm-l6:
+      top_n: 5
+```
+
+`top_n` is the number of chunks sent to the generation model. If omitted, it is
+`max(5, retrieval.top_k // 2)`. Raising it increases prompt size, latency, and
+cloud input cost, and may add irrelevant context.
+
+## 5. Configure ingestion
+
+### Chunking
+
+Chunk size and overlap are currently hardcoded to 500 and 50 tokens in
+`services/rag_server/core/config.py`. They are high-impact settings but are not in
+`config.yml`. Testing them requires a code change, image rebuild, and full
+re-ingestion.
+
+Smaller chunks retrieve precisely but can split an answer. Larger chunks preserve
+more context but may blur the topic represented by an embedding.
+
+### Contextual retrieval
 
 ```yaml
 retrieval:
   enable_contextual_retrieval: false
+  contextual_concurrency: 8
 ```
 
-When on, ingestion asks an LLM to write a one-to-two sentence description of each
-chunk — what document it came from, what it discusses — prepended before embedding.
-The intent is to rescue chunks meaningless in isolation ("this approach was
-rejected for the reasons above").
+When enabled, an LLM writes a short prefix for each chunk before embedding. This
+can make isolated chunks easier to retrieve. It also adds one LLM call per chunk,
+so measure ingestion time and cost as well as retrieval quality.
 
-The cost lands entirely on ingestion: **one LLM call per chunk.** Query-time cost
-is unchanged. Treat it as an experiment (chapter 7 recipe 4), not a default.
+The Settings page can toggle this key, but existing chunks do not change. Re-ingest
+before evaluating it.
 
-### `prompts.*`
+## 6. Configure prompts
 
-The system, context, and condense prompts are all editable. The context prompt
-carries the weight — it holds the answer-only-from-context instruction and the
-exact abstention phrase the model is told to emit.
+`prompts.system`, `prompts.context`, `prompts.condense`, and
+`prompts.contextual_prefix` are editable. The context prompt controls grounding,
+abstention, and explicit citation instructions.
 
-If you change the abstention wording, **also update `eval.abstention_phrases`**.
-The eval framework detects abstention by substring-matching that list. Change one
-without the other and the system will look like it stopped abstaining.
+If you change the abstention wording, update `eval.abstention_phrases` too. The
+evaluator detects abstention by case-insensitive substring matching; changing only
+one side changes the score without changing behaviour.
 
----
-
-## Knobs that move speed
-
-Latency is dominated by the generation model and whether the reranker runs.
-
-| Knob | Effect |
-|---|---|
-| `active.inference` | Largest single factor. A local model on modest hardware can be slower than a cloud round-trip. |
-| `reranker.enabled` | A cross-encoder pass on every query. Turning it off is the fastest cut — at a quality cost you should measure. |
-| `reranker.top_n` | Prompt length, and therefore tokens to process. |
-| `models.inference.<name>.keep_alive` | Ollama only. How long the model stays resident. `10m` shipped; `-1` keeps it loaded forever. |
-| `models.inference.<name>.timeout` | 120s default. A ceiling, not a target — raising it changes when you give up, not how fast anything runs. |
-| `retrieval.contextual_concurrency` | Ingestion only. Concurrent contextual-prefix LLM calls (default 8). |
-| `models.embedding.<name>.embed_batch_size` | Ingestion only. Larger batches ingest faster. |
-
-The first query after a restart is always slower: the reranker model loads lazily
-on first use, then stays cached for the process lifetime. Do not include it in a
-latency measurement.
-
----
-
-## Knobs that move cost
-
-Cost exists only with a cloud provider. A local deployment trades money for
-hardware and latency.
-
-| Lever | Impact |
-|---|---|
-| **Provider choice** (`active.inference`, `active.eval`) | Dominant factor |
-| **Contextual retrieval** | Largest discretionary cost — one LLM call per chunk, at ingestion. Dwarfs query cost on any real corpus. |
-| **`reranker.top_n`** | Sets prompt size, which sets input tokens, which is what you pay per query |
-| **`active.eval`** | Three metrics need an LLM call per question. A 100-question run with all metrics means hundreds of judge calls. |
-
-Reported cost is computed from token counts against **hardcoded rate tables in the
-source**, not a live pricing feed — and there are two such tables in different
-services that have drifted apart. Treat it as an indicator for comparing runs, not
-as an invoice.
-
-The config file's own guidance on judges is sound: use a grader at least as capable
-as your answer model when you care about subtle faithfulness errors, and a cheaper
-one when running at scale. `--no-judge` disables judging entirely when you only
-want retrieval metrics (chapter 5).
-
----
-
-## Knobs that move privacy
-
-### The fundamental choice
-
-Set `active.inference` and `active.embedding` to Ollama-backed models and nothing
-leaves your network. That is the strong guarantee; no masking configuration matches
-it. Everything below is the weaker case — you want a frontier cloud model and want
-to reduce what it sees.
-
-### `pii.enabled`
+## 7. Configure evaluation
 
 ```yaml
-pii:
-  enabled: false
+active:
+  eval: gpt5-2
 ```
 
-When on, detected entities in the query, chat history, retrieved context, and
-generated session titles are replaced with tokens like `[[[PERSON_0]]]` before
-going to a cloud provider, and restored in the response.
+The eval model judges faithfulness, correctness, and relevance. A capable judge is
+more expensive; a judge from the same provider family as the generation model may
+favour that family. Calibrate a new judge before relying on it.
 
-Turning it on triggers boot-time validation that **refuses to start** if your
-embedding provider is not local. That refusal is intentional: masking the
-generation path while shipping raw document text to a cloud embedding API would be
-theatre.
+`eval.citation_scope` controls what counts as a citation:
 
-### Detection knobs
+- `retrieved`: every retrieved chunk counts; this mostly re-measures retrieval.
+- `explicit`: the model must emit numbered citations.
 
-| Knob | Default | What it does |
-|---|---|---|
-| `pii.entities` | 7 types | Which entity types to detect. More types, more coverage and more false positives. |
-| `pii.score_threshold` | `0.5` | Confidence floor. Lower catches more and masks more things that were not PII. |
-| `pii.spacy_model` | `en_core_web_md` | The NER model behind name detection. |
-| `pii.gliner.enabled` | `false` | Registers a second, stronger recognizer alongside spaCy at roughly 10× the CPU cost per call. |
-| `pii.output_guardrails.block_on_detection` | `false` | Raise rather than return if PII appears verbatim in a response. Cannot apply to streaming. |
+`eval.scoring` sets weighted-score objectives and normalization thresholds. Edit
+it before an experiment. Runs scored with different weights are not comparable.
 
-### `pii.allow_cloud_judge`
+## 8. Configure privacy
 
-Judge prompts embed retrieved chunks and generated answers **verbatim and
-unmasked**. With `pii.enabled` set, the eval service refuses to start against a
-cloud judge unless you explicitly set this. Only set it when your evaluation data
-contains no real PII.
+The strongest posture is local inference plus local embeddings. If you use a cloud
+generation model, `pii.enabled: true` masks detected identifiers in outbound text.
+Masking is reversible pseudonymisation, not anonymisation.
 
-Chapter 8 covers the threat model properly.
+Important keys:
 
----
+| Key | Effect |
+|---|---|
+| `pii.entities` | Entity types to detect |
+| `pii.score_threshold` | Detection confidence floor |
+| `pii.spacy_model` | spaCy model used for name detection |
+| `pii.gliner.enabled` | Adds a stronger, slower recognizer |
+| `pii.output_guardrails.block_on_detection` | Blocks detected output on non-streaming responses |
+| `pii.allow_cloud_judge` | Allows unmasked eval data to reach a cloud judge |
 
-## Things you cannot configure
+See [Chapter 8](08-privacy-and-pii.md) before enabling cloud processing for
+sensitive data.
 
-| What | Where it lives | Why it matters |
-|---|---|---|
-| **Chunk size and overlap** | Hardcoded `chunk_size=500`, `chunk_overlap=50` in `services/rag_server/core/config.py` | Among the highest-leverage RAG parameters, and not in `config.yml` at all. Chapter 7 recipe 3 needs a code edit and image rebuild. |
-| **RRF source weights** | Hardcoded to `1.0` / `1.0` | You cannot weight keyword against vector search. Only unweighted RRF is available. |
-| **Task worker behaviour** | Six constants in `infrastructure/tasks/task_worker.py` | Poll interval, max attempts, the one-hour stuck-task timeout, retry delays, and a concurrency cap that silently overrides `WORKER_CONCURRENCY`. |
-| **Chat-history token budget** | ~50% of the model's context window, with a hardcoded 3000-token fallback | The fallback applies whenever the provider does not report a context window. |
+## Trade-off summary
 
-Eval scoring weights and normalization thresholds **are** configurable — see
-`eval.scoring` in `config.yml` and chapter 4.
+| Setting | Quality | Query latency | Cloud cost | Re-ingest? |
+|---|---|---|---|---|
+| Stronger generation model | Often improves | Usually increases | Usually increases | No |
+| Different embedding model | Can improve retrieval | Varies | Varies | **Yes** |
+| Larger `top_k` | Can improve recall | Increases | Little direct effect | No |
+| Larger `top_n` | More context; may dilute | Increases | Increases | No |
+| Reranking | Often improves ordering | Increases | No direct cloud cost | No |
+| Contextual retrieval | Can improve recall | No query effect | Ingestion cost | **Yes** |
+| Different chunking | Corpus-dependent | Varies | Varies | **Yes** |
 
----
+Cost metrics use hardcoded price tables. Use them to compare runs, not to predict
+an invoice. A local model has no API charge but still uses hardware.
 
-## Seeing your current configuration
+## Confirm the active configuration
 
 ```bash
-just show-config        # active models only
-just show-config-full   # adds reranker, retrieval, eval, and PII settings
+just show-config
+just show-config-full
 ```
 
-`show-config-full` prints the effective reranker `top_n` alongside the configured
-value, e.g. `Top N: 5  (configured: 5)`, so there is no ambiguity about which is in
-use. It does **not** print the `database` or `chat_memory` sections — read
-`config.yml` for those.
+The full view includes retrieval, reranking, evaluation, and PII settings. Read
+`config.yml` directly for database and chat-memory settings.
 
----
-
-**Next:** [4. Evaluation concepts](04-evaluation-concepts.md) — what the metrics
-mean before you start moving these knobs.
+**Next:** [4. Evaluation concepts](04-evaluation-concepts.md).

@@ -1,40 +1,80 @@
-# 2. Getting running
+# 2. Get RAGBench running
 
-Fresh clone to working chat session. The one decision to make before first boot is
-[local vs cloud models](#choose-local-or-cloud-models-before-first-boot) — get it
-wrong and the stack will not start.
+This chapter takes a fresh clone to a working query. Choose local or cloud models
+before the first start; the checked-in configuration uses both.
 
 ## Prerequisites
 
-| Need | Why |
+| Requirement | When needed |
 |---|---|
-| **Docker** | Docker Desktop, OrbStack, or Podman. The stack is Compose-only; there is no non-Docker path. |
-| **`just`** | The command runner used throughout (`brew install just`). Every recipe has an underlying `docker compose` form. |
-| **Ollama** | Only if you run any local model. Required for the default `nomic-embed` embedding. |
-| **Disk headroom** | Local models and the reranker download into a bind-mounted cache on first fetch. |
+| Docker Desktop, OrbStack, or Podman | Always; the stack uses Compose |
+| `just` | For the commands in this guide (`brew install just`) |
+| Python 3.13 and `uv` | For config inspection, evaluations, and local tests |
+| Ollama | When any active model uses the `ollama` provider |
+| Disk space | For local models and the reranker cache |
 
-`just preflight` runs automatically before `just up` and `just deploy`. It checks
-that Docker is reachable and — only when `active.inference` or `active.embedding`
-points at an `ollama` provider — that Ollama answers on `localhost:11434`.
+`just up` and `just deploy` run `just preflight`, which checks Docker and Ollama.
+
+Create the local environment used by `just show-config` and the evaluation recipes:
+
+```bash
+just setup
+```
+
+## Choose local or cloud models
+
+The checked-in `config.yml` selects:
+
+```yaml
+active:
+  inference: gpt5-mini    # OpenAI
+  embedding: nomic-embed  # Ollama
+  eval: gpt5-2            # OpenAI judge
+  reranker: minilm-l6     # local cross-encoder
+```
+
+This configuration needs Ollama and an OpenAI API key. For local generation,
+change `active.inference`:
+
+```yaml
+active:
+  inference: granite4-8b
+  embedding: nomic-embed
+  eval: gpt5-2
+  reranker: minilm-l6
+```
+
+Then download the local models:
+
+```bash
+ollama pull granite4.1:8b
+ollama pull nomic-embed-text
+```
+
+Available providers are OpenAI, Anthropic, and Ollama. The configured generation
+models include `gemma3-4b`, `qwen35-4b`, `granite4-8b`, `gpt5-mini`,
+`gpt56-luna`, `claude-haiku`, `claude-sonnet`, and `claude-opus`.
+
+Configured embedding models are `nomic-embed`, `qwen3-embed-06b`, and
+`embeddinggemma` for Ollama, plus `openai-ada`, `openai-3-small`, and
+`openai-3-large` for OpenAI.
+
+See [Chapter 3](03-configuration-tour.md) before changing models on an existing
+index.
 
 ## Create secrets first
 
-Credentials come exclusively from Docker Compose **secrets**: files under
-`secrets/`, mounted at `/run/secrets/<NAME>`. Environment variables of the same
-name are deliberately ignored. Compose refuses to start a container whose secret
-file is missing.
+Credentials must be files under `secrets/`. Compose mounts each file at
+`/run/secrets/<NAME>`; environment variables with the same names are ignored.
 
 | File | Required |
 |---|---|
-| `secrets/POSTGRES_SUPERUSER` | Always |
-| `secrets/POSTGRES_SUPERPASSWORD` | Always |
-| `secrets/RAG_SERVER_DB_USER` | Always |
-| `secrets/RAG_SERVER_DB_PASSWORD` | Always |
-| `secrets/OPENAI_API_KEY` | Only if an OpenAI model is active (inference, embedding, or eval judge) |
-| `secrets/ANTHROPIC_API_KEY` | Only if an Anthropic model is active |
-
-The four Postgres files are needed even for a fully local deployment — the
-database is not optional and the image has no default credentials.
+| `POSTGRES_SUPERUSER` | Always |
+| `POSTGRES_SUPERPASSWORD` | Always |
+| `RAG_SERVER_DB_USER` | Always |
+| `RAG_SERVER_DB_PASSWORD` | Always |
+| `OPENAI_API_KEY` | When an active model uses OpenAI |
+| `ANTHROPIC_API_KEY` | When an active model uses Anthropic |
 
 ```bash
 mkdir -p secrets
@@ -44,145 +84,84 @@ echo -n "ragbench_app" > secrets/RAG_SERVER_DB_USER
 echo -n "$(openssl rand -hex 24)" > secrets/RAG_SERVER_DB_PASSWORD
 ```
 
-Leading and trailing whitespace and null bytes are stripped on read, so the exact
-file ending does not matter.
+`secrets/.env` holds non-secret values used by some `just` recipes. It is separate
+from Compose secrets and is not needed by `docker compose up`.
 
-Separately, `just` reads `secrets/.env` for non-secret local values used by some
-recipes. That is a plain dotenv file, unrelated to Docker secrets, and
-`docker compose up` does not need it.
-
-## Choose local or cloud models before first boot
-
-The checked-in `config.yml` ships with **cloud inference active**:
-
-```yaml
-active:
-  inference: gpt5-mini    # OpenAI — needs secrets/OPENAI_API_KEY
-  embedding: nomic-embed  # Ollama — local, needs Ollama running
-  eval: gpt5-2            # OpenAI — needs secrets/OPENAI_API_KEY
-  reranker: minilm-l6     # local cross-encoder
-```
-
-Start as-is without `secrets/OPENAI_API_KEY` and the rag-server and evals
-containers fail their provider validation at boot.
-
-**For a fully local start**, point `active.inference` at an Ollama-backed model:
-
-```yaml
-active:
-  inference: granite4-8b  # or gemma3-4b, qwen35-4b
-  embedding: nomic-embed  # already local
-  eval: gpt5-2            # judging can stay cloud, or use a local model
-  reranker: minilm-l6
-```
-
-Then pull the models:
-
-```bash
-ollama pull granite4.1:8b
-ollama pull nomic-embed-text
-```
-
-### Models available out of the box
-
-| Key | Provider | Model | Notes |
-|---|---|---|---|
-| `gemma3-4b` | Ollama | `gemma3:4b` | Small, fast |
-| `qwen35-4b` | Ollama | `qwen3.5:4b` | 256K context, ~3.4 GB |
-| `granite4-8b` | Ollama | `granite4.1:8b` | Apache-2.0, 128K context, tuned for RAG |
-| `gpt5-mini` | OpenAI | `gpt-5-mini` | Shipped default |
-| `gpt56-luna` | OpenAI | `gpt-5.6-luna` | |
-| `claude-haiku` | Anthropic | `claude-haiku-4-5` | Cheapest Anthropic option |
-| `claude-sonnet` | Anthropic | `claude-sonnet-5` | |
-| `claude-opus` | Anthropic | `claude-opus-5` | |
-
-Embedding models: `nomic-embed`, `qwen3-embed-06b`, `embeddinggemma` (all local);
-`openai-ada`, `openai-3-small`, `openai-3-large` (cloud).
-
-Only OpenAI, Anthropic, and Ollama are wired. Adding another provider means
-touching six places in the code plus the compose secret declarations —
-`config.yml` carries a commented template listing them.
-
-## Pre-fetch the reranker
+## Cache the reranker
 
 ```bash
 just init
 ```
 
-This downloads the active reranker (default `cross-encoder/ms-marco-MiniLM-L-6-v2`)
-into `.cache/huggingface`, bind-mounted into rag-server and task-worker. Pass a
-different Hugging Face id with `just init MODEL=<id>` if you changed
-`active.reranker`.
-
-Do not skip this. With reranking enabled (the default), rag-server checks at
-startup that the model is in the local cache and **exits with a `RuntimeError` if
-it is not** — `HF_HUB_OFFLINE=1` is set, so there is no silent live download and
-no degraded start. Skip `just init` and the container boots, dies on this check,
-and never passes its healthcheck.
-
-## Start and confirm health
+This downloads the active reranker into `.cache/huggingface`. The server runs in
+offline Hugging Face mode and exits at startup if the configured model is absent.
+For another model, pass its Hugging Face ID:
 
 ```bash
-just up            # preflight + docker compose up -d
-docker compose ps  # watch for healthy
+just init MODEL=BAAI/bge-reranker-base
 ```
 
-Docker healthchecks on rag-server and evals only confirm the process answers HTTP.
-For the real dependency check:
+## Start and check health
 
 ```bash
-curl -s http://localhost:8001/metrics/system | jq '.health_status, .component_status'
+just up
+docker compose ps
 ```
 
-`health_status` is `healthy` or `degraded`; `component_status` carries per-component
-postgres/bm25/ollama results. `bm25` appears only when hybrid search is enabled —
-`unavailable` there means the `pg_textsearch` extension or index cannot be queried,
-which silently reduces every hybrid query to vector-only.
+The web app is at <http://localhost:8000>; the eval API is at
+<http://localhost:8002>.
+
+Container health checks confirm that HTTP responds. Check dependencies separately:
 
 ```bash
-just logs                        # all services
-docker compose logs -f rag-server  # one service
-just show-config                 # which models are actually active
+curl -s http://localhost:8001/metrics/system \
+  | jq '.health_status, .component_status'
 ```
 
-Web UI: **http://localhost:8000**. Eval API: **http://localhost:8002**.
+`health_status` is `healthy` or `degraded`. When hybrid search is enabled,
+`component_status.bm25` shows whether keyword search is available. A BM25 failure
+silently reduces hybrid retrieval to vector-only.
 
-## Ingest and ask
+Useful checks:
 
 ```bash
-# Upload — or use http://localhost:8000/upload
+just logs
+docker compose logs -f rag-server
+just show-config
+```
+
+## Ingest a document and ask a question
+
+Use the web app, or call the API:
+
+```bash
 curl -F "files=@/path/to/document.pdf" http://localhost:8001/upload
 
-# Ask — or use http://localhost:8000/chat
 curl -N http://localhost:8001/query/stream \
   -H "Content-Type: application/json" \
   -d '{"query": "What does this document say about X?"}'
 ```
 
-Ingestion is asynchronous through the task worker; the Upload page polls task
-status. Give it time — embedding and (if enabled) contextual retrieval both cost
-real wall-clock time per document. `-N` disables curl buffering so you see the SSE
-stream arrive.
+Ingestion is asynchronous. Large files, local embeddings, and contextual
+retrieval increase processing time.
 
-## Stopping, and what survives
+## Stop without deleting data
 
 ```bash
-just down    # docker compose down — containers only
+just down
 ```
 
-| Survives `down` | What it holds |
+This removes containers but preserves:
+
+| Storage | Contents |
 |---|---|
-| `postgres_data` (volume) | Document metadata, chat sessions, task queue |
-| `chroma_data` (volume) | Vector index |
-| `./config.yml` (bind mount) | Your configuration |
-| `./data/indexed_documents` (bind mount) | Original uploaded files |
-| `./.cache/huggingface` (bind mount) | Downloaded model weights |
+| `postgres_data` volume | Documents, chat sessions, and task state |
+| `chroma_data` volume | Vector index |
+| `config.yml` | Configuration |
+| `data/indexed_documents` | Uploaded source files |
+| `.cache/huggingface` | Downloaded models |
 
-`docker compose down -v` additionally **destroys** `postgres_data` and
-`chroma_data`. There is no backup mechanism for either; recovery means re-ingesting
-every document. The bind-mounted host directories are untouched by `-v` — they live
-on your filesystem, not in a Docker volume.
+`docker compose down -v` deletes the PostgreSQL and ChromaDB volumes. There is no
+built-in backup, so recovery requires re-ingestion. Host bind mounts remain.
 
----
-
-**Next:** [3. Configuration tour](03-configuration-tour.md).
+**Next:** [3. Configure the RAG pipeline](03-configuration-tour.md).
