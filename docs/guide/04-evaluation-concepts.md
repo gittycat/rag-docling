@@ -1,8 +1,6 @@
 # 4. Evaluation concepts
 
-An evaluation runs a fixed question set, records the answers, and scores defined
-properties. It lets you compare configurations against the same evidence instead
-of relying on memory or a few hand-picked examples.
+An evaluation runs a fixed set of questions, records the answers and scores them. It lets you compare configurations against the same evidence instead of relying on memory or a few hand-picked examples.
 
 Evaluation does not remove judgement. Your dataset defines what is tested, and an
 LLM judge can be biased or wrong.

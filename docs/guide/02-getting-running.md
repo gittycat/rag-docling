@@ -5,15 +5,12 @@ before the first start; the checked-in configuration uses both.
 
 ## Prerequisites
 
-| Requirement | When needed |
-|---|---|
-| Docker Desktop, OrbStack, or Podman | Always; the stack uses Compose |
-| `just` | For the commands in this guide (`brew install just`) |
-| Python 3.13 and `uv` | For config inspection, evaluations, and local tests |
-| Ollama | When any active model uses the `ollama` provider |
-| Disk space | For local models and the reranker cache |
 
-`just up` and `just deploy` run `just preflight`, which checks Docker and Ollama.
+- Docker Desktop, OrbStack or Podman
+
+- Just task runner: `brew install just`
+- Python 3.13+ and uv `brew install uv`
+- Ollama: [installer](https://ollama.com/download)
 
 Create the local environment used by `just show-config` and the evaluation recipes:
 

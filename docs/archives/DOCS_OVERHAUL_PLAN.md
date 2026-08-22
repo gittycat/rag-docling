@@ -140,7 +140,7 @@ docs/
 | Chapter | Purpose |
 |---|---|
 | `INDEX.md` | Reading paths: "I want to tune quality" / "…cut cost" / "…verify privacy" |
-| `01-what-this-does.md` | System model; one question traced end to end in plain language |
+| `01-overview.md` | System model; one question traced end to end in plain language |
 | `02-getting-running.md` | Deploy, ingest documents, first query, confirm health |
 | `03-configuration-tour.md` | Every knob that matters, grouped by **what it moves**: quality / speed / cost / privacy. Include defaults and trade-offs |
 | `04-evaluation-concepts.md` | What each metric means, how it is computed, and **what it cannot tell you**; judge limitations and failure modes |
@@ -349,7 +349,7 @@ and outline; each writes its file directly):
 
 **Written by the orchestrating model** (judgment is the product — C5):
 
-- [x] **T4.10** `docs/guide/01-what-this-does.md`
+- [x] **T4.10** `docs/guide/01-overview.md`
 - [x] **T4.11** `docs/guide/03-configuration-tour.md`
 - [x] **T4.12** `docs/guide/04-evaluation-concepts.md`
 - [x] **T4.13** `docs/guide/05-running-evals.md`

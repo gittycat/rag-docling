@@ -156,7 +156,7 @@ docker compose down -v
   CI/CD, and the reasoning behind key design decisions.
 - **[Suggestions](docs/suggestions.md)** — known defects and improvement proposals.
 
-New here? Start with [what this does](docs/guide/01-what-this-does.md), then
+New here? Start with [what this does](docs/guide/01-overview.md), then
 [getting running](docs/guide/02-getting-running.md).
 
 ## Development

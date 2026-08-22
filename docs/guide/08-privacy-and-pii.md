@@ -1,13 +1,13 @@
 # 8. Privacy and PII masking
 
-RAGBench supports two privacy postures:
+RAGBench supports two privacy modes:
 
-| Posture | Configuration | Strength |
+| Mode | Configuration | Strength |
 |---|---|---|
 | Keep processing local | Ollama-backed inference and embeddings | Structural: document text is not sent to a model provider |
 | Use cloud generation with masking | `pii.enabled: true` and local embeddings | Mitigation: detected identifiers are replaced before cloud calls |
 
-Masking is weaker. Use local processing for genuinely sensitive corpora.
+Masking is weaker. Use local processing for genuinely sensitive documents.
 
 ## What masking does and does not do
 

@@ -15,7 +15,7 @@ It follows one workflow:
 
 | # | Chapter | Outcome |
 |---|---|---|
-| 1 | [RAGBench concepts](01-what-this-does.md) | Understand ingestion, retrieval, generation, and the tuning loop |
+| 1 | [RAGBench concepts](01-overview.md) | Understand ingestion, retrieval, generation, and the tuning loop |
 | 2 | [Get RAGBench running](02-getting-running.md) | Start the stack, ingest a document, and ask a question |
 | 3 | [Configure the RAG pipeline](03-configuration-tour.md) | Choose models, retrieval, reranking, chunking, and related settings |
 | 4 | [Evaluation concepts](04-evaluation-concepts.md) | Choose an evaluation tier and understand the metrics |
