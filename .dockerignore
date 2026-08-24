@@ -1,0 +1,37 @@
+# Build context exclusions. `rag-server` and `evals` build with the repo root as
+# context; without this every build tars up ~11 GB of caches and virtualenvs.
+
+# Caches (model weights, datasets, uv)
+.cache/
+.uv-cache/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+
+# Runtime data and volumes
+data/
+volumes/
+indexed_documents/
+
+# Dependencies
+**/node_modules/
+**/.venv/
+venv/
+
+# VCS and tooling
+.git/
+.github/
+.forgejo/
+.claude/
+.idea/
+.vscode/
+
+# Secrets must never enter an image layer
+secrets/
+
+# Infra / docs / local overrides
+infra/
+docs/
+docker-compose.override.yml
+**/.DS_Store

@@ -480,3 +480,16 @@ Steps:
 
 **Option B** - Stay with containers.
 Look at embedding Virtualization.framework directly — Apple's Swift API lets you boot a lightweight Linux VM (~100ms on Apple Silicon), mount a shared directory, and run your Docker Compose inside it. OrbStack proves this architecture works well. You'd wrap it in a SwiftUI or Tauri shell.
+
+### AWS Demo Embedding Model Constraint
+
+The AWS demo deployment runs `nomic-embed-text` via Ollama on CPU, on the same EC2
+instance as `rag-server`, rather than a stronger cloud embedding model. This is not
+a cost decision — it is forced by `validate_privacy_posture()`
+(`services/rag_server/infrastructure/config/models_config.py:428`), which refuses
+to boot when `pii.enabled: true` is combined with a non-local embedding provider,
+because PII masking covers the LLM path but never the embedding path. The demo
+runs with `pii.enabled: true`, so the embedding provider must stay local.
+Moving to a stronger embedding model on this deployment means either a GPU
+instance for Ollama, or accepting a cloud embedding provider with
+`pii.enabled: false`.

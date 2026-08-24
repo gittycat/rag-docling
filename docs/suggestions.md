@@ -888,6 +888,68 @@ at that corpus size. It cannot support any claim about either feature.
 
 ---
 
+## 7. AWS demo deployment
+
+Limitations of the AWS demo deployment (CloudFormation stack, golden AMI, single
+EC2 instance running every service including Ollama). Recorded as accepted
+trade-offs of a demo deployment, not as defects to fix.
+
+### 7.1 `config.yml` is a read-write bind mount
+**What.** `config.yml` is bind-mounted read-write into the container, and the app
+writes back to it: `PATCH /settings` (`services/rag_server/api/routes/settings.py:23`)
+calls `update_config_file()` (`services/rag_server/infrastructure/config/models_config.py:690`)
+so both `rag-server` and the worker pick up the change.
+**Why it matters.** Fine on a single instance, where one file and one writer exist.
+It blocks horizontal scaling of `rag-server`: multiple replicas writing the same
+mounted file race, and there is no mechanism to propagate a write from one
+replica's mount to the others'.
+**Effort.** L — moving live-toggleable settings out of a mounted file and into a
+shared store (e.g. Postgres, SSM Parameter Store) is a real design change.
+**Where.** `services/rag_server/api/routes/settings.py`,
+`services/rag_server/infrastructure/config/models_config.py`.
+**Status.** Open.
+
+### 7.2 No database migrations run
+**What.** `alembic.ini` exists (`services/rag_server/alembic.ini`) and
+`services/rag_server/infrastructure/database/migrations/versions/` exists, but the
+versions directory is empty and nothing in the justfile or any compose file calls
+`alembic upgrade`. The schema is created entirely by
+`services/postgres/init.sql` on the container's first boot.
+**Why it matters.** The AWS demo bakes a golden AMI with the database already
+initialized. A schema change against that AMI has no migration path — `init.sql`
+only runs once, on an empty volume — so it requires a re-bake rather than a
+migration run.
+**Effort.** M — would need both an actual migration authoring workflow and a way
+to run it against the baked AMI's database.
+**Where.** `services/rag_server/alembic.ini`,
+`services/rag_server/infrastructure/database/migrations/versions/`,
+`services/postgres/init.sql`.
+**Status.** Open.
+
+### 7.3 No backups
+**What.** Destroying the ephemeral demo CloudFormation stack destroys the EC2
+instance and its volumes, with nothing backed up off-instance.
+**Why it matters.** The shipped corpus survives teardown because it is baked into
+the AMI, but anything ingested *during* a demo — uploaded documents, chat
+sessions, eval runs — is lost the moment the stack is torn down.
+**Effort.** S — periodic sync of the Postgres volume (or a pre-teardown dump) to
+S3 would cover it, but nothing does this today.
+**Where.** CloudFormation stack / EC2 instance definition.
+**Status.** Open.
+
+### 7.4 Single AZ in practice
+**What.** The demo VPC spans 2 AZs so the ALB can be provisioned, but the single
+EC2 instance running every service sits in one of them.
+**Why it matters.** Correct for a demo — there is exactly one instance to place —
+but it is not an HA design: losing that AZ takes down the whole deployment despite
+the ALB's multi-AZ footprint implying otherwise.
+**Effort.** L — real HA here means multiple app instances and a non-single-instance
+Postgres, which is a different architecture, not a config change.
+**Where.** CloudFormation stack / VPC definition.
+**Status.** Open.
+
+---
+
 ## Suggested priority
 
 If picking a handful, these give the most value per unit of effort.

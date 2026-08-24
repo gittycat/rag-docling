@@ -44,8 +44,10 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
+# direnv (AWS profile/account for the demo deployment)
+.envrc
+
 # Docker specific
-.dockerignore
 docker-compose.override.yml
 .docker/
 

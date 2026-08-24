@@ -1,0 +1,128 @@
+# AWS single-instance demo overlay (EC2, arm64, behind an ALB that
+# terminates TLS).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d
+#
+# Pulls prebuilt images from ECR (built/pushed via `just ecr-push`) instead
+# of building locally, runs a local Ollama alongside the app, and locks down
+# which services are network-reachable: only webapp is published (the ALB
+# routes to its 8000:3000 mapping). rag-server and evals stay unpublished —
+# evals in particular has no authentication of its own and must never be
+# reachable from outside the instance.
+#
+# Resource limits below are budgeted for a 16 GB / 4 vCPU host:
+# postgres 3G/1.0, rag-server 4G/1.5, task-worker 3G/1.0, ollama 3G/1.0,
+# webapp 512M/0.5, evals 1G/0.5 (memory sums to 14.5G of 16G headroom for the
+# host + Docker; cpus are ceilings, not reservations, so they may oversubscribe
+# the 4 vCPUs without starving the host).
+#
+# Prerequisites:
+# 1. Images pushed to ECR (`just ecr-push`) — set REGISTRY to the ECR repo
+#    root, e.g. 123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ragbench
+# 2. secrets/RAG_SERVER_AUTH_TOKEN populated (see docker-compose.server.yml)
+# 3. EC2 user data exports WEBAPP_ORIGIN to the ALB's public HTTPS URL
+#    before this overlay is applied
+# 4. config.yml's Ollama `base_url` entries point at http://ollama:11434.
+#    OLLAMA_URL below is read only by services/metrics.py — the LLM and
+#    embedding clients read base_url straight out of config.yml, so the golden
+#    AMI bake rewrites it once (infra/assets/bake.sh) rather than leaving two
+#    sources of truth.
+
+services:
+  webapp:
+    image: ${REGISTRY}/webapp:${VERSION:-latest}
+    build: !reset null
+    secrets:
+      - RAG_SERVER_AUTH_TOKEN
+    environment:
+      # adapter-node's CSRF check rejects POSTs unless ORIGIN matches the
+      # public URL; base compose hardcodes localhost. Real value is exported
+      # by EC2 user data — this default is only a fallback.
+      - ORIGIN=${WEBAPP_ORIGIN:-https://demo.example.com}
+      # adapter-node defaults to 512 KB; must cover MAX_UPLOAD_SIZE=80 (80 MB).
+      - BODY_SIZE_LIMIT=83886080
+      - RAG_SERVER_AUTH_TOKEN_FILE=/run/secrets/RAG_SERVER_AUTH_TOKEN
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  rag-server:
+    image: ${REGISTRY}/rag-server:${VERSION:-latest}
+    build: !reset null
+    # Dockerfile's CMD is shell-form, so /bin/sh is PID 1 and never forwards
+    # SIGTERM — without init, every stop waits the full 10s for SIGKILL.
+    init: true
+    ports: !reset []
+    secrets:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - RAG_SERVER_DB_USER
+      - RAG_SERVER_DB_PASSWORD
+      - RAG_SERVER_AUTH_TOKEN
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - RAG_SERVER_AUTH_TOKEN_FILE=/run/secrets/RAG_SERVER_AUTH_TOKEN
+    extra_hosts: !reset []
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "1.5"
+
+  task-worker:
+    image: ${REGISTRY}/rag-server:${VERSION:-latest}
+    build: !reset null
+    init: true
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    extra_hosts: !reset []
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "1.0"
+
+  postgres:
+    image: ${REGISTRY}/postgres:${VERSION:-latest}
+    build: !reset null
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "1.0"
+
+  evals:
+    image: ${REGISTRY}/evals:${VERSION:-latest}
+    build: !reset null
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "0.5"
+
+  # Local Ollama for demo — reachable from rag-server/task-worker on the
+  # private network; also on the public network so a bake-time `ollama pull`
+  # can reach the internet. No ports published.
+  ollama:
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - public
+      - private
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "1.0"
+
+volumes:
+  ollama_data:
+    driver: local
+
+secrets:
+  RAG_SERVER_AUTH_TOKEN:
+    file: secrets/RAG_SERVER_AUTH_TOKEN

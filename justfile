@@ -180,3 +180,148 @@ release VERSION:
     git add services/rag_server/pyproject.toml services/webapp/package.json services/webapp/package-lock.json
     git commit -m "Bump version to {{VERSION}}"
     git push origin main --tags
+
+# ============================================================================
+# AWS — build/push images, bake the golden AMI, stand up/tear down the demo
+# ============================================================================
+
+# Build all images for arm64 and push to ECR, tagged with the git SHA and latest
+[group('aws')]
+ecr-push TAG="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -z "${AWS_ACCOUNT_ID:-}" ]; then
+        echo "ERROR: AWS_ACCOUNT_ID is not set. Put it in .envrc (see infra/README.md)." >&2
+        exit 1
+    fi
+    AWS_REGION="${AWS_REGION:-ap-southeast-2}"
+
+    # Two different things: the host you authenticate against, and the repository
+    # namespace you push into. `docker login` takes the host only — passing it a
+    # path silently authenticates the wrong thing.
+    REGISTRY_HOST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    REGISTRY="${REGISTRY_HOST}/ragbench"
+
+    TAG="{{TAG}}"
+    if [ -z "$TAG" ]; then
+        TAG=$(git rev-parse --short HEAD)
+        # An image built from uncommitted work should not claim to be that commit.
+        git diff --quiet && git diff --cached --quiet || TAG="${TAG}-dirty"
+    fi
+
+    IMAGES="webapp rag-server postgres evals"
+
+    # ECR never creates repositories on push — it fails with "repository does not
+    # exist". They are owned by RagbenchBaseStack, so check before spending ten
+    # minutes on builds that cannot be pushed.
+    missing=""
+    for name in $IMAGES; do
+        aws ecr describe-repositories --region "$AWS_REGION" \
+            --repository-names "ragbench/${name}" > /dev/null 2>&1 || missing="${missing} ragbench/${name}"
+    done
+    if [ -n "$missing" ]; then
+        echo "ERROR: missing ECR repositories:${missing}" >&2
+        echo "Deploy them first: cd infra && npx cdk deploy RagbenchBaseStack" >&2
+        exit 1
+    fi
+
+    aws ecr get-login-password --region "$AWS_REGION" \
+        | docker login --username AWS --password-stdin "$REGISTRY_HOST"
+    trap 'docker logout "$REGISTRY_HOST" > /dev/null 2>&1 || true' EXIT
+
+    # Built on the default builder rather than a docker-container one so the
+    # daemon's existing layer cache is reused. On an arm64 host --platform is a
+    # no-op guard; on x86 it would emulate, which is why this is explicit.
+    build_push() {
+        local name="$1" context="$2" dockerfile="$3"
+        echo "==> ${name}"
+        docker build --platform linux/arm64 \
+            -f "$dockerfile" \
+            -t "${REGISTRY}/${name}:${TAG}" \
+            -t "${REGISTRY}/${name}:latest" \
+            "$context"
+        docker push "${REGISTRY}/${name}:${TAG}"
+        docker push "${REGISTRY}/${name}:latest"
+    }
+
+    build_push webapp     services/webapp    services/webapp/Dockerfile
+    build_push rag-server .                  services/rag_server/Dockerfile
+    build_push postgres   services/postgres  services/postgres/Dockerfile
+    build_push evals      .                  services/evals/Dockerfile
+
+    echo
+    echo "Pushed to ${REGISTRY} as :${TAG} and :latest"
+    for name in $IMAGES; do
+        digest=$(aws ecr describe-images --region "$AWS_REGION" \
+            --repository-name "ragbench/${name}" --image-ids imageTag="$TAG" \
+            --query 'imageDetails[0].imageDigest' --output text)
+        printf '  %-12s %s\n' "$name" "$digest"
+    done
+    echo
+    echo "Next: just aws-bake"
+
+# Start the EC2 Image Builder pipeline and wait for the golden AMI
+[group('aws')]
+aws-bake:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    AWS_REGION="${AWS_REGION:-ap-southeast-2}"
+    START=$(date +%s)
+
+    PIPELINE_ARN=$(aws ssm get-parameter --region "$AWS_REGION" \
+        --name /ragbench/demo/image-pipeline-arn --query 'Parameter.Value' --output text)
+
+    IMAGE_BUILD_VERSION_ARN=$(aws imagebuilder start-image-pipeline-execution \
+        --region "$AWS_REGION" --image-pipeline-arn "$PIPELINE_ARN" \
+        --query imageBuildVersionArn --output text)
+    echo "Started image build: ${IMAGE_BUILD_VERSION_ARN}"
+
+    while true; do
+        STATUS=$(aws imagebuilder get-image --region "$AWS_REGION" \
+            --image-build-version-arn "$IMAGE_BUILD_VERSION_ARN" \
+            --query 'image.state.status' --output text)
+        echo "Status: ${STATUS}"
+        case "$STATUS" in
+            AVAILABLE)
+                break
+                ;;
+            FAILED|CANCELLED|DEPRECATED)
+                echo "ERROR: image build ended in status ${STATUS}" >&2
+                exit 1
+                ;;
+        esac
+        sleep 30
+    done
+
+    AMI_ID=$(aws imagebuilder get-image --region "$AWS_REGION" \
+        --image-build-version-arn "$IMAGE_BUILD_VERSION_ARN" \
+        --query 'image.outputResources.amis[0].image' --output text)
+    # The parameter is written here, not by CloudFormation: if the base stack
+    # owned it, every `cdk deploy` would reset it and the demo would boot a
+    # stale AMI. RagbenchDemoStack reads it at deploy time.
+    aws ssm put-parameter --region "$AWS_REGION" \
+        --name /ragbench/demo/golden-ami-id --type String --overwrite \
+        --description "Golden AMI baked by the ragbench-demo image pipeline" \
+        --value "$AMI_ID" > /dev/null
+
+    ELAPSED=$(( $(date +%s) - START ))
+    echo "AMI: ${AMI_ID}"
+    echo "Wrote /ragbench/demo/golden-ami-id = ${AMI_ID}"
+    echo "Elapsed: ${ELAPSED}s"
+
+# Deploy the demo CDK stack and print its URL
+[group('aws')]
+aws-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd infra && npx cdk deploy RagbenchDemoStack --require-approval never
+    cd - > /dev/null
+    URL=$(aws cloudformation describe-stacks --stack-name RagbenchDemoStack \
+        --query "Stacks[0].Outputs[?OutputKey=='DemoUrl'].OutputValue" --output text)
+    echo "Demo URL: ${URL}"
+
+# Tear down the demo CDK stack
+[group('aws')]
+aws-down:
+    cd infra && npx cdk destroy RagbenchDemoStack --force
