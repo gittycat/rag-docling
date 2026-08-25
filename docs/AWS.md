@@ -717,9 +717,41 @@ is running — `just aws-up` has not been run, or the AMI never baked. The build
 instances that Image Builder launches are *not* it, and are terminated on
 failure.
 
-You land as `ssm-user`; the app lives at `/opt/ragbench`:
+The session needs the **Session Manager plugin** on your machine — the AWS CLI
+does not ship it, and without it the command fails with `SessionManagerPlugin is
+not found`:
 
 ```bash
-sudo -i
-cd /opt/ragbench && docker compose -f docker-compose.yml -f docker-compose.aws.yml ps
+brew install --cask session-manager-plugin
 ```
+
+You land as `ssm-user`, in `/usr/bin`, with no environment from the app. The two
+things worth knowing once you are on the box: everything runs as root, and the
+compose project needs both overlay files or it resolves to the wrong images.
+
+```bash
+sudo -i                              # ssm-user cannot talk to the docker socket
+cd /opt/ragbench
+
+compose() { docker compose -f docker-compose.yml -f docker-compose.aws.yml "$@"; }
+compose ps
+compose logs -f rag-server
+```
+
+Omitting `-f docker-compose.aws.yml` makes compose try to *build* from the base
+file instead of using the ECR images, and it will publish ports the demo
+deliberately closes. `docker-compose.bake.yml` is a bake-time file — never apply
+it here.
+
+Useful landmarks:
+
+| Path | What |
+|---|---|
+| `/var/log/ragbench-boot.log` | User data output: secret fetch, ECR login, `compose up`, the webapp readiness wait |
+| `/opt/ragbench/secrets/` | Written fresh at every boot from Secrets Manager, never baked into the AMI |
+| `/opt/ragbench/config.yml` | The baked copy, with Ollama already rewritten to `http://ollama:11434` |
+| `docker volume ls` | `ragbench_postgres_data` holds the baked corpus; `ragbench_ollama_data` the embedding model |
+
+The instance is cattle: it boots from the golden AMI and re-fetches its secrets,
+so anything you change by hand is gone at the next `just aws-down` / `aws-up`.
+Fix things in the repo and re-bake instead.
