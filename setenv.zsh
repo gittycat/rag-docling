@@ -74,14 +74,15 @@ _setenv_paint() {
   esac
 }
 
-# Exactly one of these is ever set; starship styles them differently so prod
-# stands out in the prompt as well as in the background.
+# Display only — nothing but starship reads these. Exactly one is ever set, so
+# starship can style prod apart from the rest (its env_var module cannot switch
+# style on a value). ${(C)} title-cases: demo -> "Demo Environment".
 _setenv_prompt() {
   unset AWS_ENV_PROD AWS_ENV_SAFE
   case "$1" in
     '')     ;;
-    prod)   export AWS_ENV_PROD="$1" ;;
-    *)      export AWS_ENV_SAFE="$1" ;;
+    prod)   export AWS_ENV_PROD="${(C)1} Environment" ;;
+    *)      export AWS_ENV_SAFE="${(C)1} Environment" ;;
   esac
 }
 
