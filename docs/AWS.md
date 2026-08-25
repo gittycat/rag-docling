@@ -636,21 +636,90 @@ just aws-up      # deploys RagbenchDemoStack, prints the URL
 just aws-down    # destroys it
 ```
 
-Cognito sign-up is disabled, so each viewer needs an account first:
-
-```bash
-aws cognito-idp admin-create-user --user-pool-id <UserPoolId output> \
-  --username someone@example.com --user-attributes Name=email,Value=someone@example.com
-```
-
 Re-bake (`just ecr-push && just aws-bake`) only when the images or the corpus
 change. A schema change also needs a re-bake — `services/postgres/init.sql` runs
 only on first boot and nothing runs migrations.
 
-### Shell access
+### Signing in: creating the Cognito users
 
-No SSH, no bastion, no port 22:
+The ALB fronts the app with an `authenticate-cognito` action, so the first thing
+a visitor sees is Cognito's hosted login page asking for an email and password.
+Sign-up is disabled (`selfSignUpEnabled: false` in `base-stack.ts` — the audience
+is a handful of known viewers), and a freshly deployed pool is **empty**. Nothing
+on the page says so: it simply rejects every credential, including yours. Create
+at least one user before pointing anyone at the URL.
+
+The pool id is a `RagbenchBaseStack` output (`UserPoolId`), or look it up:
 
 ```bash
-aws ssm start-session --target <InstanceId output>
+POOL=$(aws cognito-idp list-user-pools --max-results 10 \
+       --query "UserPools[?Name=='ragbench-demo'].Id" --output text)
+```
+
+**For yourself** — create the account and give it a working password in one go,
+so nothing depends on email delivery:
+
+```bash
+aws cognito-idp admin-create-user --user-pool-id "$POOL" \
+  --username bernard@kiluna.com \
+  --user-attributes Name=email,Value=bernard@kiluna.com Name=email_verified,Value=true \
+  --message-action SUPPRESS
+
+aws cognito-idp admin-set-user-password --user-pool-id "$POOL" \
+  --username bernard@kiluna.com --password '<12+ chars>' --permanent
+```
+
+**For a viewer** — one call, and Cognito emails them a temporary password:
+
+```bash
+aws cognito-idp admin-create-user --user-pool-id "$POOL" \
+  --username someone@example.com --user-attributes Name=email,Value=someone@example.com
+```
+
+The two forms differ in more than convenience:
+
+| | Account state | First sign-in |
+|---|---|---|
+| `admin-create-user` alone | `FORCE_CHANGE_PASSWORD` | Temp password arrives by email; hosted UI makes them set a new one |
+| `--message-action SUPPRESS` + `admin-set-user-password --permanent` | `CONFIRMED` | The password you set works immediately |
+
+`SUPPRESS` without the follow-up `admin-set-user-password` leaves an account
+nobody can ever log into — no password was set and no email was sent.
+
+Passwords must satisfy the pool policy: **12+ characters with upper, lower,
+digit and symbol**. `admin-set-user-password` rejects anything weaker.
+
+Check who exists:
+
+```bash
+aws cognito-idp list-users --user-pool-id "$POOL" \
+  --query 'Users[].{user:Username,status:UserStatus,enabled:Enabled}' --output table
+```
+
+The pool is `RETAIN`, so users survive `just aws-down` and are still there for
+the next demo. Removing someone afterwards is `admin-delete-user`.
+
+### Shell access
+
+No SSH, no bastion, no port 22 — the instance carries only
+`AmazonSSMManagedInstanceCore`:
+
+```bash
+ID=$(aws ec2 describe-instances \
+     --filters Name=tag:Name,Values=ragbench-demo Name=instance-state-name,Values=running \
+     --query 'Reservations[].Instances[].InstanceId' --output text)
+
+aws ssm start-session --target "$ID"
+```
+
+`ID` is also a `RagbenchDemoStack` output. Empty output means no demo instance
+is running — `just aws-up` has not been run, or the AMI never baked. The build
+instances that Image Builder launches are *not* it, and are terminated on
+failure.
+
+You land as `ssm-user`; the app lives at `/opt/ragbench`:
+
+```bash
+sudo -i
+cd /opt/ragbench && docker compose -f docker-compose.yml -f docker-compose.aws.yml ps
 ```
