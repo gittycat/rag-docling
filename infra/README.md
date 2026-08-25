@@ -14,6 +14,58 @@ The split is by **lifecycle**, not by function: anything slow to create (ACM
 issuance, DNS delegation) or holding state that must survive a teardown (Cognito
 users, ECR images, secrets) lives in the base stack.
 
+## Environments
+
+`envName` is the only switch. It selects the account, the CIDR, the SSM/secret
+namespace and the stack names; `-c envName=<name>` on any `cdk` command.
+
+| `envName` | Account | Profile | VPC CIDR | Stack names |
+|---|---|---|---|---|
+| `dev` | `011356579819` (sdlc) | `sdlc-admin` | `10.10.0.0/17` | `Ragbench*Stack-dev` |
+| `staging` | `011356579819` (sdlc) | `sdlc-admin` | `10.10.128.0/17` | `Ragbench*Stack-staging` |
+| `demo` | `364769971558` | `demo-admin` | `10.20.0.0/16` | `Ragbench*Stack` |
+| `prod` | `730406060579` | `prod-admin` | `10.30.0.0/16` | `Ragbench*Stack-prod` |
+
+Two environments share the sdlc account, which is why stack names carry the
+environment: `dev` and `staging` would otherwise be the same CloudFormation
+stack. `demo` is the exception — it was deployed before the suffix existed and
+renaming a live stack orphans it rather than moving it, so it keeps the bare
+names. Construct ids are bare in every environment, so `cdk deploy
+RagbenchBaseStack` selects the right stack regardless.
+
+**Nothing is selected by default.** There is no `.envrc` and no `[default]`
+profile, so a fresh shell can reach no account at all:
+
+```console
+$ aws s3 ls
+aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials.
+$ npx cdk synth
+Error: No environment selected. Run 'setenv <dev|staging|demo|prod>' to set
+AWS_ENV and AWS_PROFILE together, or pass -c envName=<name>.
+```
+
+`setenv` sets both variables at once, so the environment and the credentials
+cannot be typed separately and disagree:
+
+```console
+$ setenv prod
+prod → prod-admin (730406060579)     # terminal turns dark red, prompt shows prod
+$ npx cdk deploy RagbenchBaseStack   # no -c flags needed
+$ setenv none
+cleared — AWS calls will now fail until you select an environment
+```
+
+**The account guard** is the backstop for the case `setenv` cannot cover — a
+hand-passed `-c envName=`, or an `AWS_PROFILE` exported by something else.
+`loadConfig` refuses to synthesize when `envName` and the live credentials
+disagree, naming the profile that would have been right. Without it, prod-named
+resources — prod SSM paths, prod secrets, prod CIDR — land in whichever account
+happens to be active, and the deploy succeeds.
+
+Add a new environment to `ENVIRONMENTS` **and** `ENV_CIDRS` in `lib/config.ts`,
+and to `_SETENV_PROFILES` in `setenv.zsh`. An unknown `envName` is
+rejected rather than silently defaulted.
+
 ## Why a golden AMI
 
 A cold `docker pull` of 4–6 GB of images plus a 1.3 GB model download costs 15+
@@ -29,17 +81,24 @@ Do these once, by hand, before anything else. They are not CDK.
 
 1. **Create the account.** In AWS Organizations, use **Control Tower Account
    Factory** (never the plain Organizations console — that skips the guardrails)
-   to create `ragbench-sdlc` in the **SDLC** OU. The demo infrastructure lives there;
-   there is no separate demo account.
-2. **Delete the default VPC** in `ragbench-sdlc`, region `ap-southeast-2`.
-3. **Bootstrap CDK:** `cdk bootstrap aws://011356579819/ap-southeast-2`
-4. **Point the shell at the account.** Create `.envrc` at the repo root (it is
-   gitignored) and run `direnv allow`:
-   ```bash
-   export AWS_PROFILE=sdlc-admin
-   export AWS_REGION=ap-southeast-2
-   export AWS_ACCOUNT_ID=011356579819   # used by `just ecr-push` to derive REGISTRY
+   to create `ragbench-demo` in the **Workloads/Demo** OU. All three stacks live
+   there — account `364769971558`.
+2. **Delete the default VPC** in `ragbench-demo`, region `ap-southeast-2`.
+3. **Bootstrap CDK:** `cdk bootstrap aws://364769971558/ap-southeast-2`
+4. **Select an environment** in each shell that needs one:
+   ```console
+   $ setenv demo
+   demo → demo-admin (364769971558)
    ```
+   `setenv` is a shim in `~/.zshrc` that sources `./setenv.zsh` from the root of
+   the current git repo — see the header of that file for the seven lines. The
+   file has to be sourced rather than executed, because an executed script sets
+   its variables in a child process that then exits. Without the shim,
+   `source ./setenv.zsh demo` from the repo root does the same thing.
+   Nothing else may export `AWS_PROFILE`, `AWS_ACCOUNT_ID` or `AWS_REGION`: the
+   profile already carries the region, CDK reads `CDK_DEFAULT_ACCOUNT` from the
+   resolved credentials, and `just ecr-push` calls `sts get-caller-identity`. A
+   hand-maintained copy of any of them can only drift. See § Environments.
 5. **Deploy the base stack:**
    ```
    cd infra && npx cdk deploy RagbenchBaseStack

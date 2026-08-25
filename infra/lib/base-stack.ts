@@ -45,6 +45,9 @@ export class RagbenchBaseStack extends cdk.Stack {
     // natGateways: 0 is deliberate. A NAT gateway is ~$35/mo idle and this
     // workload has exactly one instance that can live in a public subnet.
     this.vpc = new ec2.Vpc(this, 'Vpc', {
+      // Explicit, not the CDK default 10.0.0.0/16: every account would otherwise
+      // get the same range and future peering / Transit Gateway would be blocked.
+      ipAddresses: ec2.IpAddresses.cidr(cfg.vpcCidr),
       maxAzs: 2,
       natGateways: 0,
       subnetConfiguration: [
@@ -54,6 +57,10 @@ export class RagbenchBaseStack extends cdk.Stack {
         // Inbound exposure is controlled by security groups, not by subnet type.
         { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24, mapPublicIpOnLaunch: true },
       ],
+      // The custom resource behind this flag has an IAM role scoped to one
+      // specific default-SG ARN, so it always fails when the VPC is replaced.
+      // Changing the CIDR is a three-deploy dance: turn this off, replace the
+      // VPC, turn it back on. See docs/AWS.md.
       restrictDefaultSecurityGroup: true,
     });
 

@@ -1,16 +1,19 @@
 import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { loadConfig } from '../lib/config';
+import { loadConfig, stackName } from '../lib/config';
 import { RagbenchBaseStack } from '../lib/base-stack';
 import { RagbenchImageStack } from '../lib/image-stack';
 import { RagbenchDemoStack } from '../lib/demo-stack';
 
-const ACCOUNT = '111122223333';
+// Must be a real environment account: loadConfig now refuses to synthesize when
+// the resolved account disagrees with the one ENVIRONMENTS pins for envName.
+const ACCOUNT = '364769971558'; // demo
 const REGION = 'ap-southeast-2';
 
 function synth() {
   const app = new cdk.App({
     context: {
+      envName: 'demo',
       account: ACCOUNT,
       region: REGION,
       domainName: 'demo.example.com',
@@ -246,5 +249,68 @@ describe('RagbenchImageStack', () => {
         Match.objectLike({ Ebs: Match.objectLike({ Encrypted: true }) }),
       ]),
     });
+  });
+});
+
+describe('environment guard', () => {
+  const appWith = (context: Record<string, unknown>) => new cdk.App({ context });
+
+  it('rejects an envName deployed against the wrong account', () => {
+    expect(() =>
+      loadConfig(appWith({ envName: 'prod', account: '364769971558' })),
+    ).toThrow(/belongs to account 730406060579.*resolve to 364769971558/s);
+  });
+
+  it('names the profile that would have been correct', () => {
+    expect(() =>
+      loadConfig(appWith({ envName: 'prod', account: '364769971558' })),
+    ).toThrow(/AWS_PROFILE=prod-admin/);
+  });
+
+  it('accepts dev and staging in the one shared sdlc account', () => {
+    for (const envName of ['dev', 'staging']) {
+      const cfg = loadConfig(appWith({ envName, account: '011356579819' }));
+      expect(cfg.account).toBe('011356579819');
+    }
+  });
+
+  it('refuses to synthesize when no environment is selected', () => {
+    const saved = process.env.AWS_ENV;
+    delete process.env.AWS_ENV;
+    try {
+      expect(() => loadConfig(appWith({ account: '364769971558' })))
+        .toThrow(/No environment selected.*setenv/s);
+    } finally {
+      if (saved !== undefined) process.env.AWS_ENV = saved;
+    }
+  });
+
+  it('falls back to AWS_ENV when -c envName is absent', () => {
+    const saved = process.env.AWS_ENV;
+    process.env.AWS_ENV = 'prod';
+    try {
+      expect(loadConfig(appWith({ account: '730406060579' })).envName).toBe('prod');
+    } finally {
+      if (saved === undefined) delete process.env.AWS_ENV;
+      else process.env.AWS_ENV = saved;
+    }
+  });
+
+  it('rejects an unknown envName', () => {
+    expect(() => loadConfig(appWith({ envName: 'uat' }))).toThrow(/Unknown envName 'uat'/);
+  });
+
+  it('suffixes stack names everywhere except the already-deployed demo', () => {
+    const demo = loadConfig(appWith({ envName: 'demo', account: '364769971558' }));
+    const dev = loadConfig(appWith({ envName: 'dev', account: '011356579819' }));
+    expect(stackName(demo, 'RagbenchBaseStack')).toBe('RagbenchBaseStack');
+    expect(stackName(dev, 'RagbenchBaseStack')).toBe('RagbenchBaseStack-dev');
+  });
+
+  it('gives dev and staging non-overlapping halves of the sdlc /16', () => {
+    expect(loadConfig(appWith({ envName: 'dev', account: '011356579819' })).vpcCidr)
+      .toBe('10.10.0.0/17');
+    expect(loadConfig(appWith({ envName: 'staging', account: '011356579819' })).vpcCidr)
+      .toBe('10.10.128.0/17');
   });
 });

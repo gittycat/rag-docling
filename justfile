@@ -191,11 +191,15 @@ ecr-push TAG="":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    if [ -z "${AWS_ACCOUNT_ID:-}" ]; then
-        echo "ERROR: AWS_ACCOUNT_ID is not set. Put it in .envrc (see infra/README.md)." >&2
+    AWS_REGION="${AWS_REGION:-ap-southeast-2}"
+
+    # Derived from the active credentials, never from the environment: an
+    # AWS_ACCOUNT_ID that disagrees with AWS_PROFILE would push into one
+    # account's registry using another account's credentials.
+    if ! AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null); then
+        echo "ERROR: no valid AWS credentials. Run 'aws sso login --sso-session kiluna'." >&2
         exit 1
     fi
-    AWS_REGION="${AWS_REGION:-ap-southeast-2}"
 
     # Two different things: the host you authenticate against, and the repository
     # namespace you push into. `docker login` takes the host only — passing it a

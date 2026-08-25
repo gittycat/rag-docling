@@ -28,7 +28,14 @@ The pieces, from outside in. Each level below is contained by the one above it.
 **Account**
 - Belongs to exactly one OU
 - The hard boundary: security, quotas, billing line item
-- Owns a **network CIDR** range (10.10/16 sdlc, 10.20/16 demo, 10.30/16 prod)
+- Owns a **network CIDR** range (10.10/16 sdlc, 10.20/16 demo, 10.30/16 prod).
+  The sdlc account holds two VPCs, so its /16 splits: `10.10.0.0/17` dev,
+  `10.10.128.0/17` staging. Allocations live in `ENV_CIDRS`, `infra/lib/config.ts`.
+- Is pinned to its environments in `ENVIRONMENTS` (`infra/lib/config.ts`), which
+  `loadConfig` checks the live credentials against — deploying `-c envName=prod`
+  with the wrong profile fails at synth instead of building prod-named resources
+  in the wrong account. The mapping is many-to-one: dev and staging share sdlc.
+  See `infra/README.md` § Environments for the full table.
 - Holds one or more **VPCs**
 
 **VPC**
@@ -113,6 +120,14 @@ folding it into Prod would muddy what Prod means.
 **The management account runs no workloads.** It owns the org-level APIs
 (`organizations`, `account`, SCPs, Control Tower) and nothing else.
 
+One documented exception: three S3 Glacier vaults — `negatives`, `scans` and
+`scanner-ICC-profiling`, ~612 GB created in 2021 — predate the landing zone and
+stay put. Glacier has no cross-account transfer, so moving them would mean
+retrieving all 612 GB and re-uploading, at real cost, for cold archives nobody
+reads. The rule is therefore *no compute or application workloads*; these are
+grandfathered storage. They carry no vault access or lock policy, so access is
+plain IAM and runs through Identity Center like everything else.
+
 ### Multiple demos
 
 Several demos for different audiences live as separate stacks *inside*
@@ -152,13 +167,14 @@ accounts — the OU is the policy boundary, the account is the workload boundary
 
 ### Conventions
 
-- One VPC per account per region; delete the default VPC (four-step teardown below).
+- One VPC per account per region, built by CDK. Delete both VPCs a new account
+  ships with — the AWS default and `aws-controltower-VPC` (teardowns below).
 - Non-overlapping CIDRs per account so peering or Transit Gateway stays possible.
 - Create OUs and accounts through Control Tower Account Factory, never directly
   in the Organizations console — ungoverned OUs skip guardrails.
 - AWS profiles are named per account+role (`mgmt-admin`, `prod-admin`,
-  `demo-admin`, `sdlc-admin`), never per project. Projects select one via
-  `AWS_PROFILE` in `.envrc`.
+  `demo-admin`, `sdlc-admin`), never per project. A shell selects one
+  explicitly with `setenv <env>`; nothing selects one automatically.
 - Humans reach AWS only through Identity Center. No IAM users, no access keys.
 
 ## Signing in to the console
@@ -283,7 +299,7 @@ actual work inside an account.
 
 - They follow the `<account>-<role>` naming convention.
 - They keep workloads out of the management account.
-- They give `AWS_PROFILE` in a project's `.envrc` something to point at.
+- They give `setenv` something to point `AWS_PROFILE` at.
 
 ## Renaming an account and changing its root email
 
@@ -349,6 +365,36 @@ Three stacks, split by lifecycle: `RagbenchBaseStack` and `RagbenchImageStack`
 are permanent, `RagbenchDemoStack` is created before a demo and destroyed after.
 Full detail lives in `infra/README.md`; this is the order of operations.
 
+### One-time, org-wide: stop Account Factory creating VPCs
+
+Do this once. It applies to every account provisioned afterwards, and it is
+what AWS recommends. From the Prescriptive Guidance, *Transitioning to multiple
+AWS accounts*:
+
+> Many prefer to use other services, such as AWS CloudFormation, Hashicorp
+> Terraform, or Pulumi, to set up and manage their VPCs. You should customize
+> the Account Factory settings to prevent creation of the additional VPC
+> provisioned by AWS Control Tower.
+
+The built-in VPC only makes sense for a SaaS giving each tenant an identical
+account with no inter-account networking. We use CDK and want peering or
+Transit Gateway to stay possible, so we turn it off.
+
+**Console only** — the landing-zone manifest holds governed regions, logging
+and roles, but not this. There is no CLI equivalent.
+
+Control Tower → **Account factory** → **Network configuration** → **Edit**:
+
+1. **Internet-accessible subnet** → disabled
+2. **Maximum number of private subnets** → **0**
+3. **Regions for VPC creation** → clear every region
+4. **Availability Zones** → 3
+
+Leaving public subnets *enabled* would make Account Factory create a NAT
+gateway per account — around $32/month each, for a VPC nothing uses.
+
+Existing accounts keep the VPC they were given; step 4b below removes it.
+
 ### Phase A — point the toolchain at the demo account (~10 min)
 
 The demo infrastructure lives in **`ragbench-demo` (364769971558)**, in the Demo
@@ -373,19 +419,47 @@ paths remain `ragbench/demo/...`.
    # → 364769971558
    ```
 
-3. Create `.envrc` at the repo root (gitignored) and run `direnv allow`:
-   ```bash
-   export AWS_PROFILE=demo-admin
-   export AWS_REGION=ap-southeast-2
-   export AWS_ACCOUNT_ID=364769971558   # `just ecr-push` derives REGISTRY from this
+3. Select an environment in each shell that needs one:
+   ```console
+   $ setenv demo
+   demo → demo-admin (364769971558)
    ```
+   `setenv` is a small generic shim in `~/.zshrc` that sources `./setenv.zsh`
+   from the root of the current git repo; the seven lines are in that file's
+   header. It names no account, profile or project, so any repo adopting the
+   `./setenv.zsh` convention reuses it. The file must be sourced rather than
+   executed — an executed script sets its variables in a child process that then
+   exits — and it refuses to run if you execute it. Without the shim,
+   `source ./setenv.zsh demo` from the repo root is equivalent.
 
-4. Delete the default VPC in that account, `ap-southeast-2`. The stacks build
-   their own, and one-VPC-per-account is the org convention.
+   `setenv` exports `AWS_ENV` and `AWS_PROFILE` together, paints the background
+   dark red for prod only, and shows the environment at the right of the prompt.
+   `setenv none` clears it; `setenv` alone reports the current selection.
 
-   There is no single "delete default VPC" API — `delete-vpc` fails while
-   subnets or an internet gateway are attached, so it is a four-step teardown.
-   The default route table, NACL and security group go with the VPC.
+   **There is deliberately no `.envrc` and no default.** An unselected shell
+   reaches no account: the CLI has no `[default]` profile to fall back on and
+   `loadConfig` throws. Nothing else should export `AWS_PROFILE`,
+   `AWS_ACCOUNT_ID` or `AWS_REGION` — the profile in `~/.aws/config` already
+   carries the region, CDK reads `CDK_DEFAULT_ACCOUNT` from the resolved
+   credentials, and `just ecr-push` calls `sts get-caller-identity`. A
+   hand-maintained second copy of any of them can only drift.
+
+4. Remove the VPCs you didn't ask for. A fresh Account Factory account can
+   arrive with **two**, neither of them yours:
+
+   | VPC | Where it comes from | Usually |
+   |---|---|---|
+   | default (`172.31.0.0/16`, unnamed) | AWS, in every new account | Already deleted — Control Tower removes it during provisioning |
+   | `aws-controltower-VPC` (`172.31.0.0/16`) | Account Factory's network configuration | Present, unused, must be removed |
+
+   Both must go before `RagbenchBaseStack` builds the real one. See *Stop
+   Account Factory creating VPCs* above for how to prevent the second from
+   coming back.
+
+   **4a. The default VPC.** There is no single "delete default VPC" API —
+   `delete-vpc` fails while subnets or an internet gateway are attached, so it
+   is a four-step teardown. The default route table, NACL and security group go
+   with the VPC.
 
    ```bash
    export AWS_PROFILE=demo-admin AWS_REGION=ap-southeast-2
@@ -429,7 +503,56 @@ paths remain `ragbench/demo/...`.
    done
    ```
 
+   **4b. The Control Tower VPC.** `aws-controltower-VPC` is *not* the default
+   VPC — it is created by Account Factory from the network configuration, with
+   private subnets across 3 AZs and an S3 gateway endpoint. With public subnets
+   disabled it has no NAT gateway, so it costs nothing, but it takes
+   `172.31.0.0/16` in **every** account Account Factory provisions. That is a
+   guaranteed collision with the non-overlapping-CIDR rule, and reason enough to
+   remove it.
+
+   The teardown is different from the default VPC's — there is no internet
+   gateway, but there are VPC endpoints and non-main route tables:
+
+   ```bash
+   V=$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=aws-controltower-VPC \
+       --query 'Vpcs[0].VpcId' --output text)
+
+   # Refuse to proceed if anything is actually attached
+   aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=$V \
+     --query 'length(NetworkInterfaces)' --output text     # must be 0
+
+   for E in $(aws ec2 describe-vpc-endpoints --filters Name=vpc-id,Values=$V \
+              --query 'VpcEndpoints[].VpcEndpointId' --output text); do
+     aws ec2 delete-vpc-endpoints --vpc-endpoint-ids $E
+   done
+
+   for S in $(aws ec2 describe-subnets --filters Name=vpc-id,Values=$V \
+              --query 'Subnets[].SubnetId' --output text); do
+     aws ec2 delete-subnet --subnet-id $S
+   done
+
+   for R in $(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$V \
+              --query 'RouteTables[?!(Associations[?Main==`true`])].RouteTableId' --output text); do
+     aws ec2 delete-route-table --route-table-id $R
+   done
+
+   aws ec2 delete-vpc --vpc-id $V
+   ```
+
+   Non-default security groups and network ACLs would also block `delete-vpc`,
+   but a stock Control Tower VPC has neither. Afterwards the account should list
+   exactly one VPC: `RagbenchBaseStack/Vpc`.
+
+   `ragbench-prod` and `ragbench-sdlc` still carry theirs — same teardown,
+   different profile, whenever convenient.
+
 5. Bootstrap CDK: `npx cdk bootstrap aws://364769971558/ap-southeast-2`
+
+   On a **first** bootstrap, CDK prints `current credentials could not be used
+   to assume 'arn:...cdk-hnb659fds-lookup-role-...', but are for the right
+   account. Proceeding anyway.` That is expected — the role does not exist until
+   this command creates it. The phrase that matters is *for the right account*.
 
 ### Phase B — one-time stacks (~1 hour, mostly waiting)
 
@@ -451,6 +574,60 @@ paths remain `ragbench/demo/...`.
 
 10. Commit the `cdk.context.json` that the first successful synth writes, so AZ
     lookups stay deterministic.
+
+### Gotcha: changing a VPC CIDR takes three deploys
+
+`RagbenchBaseStack` sets `restrictDefaultSecurityGroup: true`, which makes CDK
+add a `Custom::VpcRestrictDefaultSG` Lambda that strips the default security
+group's rules. Its IAM role is scoped to **one specific security-group ARN** —
+the current VPC's default SG.
+
+Replacing the VPC creates a *new* default SG, so the Lambda is asked to act on a
+group its own role does not cover, and the deploy fails with:
+
+```
+UnauthorizedOperation: ... not authorized to perform:
+ec2:AuthorizeSecurityGroupIngress on resource: .../security-group/sg-...
+```
+
+The rollback then fails on top of it with `InvalidPermission.Duplicate` — it
+tries to restore rules that were never removed — leaving the stack in
+`UPDATE_ROLLBACK_FAILED`, which blocks every subsequent operation.
+
+**If you are already stuck there**, skip the custom resource to get out:
+
+```bash
+aws --profile demo-admin cloudformation continue-update-rollback \
+  --stack-name RagbenchBaseStack \
+  --resources-to-skip VpcRestrictDefaultSecurityGroupCustomResourceC73DA2BE
+```
+
+**To change the CIDR cleanly**, three deploys — and they cannot be merged, because
+CloudFormation may delete the custom resource *after* replacing the VPC:
+
+```bash
+# 1. Remove the custom resource, CIDR unchanged.
+#    Set restrictDefaultSecurityGroup: false in lib/base-stack.ts, then:
+npx cdk deploy RagbenchBaseStack -c vpcCidr=<current CIDR>
+
+# 2. Replace the VPC. No custom resource involved.
+npx cdk deploy RagbenchBaseStack
+
+# 3. Set restrictDefaultSecurityGroup: true again and redeploy.
+npx cdk deploy RagbenchBaseStack
+```
+
+Verify with 0 ingress and 0 egress on the new default SG:
+
+```bash
+aws --profile demo-admin ec2 describe-security-groups \
+  --filters Name=group-name,Values=default \
+  --query 'SecurityGroups[].[GroupId,VpcId,length(IpPermissions),length(IpPermissionsEgress)]' \
+  --output text
+```
+
+The hosted zone, certificate, ECR repos, Cognito pool and secrets are untouched
+by a VPC replacement, so no DNS re-delegation is needed.
 
 ### Per demo
 

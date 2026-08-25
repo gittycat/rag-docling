@@ -7,7 +7,7 @@
  *   RagbenchDemoStack   ephemeral — deployed before a demo, destroyed after
  */
 import * as cdk from 'aws-cdk-lib';
-import { loadConfig } from '../lib/config';
+import { loadConfig, stackName } from '../lib/config';
 import { RagbenchBaseStack } from '../lib/base-stack';
 import { RagbenchImageStack } from '../lib/image-stack';
 import { RagbenchDemoStack } from '../lib/demo-stack';
@@ -19,12 +19,14 @@ const env = { account: config.account, region: config.region };
 const base = new RagbenchBaseStack(app, 'RagbenchBaseStack', {
   env,
   config,
+  stackName: stackName(config, 'RagbenchBaseStack'),
   description: 'RAGBench — persistent resources (never destroyed between demos)',
 });
 
 const image = new RagbenchImageStack(app, 'RagbenchImageStack', {
   env,
   config,
+  stackName: stackName(config, 'RagbenchImageStack'),
   vpc: base.vpc,
   repositories: base.repositories,
   secrets: base.secrets,
@@ -35,6 +37,7 @@ image.addStackDependency(base);
 const demo = new RagbenchDemoStack(app, 'RagbenchDemoStack', {
   env,
   config,
+  stackName: stackName(config, 'RagbenchDemoStack'),
   vpc: base.vpc,
   hostedZone: base.hostedZone,
   certificate: base.certificate,
