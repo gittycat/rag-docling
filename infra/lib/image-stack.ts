@@ -77,7 +77,7 @@ export class RagbenchImageStack extends cdk.Stack {
     const component = new imagebuilder.CfnComponent(this, 'BakeComponent', {
       name: `${cfg.project}-${cfg.envName}-bake`,
       platform: 'Linux',
-      version: '1.0.0', // bump on any change to the document below
+      version: '1.0.3', // bump on any change to the document below OR to the bundle it unpacks
       description: 'Installs Docker, pulls images and model caches, ingests the demo corpus',
       data: cdk.Fn.sub(
         [
@@ -143,7 +143,8 @@ export class RagbenchImageStack extends cdk.Stack {
     // ------------------------------------------------------------------ recipe
     const recipe = new imagebuilder.CfnImageRecipe(this, 'Recipe', {
       name: `${cfg.project}-${cfg.envName}-recipe`,
-      version: '1.0.0',
+      // Recipes are immutable too: a new component version needs a new recipe version.
+      version: '1.0.3',
       parentImage: `arn:${this.partition}:imagebuilder:${this.region}:aws:image/amazon-linux-2023-arm64/x.x.x`,
       components: [{ componentArn: component.attrArn }],
       blockDeviceMappings: [

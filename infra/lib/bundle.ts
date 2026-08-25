@@ -12,6 +12,7 @@ import * as path from 'path';
 const FILES = [
   'docker-compose.yml',
   'docker-compose.aws.yml',
+  'docker-compose.bake.yml',
   'config.yml',
   'services/postgres/00-roles.sh',
   'services/postgres/init.sql',

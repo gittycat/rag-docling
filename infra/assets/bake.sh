@@ -55,7 +55,27 @@ aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin "${REGISTRY%%/*}"
 
 export REGISTRY VERSION="${VERSION:-latest}" WEBAPP_ORIGIN="http://localhost:8000"
-compose() { docker compose -f docker-compose.yml -f docker-compose.aws.yml "$@"; }
+# docker-compose.bake.yml republishes rag-server's 8001 on the loopback for the
+# length of the build; the AWS overlay closes it and boot.sh never applies this
+# third file, so the golden AMI boots with the port shut.
+compose() { docker compose -f docker-compose.yml -f docker-compose.aws.yml -f docker-compose.bake.yml "$@"; }
+
+# Image Builder terminates the build instance on failure, so whatever a container
+# printed before dying is the only evidence there will ever be. Dump it into the
+# component log rather than leaving "is unhealthy" as the whole diagnosis.
+dump_on_failure() {
+  local code=$?
+  [[ $code -eq 0 ]] && return 0
+  log "FAILED (exit ${code}) - dumping compose state"
+  compose ps -a || true
+  for c in $(docker ps -aq); do
+    printf '=== %s health ===\n' "$c"
+    docker inspect --format '{{.Name}} {{.State.Status}} {{if .State.Health}}{{json .State.Health}}{{end}}' "$c" || true
+  done
+  compose logs --tail 200 || true
+  return "$code"
+}
+trap dump_on_failure EXIT
 
 log "pulling images"
 compose pull
@@ -79,7 +99,7 @@ PY
 
 log "pulling the ollama embedding model"
 compose up -d ollama
-timeout 120 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.aws.yml exec -T ollama ollama list >/dev/null 2>&1; do sleep 3; done'
+timeout 120 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.aws.yml -f docker-compose.bake.yml exec -T ollama ollama list >/dev/null 2>&1; do sleep 3; done'
 compose exec -T ollama ollama pull nomic-embed-text
 
 # ----------------------------------------------------------- bake the corpus

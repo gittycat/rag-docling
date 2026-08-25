@@ -51,8 +51,14 @@ services:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
       interval: 2s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      # Startup imports torch, opens the DB pool and pre-loads the reranker.
+      # Warm on a laptop, but on a cold instance (first container start, cold
+      # page cache) it runs well past 10s, and every dependent then fails with
+      # "dependency failed to start: rag-server is unhealthy". Failures inside
+      # start_period do not count, and a success ends it early, so a generous
+      # window costs nothing when the service is warm.
+      start_period: 120s
     networks:
       - private
       - public

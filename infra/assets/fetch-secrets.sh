@@ -24,9 +24,14 @@ for name in OPENAI_API_KEY ANTHROPIC_API_KEY POSTGRES_SUPERUSER \
     --region "$AWS_REGION" \
     --secret-id "${SECRET_PREFIX}/${name}" \
     --query SecretString --output text > "secrets/${name}"
-  chmod 600 "secrets/${name}"
+  # Compose bind-mounts these straight into the containers, which read them as
+  # three different uids: the postgres entrypoint re-execs as uid 999 (gosu
+  # postgres) before it reads POSTGRES_*_FILE and runs 00-roles.sh, rag-server
+  # and task-worker run as 1000, webapp as its own node user. No single owner
+  # satisfies all three, so the files are world-readable and the root-owned
+  # 0700 directory above is what keeps other host users out. A 0600 file here
+  # fails silently-ish: 00-roles.sh dies on "Permission denied", the container
+  # restarts, postgres finds a populated PGDATA, skips initialisation and comes
+  # up healthy with no rag_server role at all.
+  chmod 644 "secrets/${name}"
 done
-
-# postgres reads its secrets as root inside the container; rag-server reads them
-# as uid 1000. Both need to be able to open the files.
-chown -R 1000:1000 secrets

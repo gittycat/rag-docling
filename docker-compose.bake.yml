@@ -1,0 +1,14 @@
+# Bake-only overlay, applied on top of docker-compose.aws.yml by
+# infra/assets/bake.sh and by nothing else.
+#
+# The AWS overlay resets rag-server's port mapping: on the demo instance only
+# webapp is reachable, and rag-server is spoken to over the compose network.
+# The bake, though, drives ingestion from the host with curl — upload the
+# corpus, poll the task status, read the documents back — so it needs 8001 for
+# the length of the build and never afterwards. Bound to the loopback address
+# so it is not exposed even while the build instance is up, and left out of
+# boot.sh so the golden AMI boots with the port closed again.
+services:
+  rag-server:
+    ports:
+      - "127.0.0.1:8001:8001"
