@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from schemas.health import ModelsInfoResponse, ConfigResponse
 from pipelines.inference import get_inference_config
 from infrastructure.config.models_config import get_models_config
+from services.pricing import resolve_rates
 
 router = APIRouter()
 
@@ -16,30 +17,25 @@ async def health():
 @router.get("/models/info", response_model=ModelsInfoResponse)
 async def get_models_info():
     """Get information about the models used in the RAG system"""
-    # Model costs per 1M tokens (inline lookup)
-    MODEL_COSTS = {
-        "gpt-4o": {"input": 2.50, "output": 10.0},
-        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-        "gpt-4-turbo": {"input": 10.0, "output": 30.0},
-        "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
-        "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
-        "claude-3-5-haiku-20241022": {"input": 0.80, "output": 4.0},
-        "claude-3-opus-20240229": {"input": 15.0, "output": 75.0},
-        # Google, DeepSeek, and Moonshot providers are not currently supported
-        # (no Docker secret declared) — see infrastructure/llm/config.py.
-    }
-
     models_config = get_models_config()
     llm_model = models_config.llm.model
     llm_provider = models_config.llm.provider
 
-    # Determine hosting type
-    llm_hosting = "local" if llm_provider == "ollama" else "cloud"
+    # Read the declared boundary rather than inferring it from the provider name:
+    # an OpenAI-compatible transport points at a self-hosted vLLM or at a vendor,
+    # so the provider string does not determine where the model executes.
+    llm_execution_boundary = models_config.llm.execution_boundary
 
-    # Get cost rates (0 for local models)
-    cost_rates = MODEL_COSTS.get(llm_model, {"input": 0.0, "output": 0.0})
+    # Rates come from services/pricing.py, and an unrecognised model is reported
+    # as unpriced (null) rather than free. The table that used to live inline here
+    # had no entry for the currently configured model and answered $0 for it.
+    cost_rates = resolve_rates(llm_model)
 
-    embedding_model = os.getenv("EMBEDDING_MODEL", "unknown")
+    # Read from config.yml, not an EMBEDDING_MODEL env var: no compose file ever
+    # set that variable, so this reported "unknown" and made eval provenance
+    # untrustworthy (docs/suggestions.md §6). config.yml is the single source of
+    # truth the embedding client itself is built from.
+    embedding_model = models_config.embedding.model
 
     inference_config = get_inference_config()
     reranker_enabled = inference_config['reranker_enabled']
@@ -48,12 +44,13 @@ async def get_models_info():
     return ModelsInfoResponse(
         llm_model=llm_model,
         llm_provider=llm_provider,
-        llm_hosting=llm_hosting,
+        llm_execution_boundary=llm_execution_boundary,
         embedding_model=embedding_model,
         reranker_model=reranker_model,
         reranker_enabled=reranker_enabled,
-        cost_per_1m_input_tokens=cost_rates["input"],
-        cost_per_1m_output_tokens=cost_rates["output"]
+        cost_per_1m_input_tokens=cost_rates.input_per_1m if cost_rates else None,
+        cost_per_1m_output_tokens=cost_rates.output_per_1m if cost_rates else None,
+        cost_rate_source=cost_rates.source if cost_rates else "unpriced",
     )
 
 

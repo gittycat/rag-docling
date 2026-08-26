@@ -361,8 +361,11 @@ Organizational unit dropdown, not the dialog text.
 
 ## Deploying to AWS with the CDK (`infra/`)
 
-Three stacks, split by lifecycle: `RagbenchBaseStack` and `RagbenchImageStack`
+Four stacks, split by lifecycle: `RagbenchBaseStack` and `RagbenchImageStack`
 are permanent, `RagbenchDemoStack` is created before a demo and destroyed after.
+`RagbenchEmbedStack` — an opt-in spot GPU embedder for bulk re-ingestion (`just
+embed-up` / `embed-down`) — is not part of the normal demo lifecycle at all; it
+is not even added to the CDK app tree unless `-c embedStack=true` is passed.
 Full detail lives in `infra/README.md`; this is the order of operations.
 
 ### One-time, org-wide: stop Account Factory creating VPCs
@@ -640,6 +643,34 @@ Re-bake (`just ecr-push && just aws-bake`) only when the images or the corpus
 change. A schema change also needs a re-bake — `services/postgres/init.sql` runs
 only on first boot and nothing runs migrations.
 
+**Run `just demo-check` before putting the URL in front of anyone.** A dead or
+unreachable `tei` service does not look like an outage: a query whose embedding
+call fails is caught in `vector_retriever`, which logs and returns `[]`, so
+hybrid search silently degrades to BM25-only and the demo still answers — just
+worse, with no error anywhere in the UI. Reading `/metrics/system` alone isn't
+enough either, because `component_status.vector_store` reports `unknown` (not
+`unhealthy`) until a search has actually run in that rag-server process.
+`demo-check` forces a real query first, then asserts `vector_store` is
+`healthy`, failing loudly if it isn't. `rag-server` (8001) is not published
+through the ALB (see *Shell access* below), so it has to run from inside the
+instance over the SSM session, against the repo checkout at `/opt/ragbench` —
+and, like any `docker compose` command there, with both overlay files selected
+(see *Shell access*'s warning about `docker-compose.aws.yml`), otherwise its
+internal `docker compose exec tei ...` step resolves against the wrong compose
+project:
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml
+just demo-check   # defaults to http://localhost:8001, reachable on the instance
+```
+
+(The golden AMI does not currently bake in the `just` binary itself — the
+*Shell access* section below uses raw `docker compose` for that reason. If
+`just` isn't on the instance, run `demo-check`'s three steps from the justfile
+by hand: `curl` the running `tei` container's `/health`, POST a real query to
+`/query`, then confirm `component_status.vector_store` on `/metrics/system` is
+`healthy`.)
+
 ### Signing in: creating the Cognito users
 
 The ALB fronts the app with an `authenticate-cognito` action, so the first thing
@@ -749,8 +780,8 @@ Useful landmarks:
 |---|---|
 | `/var/log/ragbench-boot.log` | User data output: secret fetch, ECR login, `compose up`, the webapp readiness wait |
 | `/opt/ragbench/secrets/` | Written fresh at every boot from Secrets Manager, never baked into the AMI |
-| `/opt/ragbench/config.yml` | The baked copy, with Ollama already rewritten to `http://ollama:11434` |
-| `docker volume ls` | `ragbench_postgres_data` holds the baked corpus; `ragbench_ollama_data` the embedding model |
+| `/opt/ragbench/config.yml` | The baked copy — the embedding `base_url` is already `http://tei:80`, since `tei` is a compose service in every environment and no bake-time rewrite is needed any more |
+| `docker volume ls` | `ragbench_postgres_data` holds the baked corpus; `ragbench_tei_data` the TEI embedding weights |
 
 The instance is cattle: it boots from the golden AMI and re-fetches its secrets,
 so anything you change by hand is gone at the next `just aws-down` / `aws-up`.

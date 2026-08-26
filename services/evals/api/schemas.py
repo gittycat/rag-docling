@@ -15,6 +15,9 @@ class TriggerRunRequest(BaseModel):
     samples: int = 100
     seed: int | None = 42
     judge_enabled: bool = True
+    # Claim-level grounding and claim-to-citation entailment. Off by default:
+    # it adds a judge call per claim and per claim-citation link.
+    groundedness: bool = False
 
 
 # ── Responses ─────────────────────────────────────────────────────────────────

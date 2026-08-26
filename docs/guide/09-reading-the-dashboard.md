@@ -43,7 +43,7 @@ confidence intervals, McNemar tests, or multiple-comparison correction.
 
 This tab reads live RAG-server metrics:
 
-- component health for PostgreSQL, Ollama, and BM25 when enabled;
+- component health for PostgreSQL, TEI, and BM25 when enabled;
 - active generation, embedding, reranker, and judge models; and
 - document count, chunk count, `top_k`, and final `top_n`.
 

@@ -11,6 +11,13 @@ const METRIC_DESCRIPTIONS: Record<string, string> = {
 	citation_precision: 'Share of cited sources that actually support the answer.',
 	citation_recall: 'Share of supporting sources that the answer cites.',
 	section_accuracy: 'Whether citations point at the correct document section.',
+	claim_groundedness:
+		'Share of the answer\'s individual claims that the retrieved context supports.',
+	citation_entailment:
+		'Share of citations whose passage actually says what the sentence citing it says.',
+	claim_citation_support:
+		'Share of cited claims backed by at least one of the sources they cite.',
+	uncited_claim_rate: 'Share of claims the answer makes without citing anything (lower is better).',
 	unanswerable_accuracy: 'How often the system correctly declines questions the corpus cannot answer.',
 	abstention_false_positive_rate:
 		'How often the system refuses questions it could have answered (lower is better).',
@@ -121,7 +128,8 @@ export const PANEL_DESCRIPTIONS = {
 	trend_cost: 'Average LLM cost per query over time, in USD.',
 	compare_delta: 'Newer run (B) minus the baseline (A). Green means the change improved this metric; red means it regressed.',
 	compare_headline: 'Per-run summary of quality score, cost and speed, with deltas versus the baseline run (A).',
-	compare_quality: 'Full scorecard for each selected run, grouped by retrieval, generation, citation and abstention metrics.',
+	compare_quality:
+		'Full scorecard for each selected run, grouped by retrieval, generation, citation, claim grounding and abstention metrics.',
 	compare_cost_speed: 'Per-query cost and latency for each selected run, with the delta versus the baseline run (A).'
 };
 

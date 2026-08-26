@@ -24,7 +24,6 @@ class LLMProvider(str, Enum):
     in infrastructure/llm/factory.py, a Docker secret declaration in the compose files,
     and a cost-table entry.
     """
-    OLLAMA = "ollama"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     VLLM = "vllm"
@@ -39,7 +38,6 @@ class LLMConfig:
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     timeout: float = 120.0
-    keep_alive: Optional[str] = None  # Ollama-only
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -65,7 +63,6 @@ class LLMConfig:
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url,
                 timeout=llm_config.timeout,
-                keep_alive=llm_config.keep_alive,
             )
         except Exception as e:
             logger.error(f"Failed to load LLM config from file: {e}")

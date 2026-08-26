@@ -1,5 +1,6 @@
 """Model configuration management using Pydantic for type safety and validation."""
 
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
@@ -7,6 +8,26 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from infrastructure.settings import get_api_key_for_provider
+
+
+class ExecutionBoundary(str, Enum):
+    """Where a resolved model endpoint actually executes.
+
+    This is a property of the *endpoint*, never inferred from `provider`: an
+    OpenAI-compatible transport can point at a vLLM container we run or at
+    api.openai.com, and only the config author knows which. Mirrored verbatim in
+    services/rag_server/infrastructure/config/models_config.py — the two services
+    share no package (same duplication as LLMProvider).
+
+    A model definition that declares no boundary is *unknown*, and unknown fails
+    closed: it is never treated as inside the boundary.
+    """
+
+    CUSTOMER_MANAGED = "customer_managed"  # a host/VPC we run: local Docker, our EC2, our K8s
+    AWS_MANAGED = "aws_managed"  # Bedrock/SageMaker — inside the customer's AWS boundary
+    THIRD_PARTY = "third_party"  # OpenAI, Anthropic, any vendor-hosted API
+
+
 class LLMConfig(BaseModel):
     """Configuration for the main LLM."""
 
@@ -14,9 +35,9 @@ class LLMConfig(BaseModel):
     model: str
     base_url: str | None = None
     timeout: int = 120
-    keep_alive: str | None = None
     api_key: str | None = None
     requires_api_key: bool = False
+    execution_boundary: ExecutionBoundary | None = None
 
     @field_validator("model")
     @classmethod
@@ -43,6 +64,12 @@ class EmbeddingConfig(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     requires_api_key: bool = False
+    # TEI-only: mirrors rag_server's EmbeddingConfig so config.yml's embedding
+    # entry validates identically in both services.
+    query_instruction: str | None = None
+    text_instruction: str | None = None
+    timeout: float | None = None
+    execution_boundary: ExecutionBoundary | None = None
 
     @field_validator("model")
     @classmethod
@@ -66,8 +93,14 @@ class EvalModelConfig(BaseModel):
 
     provider: str
     model: str
+    # base_url/timeout mirror LLMConfig: a judge endpoint is addressable the same
+    # way an inference endpoint is, and a self-hosted judge is unreachable without
+    # base_url. They used to be silently dropped here.
+    base_url: str | None = None
+    timeout: int = 120
     api_key: str | None = None
     requires_api_key: bool = False
+    execution_boundary: ExecutionBoundary | None = None
 
     @field_validator("model")
     @classmethod
@@ -99,6 +132,9 @@ class ScoringSettings(BaseModel):
             "accuracy": 0.30,
             "faithfulness": 0.20,
             "citation": 0.20,
+            # Claim-level grounding: reported, not scored, until an operator
+            # raises it. See config.yml's eval.scoring block.
+            "groundedness": 0.0,
             "retrieval": 0.15,
             "cost": 0.10,
             "latency": 0.05,
@@ -144,8 +180,11 @@ class EvalConfig(BaseModel):
 
     provider: str
     model: str
+    base_url: str | None = None
+    timeout: int = 120
     api_key: str | None = None
     requires_api_key: bool = False
+    execution_boundary: ExecutionBoundary | None = None
     citation_scope: Literal["retrieved", "explicit"] = "retrieved"
     citation_format: Literal["numeric"] = "numeric"
     abstention_phrases: list[str] = Field(
@@ -267,22 +306,82 @@ class ModelDefinitions(BaseModel):
     reranker: dict[str, dict[str, Any]]
 
 
-# Judge providers that never leave the local/VM trust boundary.
-LOCAL_JUDGE_PROVIDERS = {"ollama"}
+# Boundaries a confidential corpus may be processed in. An allow-list, not a
+# deny-list: anything not named here (including an endpoint that declares no
+# boundary at all) is refused.
+DEFAULT_ALLOWED_JUDGE_BOUNDARIES: frozenset[ExecutionBoundary] = frozenset(
+    {ExecutionBoundary.CUSTOMER_MANAGED, ExecutionBoundary.AWS_MANAGED}
+)
+
+
+class DataPolicyConfig(BaseModel):
+    """Where this deployment's corpus content is allowed to be processed.
+
+    Deliberately independent of `pii.enabled`. Commercially confidential content
+    need not contain a single PII entity, and masking is not the relevant control
+    for it — nothing in the eval path is masked anyway: judge prompts embed
+    retrieved chunks and generated answers verbatim (evals/judges/llm_judge.py),
+    so an eval run ships more corpus content to the judge than a normal query
+    ships to the generation LLM.
+    """
+
+    # Default true: an operator who has said nothing has not said "public".
+    corpus_confidential: bool = True
+    allowed_judge_boundaries: set[ExecutionBoundary] = Field(
+        default_factory=lambda: set(DEFAULT_ALLOWED_JUDGE_BOUNDARIES)
+    )
+    # The per-run escape hatch, and the only one. Distinct from corpus_confidential:
+    # the production corpus can be confidential while the eval *dataset* is a public
+    # HuggingFace benchmark or synthetic data, in which case judge egress leaks
+    # nothing. This is what `pii.allow_cloud_judge` used to approximate.
+    eval_dataset_is_public: bool = False
+
+
+def enforce_judge_boundary(
+    boundary: ExecutionBoundary | None,
+    policy: DataPolicyConfig,
+    judge_label: str,
+) -> None:
+    """Refuse a judge endpoint that would take confidential corpus content out of bounds.
+
+    Called both at config load and at judge resolution, so the object the runtime
+    actually calls is the object that was checked.
+    """
+    if not policy.corpus_confidential or policy.eval_dataset_is_public:
+        return
+
+    allowed = ", ".join(sorted(b.value for b in policy.allowed_judge_boundaries)) or "(none)"
+
+    if boundary is None:
+        raise ValueError(
+            f"Judge '{judge_label}' declares no execution_boundary. An endpoint of "
+            f"unknown boundary is treated as outside the trust boundary. Add "
+            f"execution_boundary to its models.eval entry in config.yml (one of: "
+            f"{', '.join(b.value for b in ExecutionBoundary)}), or set "
+            f"data_policy.eval_dataset_is_public: true if the eval dataset is public "
+            f"or synthetic."
+        )
+
+    if boundary not in policy.allowed_judge_boundaries:
+        raise ValueError(
+            f"Judge '{judge_label}' runs at execution boundary '{boundary.value}', which "
+            f"data_policy.allowed_judge_boundaries does not permit ({allowed}). Judge "
+            f"prompts carry retrieved chunks and answers verbatim and are never masked. "
+            f"Point active.eval at an in-boundary judge, or set "
+            f"data_policy.eval_dataset_is_public: true if the eval dataset holds no "
+            f"confidential content."
+        )
 
 
 class PiiConfig(BaseModel):
     """The eval service's view of the rag-server `pii` block.
 
-    Only the master toggle matters here, read as "this deployment's corpus is
-    considered sensitive". Nothing in the eval path is masked: the judge prompts
-    embed retrieved chunks and generated answers verbatim (see
-    evals/judges/llm_judge.py), so an eval run ships more corpus content to the
-    judge than a normal query ships to the generation LLM.
+    Only the master toggle matters here. Note that it no longer gates judge
+    egress — that moved to `data_policy`, because a confidential corpus and a
+    PII-bearing corpus are not the same claim.
     """
 
     enabled: bool = False
-    allow_cloud_judge: bool = False  # explicit opt-out of the gate below
 
 
 def resolve_config_path(config_path: str | Path | None = None) -> Path:
@@ -324,26 +423,15 @@ class ModelsConfig(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
+    data_policy: DataPolicyConfig = Field(default_factory=DataPolicyConfig)
 
     def validate_privacy_posture(self) -> None:
-        """Refuse to run cloud-judged evals on a corpus declared sensitive.
-
-        Masking covers the generation path; the judge path has no equivalent, so
-        pointing a cloud judge at a real corpus quietly undoes the protection
-        pii.enabled was turned on for. Set pii.allow_cloud_judge: true to accept
-        that (e.g. a synthetic eval dataset), or use a local judge.
-        """
-        if not self.pii.enabled or self.pii.allow_cloud_judge:
-            return
-
-        if self.eval.provider not in LOCAL_JUDGE_PROVIDERS:
-            raise ValueError(
-                f"pii.enabled is true but the eval judge provider '{self.eval.provider}' "
-                f"is not local. Judge prompts contain retrieved chunks and answers "
-                f"verbatim — nothing in the eval path is masked. Use a local judge "
-                f"({', '.join(sorted(LOCAL_JUDGE_PROVIDERS))}), or set "
-                f"pii.allow_cloud_judge: true if the eval dataset holds no real PII."
-            )
+        """Refuse to judge a confidential corpus outside the permitted boundaries."""
+        enforce_judge_boundary(
+            self.eval.execution_boundary,
+            self.data_policy,
+            f"{self.eval.provider}/{self.eval.model}",
+        )
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> "ModelsConfig":
@@ -476,6 +564,10 @@ class ModelsConfig(BaseModel):
         # Copy pii unchanged (extra keys are ignored by PiiConfig)
         if "pii" in data:
             resolved["pii"] = data["pii"]
+
+        # Copy data_policy unchanged
+        if "data_policy" in data:
+            resolved["data_policy"] = data["data_policy"]
 
         return resolved
 

@@ -7,32 +7,6 @@
 # ============================================================================
 models:
   inference:
-    # Ollama models (local inference)
-    gemma3-4b:
-      provider: ollama
-      model: gemma3:4b
-      base_url: http://host.docker.internal:11434
-      timeout: 120
-      keep_alive: 10m  # Ollama-only: keep model in memory (10m, -1=forever, 0=unload immediately)
-
-    # Replaces llama3:8b — that model's 8K context could not hold top_k=10 chunks
-    # plus chat history. Granite 4.1 is Apache-2.0, 128K context, same 8B size,
-    # and IBM tunes it for RAG/tool-calling.
-    granite4-8b:
-      provider: ollama
-      model: granite4.1:8b
-      base_url: http://host.docker.internal:11434
-      timeout: 120
-      keep_alive: 10m
-
-    # Smaller/newer alternative to gemma3:4b — 256K context, ~3.4GB.
-    qwen35-4b:
-      provider: ollama
-      model: qwen3.5:4b
-      base_url: http://host.docker.internal:11434
-      timeout: 120
-      keep_alive: 10m
-
     # OpenAI
     # Cheapest current-generation model that still follows the grounding and
     # citation instructions in `prompts.context` ($0.20/$1.20 per 1M tokens).
@@ -43,6 +17,7 @@ models:
       base_url: https://api.openai.com/v1
       timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     gpt5-mini:
       provider: openai
@@ -50,6 +25,7 @@ models:
       base_url: https://api.openai.com/v1
       timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     # Anthropic models (cloud API)
     # Cheapest Anthropic model ($1/$5 per 1M tokens). 
@@ -59,6 +35,7 @@ models:
       base_url: https://api.anthropic.com
       timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     claude-sonnet:
       provider: anthropic
@@ -66,6 +43,7 @@ models:
       base_url: https://api.anthropic.com
       timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     claude-opus:
       provider: anthropic
@@ -73,6 +51,7 @@ models:
       base_url: https://api.anthropic.com
       timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     # Google, DeepSeek, and Moonshot are not currently supported — no compose file
     # declares their API keys as Docker secrets, so selecting them passes YAML
@@ -90,39 +69,36 @@ models:
     #   base_url: https://api.some-provider.example/v1
     #   timeout: 120
     #   requires_api_key: true
+    #   execution_boundary: third_party
 
     # vLLM (confidential-compute VM tier — open-weight models served
-    # OpenAI-compatible, no API key needed behind the network boundary)
+    # OpenAI-compatible, no API key needed behind the network boundary) is the
+    # documented self-hosted-inference path now that local inference no longer
+    # runs on the host:
     # qwen-vllm:
     #   provider: vllm
     #   model: Qwen/Qwen2.5-14B-Instruct
     #   base_url: http://vllm:8000/v1
     #   timeout: 120
+    #   execution_boundary: customer_managed
 
   embedding:
-    # Ollama embeddings (local)
     # NOTE: Switching the active embedding model invalidates every stored vector —
     # the schema must be re-created and all documents re-ingested.
-    nomic-embed:
-      provider: ollama
-      model: nomic-embed-text:latest
-      base_url: http://host.docker.internal:11434
-      embed_batch_size: 64
 
-    # Newer local alternatives, both smaller or comparable to nomic-embed-text
-    # and better on MTEB retrieval. qwen3-embedding:0.6b is the strongest
-    # sub-1GB option; embeddinggemma is 300M for CPU-bound hosts.
-    qwen3-embed-06b:
-      provider: ollama
-      model: qwen3-embedding:0.6b
-      base_url: http://host.docker.internal:11434
-      embed_batch_size: 64
-
-    embeddinggemma:
-      provider: ollama
-      model: embeddinggemma:300m
-      base_url: http://host.docker.internal:11434
-      embed_batch_size: 64
+    # Self-hosted TEI (HuggingFace Text Embeddings Inference), 1024-dim.
+    # query_instruction is Qwen3's documented asymmetric query format; it is
+    # applied ONLY to queries, never to documents — text_instruction is
+    # deliberately empty. Prefixing documents would silently degrade retrieval.
+    qwen3-embed:
+      provider: tei
+      model: Qwen/Qwen3-Embedding-0.6B
+      base_url: http://tei:80
+      embed_batch_size: 32
+      timeout: 60
+      query_instruction: "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+      text_instruction: ""
+      execution_boundary: customer_managed
 
     # OpenAI embeddings (cloud API)
     openai-ada:
@@ -130,6 +106,7 @@ models:
       model: text-embedding-ada-002
       base_url: https://api.openai.com/v1
       requires_api_key: true
+      execution_boundary: third_party
 
     openai-3-small:
       provider: openai
@@ -137,12 +114,14 @@ models:
       base_url: https://api.openai.com/v1
       requires_api_key: true
       embed_batch_size: 100
+      execution_boundary: third_party
 
     openai-3-large:
       provider: openai
       model: text-embedding-3-large
       base_url: https://api.openai.com/v1
       requires_api_key: true
+      execution_boundary: third_party
 
   # Rule of thumb: use a grader at least as capable as your answer (inference) model when you 
   # care about subtle errors or faithfulness; otherwise use a cheaper mini/nano model for scale.
@@ -151,23 +130,45 @@ models:
     claude-sonnet:
       provider: anthropic
       model: claude-sonnet-4-20250514
+      base_url: https://api.anthropic.com
+      timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     claude-opus:
       provider: anthropic
       model: claude-opus-4-5-20251101
+      base_url: https://api.anthropic.com
+      timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     # OpenAI models for evaluation (cloud API)
     gpt5-mini:
       provider: openai
       model: gpt-5-mini
+      base_url: https://api.openai.com/v1
+      timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
 
     gpt5-2:
       provider: openai
       model: gpt-5.2
+      base_url: https://api.openai.com/v1
+      timeout: 120
       requires_api_key: true
+      execution_boundary: third_party
+
+    # A self-hosted judge behind the network boundary needs no API key; its
+    # execution_boundary is what makes it acceptable for a confidential corpus,
+    # not its provider string (Unit D adds the OpenAI-compatible transport):
+    # qwen-vllm-judge:
+    #   provider: vllm
+    #   model: Qwen/Qwen3-32B-AWQ
+    #   base_url: http://vllm:8000/v1
+    #   timeout: 120
+    #   execution_boundary: customer_managed
 
   reranker:
     # top_n: number of nodes the reranker returns. Authoritative when set; if
@@ -191,7 +192,7 @@ models:
 # ============================================================================
 active:
   inference: gpt5-mini
-  embedding: nomic-embed
+  embedding: qwen3-embed
   eval: gpt5-2
   reranker: minilm-l6
 
@@ -241,6 +242,12 @@ eval:
       accuracy: 0.30        # answer correctness + abstention
       faithfulness: 0.20    # grounding in the retrieved context
       citation: 0.20        # citation precision / recall / section accuracy
+      # Claim-level grounding (claim_groundedness, citation_entailment,
+      # claim_citation_support, uncited_claim_rate). 0.0 means the metrics are
+      # reported but do not move the headline score — raising it changes what the
+      # headline rewards, so runs before and after the change are not comparable.
+      # The group only runs when an eval is started with --groundedness.
+      groundedness: 0.0
       retrieval: 0.15       # recall, precision, MRR, nDCG
       cost: 0.10            # cost per query
       latency: 0.05         # P50 latency
@@ -271,12 +278,19 @@ retrieval:
   rrf_k: 60                      # Reciprocal Rank Fusion parameter
   enable_contextual_retrieval: false   # Anthropic contextual retrieval (much slower doc processing)
   contextual_concurrency: 8            # Max concurrent LLM calls during contextual prefix generation
+  # Max concurrent embedding batches during ingestion. This exists for the burst
+  # GPU embedder (`just embed-up`), where TEI can coalesce concurrent requests
+  # into bigger forward passes. Against the always-on CPU `tei` container it buys
+  # nothing — measured 1.01x on 160 chunks, because that container is
+  # compute-bound, not round-trip-bound. Raising this will not speed up laptop
+  # ingestion; it will just queue more work inside TEI.
+  embed_concurrency: 8
 
 # ============================================================================
 # Vector Store (pgvector + pgvectorscale StreamingDiskANN, in Postgres)
 # ============================================================================
 vector_store:
-  dimension: 768                 # MUST match the active embedding model's output
+  dimension: 1024                # MUST match the active embedding model's output
                                  # dimension. Changing it requires re-creating the
                                  # schema and re-ingesting every document.
 
@@ -364,6 +378,38 @@ prompts:
     Context (1-2 sentences only):
 
 # ============================================================================
+# Data Policy - where corpus content is allowed to be processed
+# ============================================================================
+# Deliberately independent of `pii`: content can be commercially confidential
+# without containing a single PII entity, and masking is not the control for it.
+# Nothing in the eval path is masked at all — judge prompts embed retrieved
+# chunks and generated answers verbatim — so this block, not `pii.enabled`, is
+# what decides whether a judge endpoint may see the corpus.
+#
+# `execution_boundary` on each model definition above says where that endpoint
+# actually runs. It is never inferred from `provider`: an OpenAI-compatible
+# transport can point at a vLLM container we run or at api.openai.com. A model
+# that declares no boundary is unknown, and unknown fails closed.
+data_policy:
+  # Default true. An operator who has said nothing has not said "public".
+  corpus_confidential: true
+
+  # Allow-list. Anything not named here is refused for a confidential corpus.
+  #   customer_managed - a host/VPC we run (local Docker, our EC2, our K8s)
+  #   aws_managed      - Bedrock/SageMaker, inside the customer's AWS boundary
+  #   third_party      - OpenAI, Anthropic, any vendor-hosted API
+  allowed_judge_boundaries:
+    - customer_managed
+    - aws_managed
+
+  # The only escape hatch, and it is about the eval DATASET, not the corpus:
+  # ragbench/qasper/squad_v2/hotpotqa/msmarco are public HuggingFace benchmarks,
+  # so judging them at a third-party endpoint leaks nothing. Set this to false
+  # before running evals against real customer documents (the `golden` dataset
+  # or an END_TO_END run over your own corpus).
+  eval_dataset_is_public: true
+
+# ============================================================================
 # PII Masking - opt-in cloud generation tier only (Task 2.3)
 # ============================================================================
 # Reversible PII masking for every path that sends text to a cloud LLM
@@ -378,15 +424,10 @@ prompts:
 #
 # Masked text is pseudonymized, not anonymized: it reduces exposure to the
 # cloud provider but is not a compliance guarantee. For genuinely sensitive
-# corpora, use a local Ollama model instead.
+# corpora, use the self-hosted TEI embedder (models.embedding.qwen3-embed)
+# together with a self-hosted vllm inference model instead of a cloud provider.
 pii:
   enabled: false  # Master toggle
-
-  # Read by the eval service. Judge prompts embed retrieved chunks and answers
-  # verbatim and are never masked, so with pii.enabled the eval service refuses
-  # to start against a cloud judge. Set true only when the eval dataset holds no
-  # real PII (e.g. synthetic questions).
-  allow_cloud_judge: false
 
   # Entity types to detect and mask. Full list: https://microsoft.github.io/presidio/supported_entities/
   entities:

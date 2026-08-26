@@ -50,16 +50,35 @@ three, so BM25 and vector search read the same table.
 | `chunk_index` | `INTEGER` | 0-based position within the document |
 | `content` | `TEXT` | chunk text, contextual-retrieval prefix included inline when enabled |
 | `metadata` | `JSONB` | default `{}` |
-| `embedding` | `vector(768)` | nullable — a chunk row can exist before its embedding is written; `NULL` rows are neither indexed nor returned |
+| `embedding` | `vector(1024)` | nullable — a chunk row can exist before its embedding is written; `NULL` rows are neither indexed nor returned |
 | `created_at` | `TIMESTAMPTZ` | default `NOW()` |
 
-The `768` is a schema constant matching the active embedding model
-(`nomic-embed-text`), and `vector_store.dimension` in `config.yml` must state the
-same number — the retriever's health probe builds its probe vector from the
-config value, so a divergence surfaces there. Changing embedding models already
-required a full re-ingest; with the dimension in the DDL it additionally requires
-recreating the schema, because `init.sql` does not re-run against an existing
-volume.
+The `1024` is a schema constant matching the active embedding model
+(`Qwen/Qwen3-Embedding-0.6B`, served self-hosted via TEI), and
+`vector_store.dimension` in `config.yml` must state the same number — the
+retriever's health probe builds its probe vector from the config value, so a
+divergence surfaces there. Changing embedding models already required a full
+re-ingest; with the dimension in the DDL it additionally requires recreating
+the schema, because `init.sql` does not re-run against an existing volume.
+
+**Four places carry this same dimension and must move together** — verified
+at `1024` in all four as of the Ollama→TEI/Qwen3 migration:
+
+| Location | What |
+|---|---|
+| `services/postgres/init.sql` | `embedding vector(1024)` — the DDL itself |
+| `services/rag_server/infrastructure/database/models.py` | `EMBEDDING_DIMENSION = 1024` — the SQLAlchemy `Vector(EMBEDDING_DIMENSION)` column type |
+| `config.yml` | `vector_store.dimension: 1024` |
+| `services/rag_server/infrastructure/config/models_config.py` | `VectorStoreConfig.dimension`'s Pydantic default, `1024` |
+
+`models.py`'s constant is easy to miss — it's a SQLAlchemy model definition, not
+`config.yml` or `init.sql`, so it doesn't show up when grepping the obvious
+places for the dimension. It was in fact the one missed on the first pass of
+this migration and only caught on a final sweep. There is no single source of
+truth enforced at runtime beyond the retriever's probe-vector check against
+`config.yml` (which catches a config/DDL mismatch, not a `models.py` drift from
+the other three) — changing the embedding model means updating all four by
+hand.
 
 The `ON DELETE CASCADE` on `document_id` is what removes embeddings when a
 document is deleted. There is no separate vector-deletion step and no way for an
@@ -115,10 +134,13 @@ none are exposed in `config.yml`.
 StreamingDiskANN is why the embeddings can live in Postgres at all. It keeps the
 graph on disk and only an SBQ-compressed representation resident in RAM — roughly
 96 bytes per vector at 768 dimensions, against roughly 3.2 KB for a fully
-in-memory HNSW index. On a 16 GB machine that is the difference between a corpus
-ceiling around 150k documents and one around 765k — assuming 10-page documents
-(~11 chunks each); the real unit is chunks, so larger documents scale the figures
-down proportionally. See `architecture.md` for the full basis.
+in-memory HNSW index. (768 was the dimension at the time this was measured; the
+schema is `vector(1024)` today, which raises the per-vector RAM cost
+proportionally — not remeasured.) On a 16 GB machine that was the difference
+between a corpus ceiling around 150k documents and one around 765k — assuming
+10-page documents (~11 chunks each); the real unit is chunks, so larger
+documents scale the figures down proportionally. See `architecture.md` for the
+full basis.
 
 Like the BM25 index, this one is created once in `init.sql` and maintains itself
 on insert; no manual reindex step exists. It is checked by name by

@@ -8,9 +8,12 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "pyyaml>=6.0",
     "llama-index-core>=0.14.4",
-    "llama-index-llms-ollama>=0.8.3",
     "llama-index-llms-openai>=0.3.33",
     "llama-index-llms-anthropic>=0.6.10",
+    # OpenAI-compatible transport (self-hosted vLLM judge). rag_server already
+    # depends on this; the evals service did not, so `provider: vllm` was
+    # unreachable from the judge.
+    "llama-index-llms-openai-like>=0.7.2",
     "anthropic>=0.75.0",
     "datasets>=3.2.0",
     # Used directly by evals/stats.py for the paired bootstrap — vectorized

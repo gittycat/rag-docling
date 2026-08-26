@@ -16,19 +16,18 @@ from infrastructure.config.models_config import (
 
 
 def create_mock_models_config():
-    """Create a mock ModelsConfig for tests (uses ollama, no API key required)."""
+    """Create a mock ModelsConfig for tests (uses vllm/tei, no API key required)."""
     return ModelsConfig(
         llm=LLMConfig(
-            provider="ollama",
-            model="gemma3:4b",
-            base_url="http://localhost:11434",
+            provider="vllm",
+            model="Qwen/Qwen2.5-14B-Instruct",
+            base_url="http://vllm:8000/v1",
             timeout=120,
-            keep_alive="10m",
         ),
         embedding=EmbeddingConfig(
-            provider="ollama",
-            model="nomic-embed-text:latest",
-            base_url="http://localhost:11434",
+            provider="tei",
+            model="Qwen/Qwen3-Embedding-0.6B",
+            base_url="http://tei:80",
         ),
         eval=EvalConfig(
             provider="anthropic",
@@ -100,12 +99,12 @@ def test_get_condense_prompt():
 
 
 def test_get_llm_client():
-    """LLM client should be configured with Ollama URL and model"""
+    """LLM client should be configured with the vLLM (OpenAI-compatible) URL and model"""
     from infrastructure.llm.factory import get_llm_client, reset_llm_client
 
     mock_config = create_mock_models_config()
     mock_config.llm.model = "test-model"
-    mock_config.llm.base_url = "http://test:11434"
+    mock_config.llm.base_url = "http://test:8000/v1"
 
     with patch(
         "infrastructure.config.models_config.get_models_config",
@@ -116,11 +115,12 @@ def test_get_llm_client():
         llm = get_llm_client()
 
         assert llm is not None
-        # Should be Ollama instance
+        # Should be an OpenAILike instance (vllm dispatches through the
+        # OpenAI-compatible client — see infrastructure/llm/factory.py)
         assert hasattr(llm, "model")
         assert llm.model == "test-model"
-        assert hasattr(llm, "base_url")
-        assert "test:11434" in llm.base_url
+        assert hasattr(llm, "api_base")
+        assert "test:8000" in llm.api_base
 
 
 def test_system_prompt_no_conversational_fillers():
@@ -205,7 +205,7 @@ def test_llm_client_timeout():
 
     mock_config = create_mock_models_config()
     mock_config.llm.model = "test-model"
-    mock_config.llm.base_url = "http://test:11434"
+    mock_config.llm.base_url = "http://test:8000/v1"
     mock_config.llm.timeout = 120
 
     with patch(
@@ -216,7 +216,7 @@ def test_llm_client_timeout():
 
         llm = get_llm_client()
 
-        # Should have request_timeout configured
-        assert hasattr(llm, "request_timeout")
+        # Should have timeout configured
+        assert hasattr(llm, "timeout")
         # Timeout should be reasonable (e.g., 120s)
-        assert llm.request_timeout >= 60.0, "Timeout should be at least 60 seconds"
+        assert llm.timeout >= 60.0, "Timeout should be at least 60 seconds"

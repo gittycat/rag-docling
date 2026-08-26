@@ -78,6 +78,7 @@ export interface TriggerEvalRunRequest {
 	samples: number;
 	seed: number | null;
 	judge_enabled: boolean;
+	groundedness: boolean;
 }
 
 export interface JobCreatedResponse {

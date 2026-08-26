@@ -10,7 +10,9 @@ before the first start; the checked-in configuration uses both.
 
 - Just task runner: `brew install just`
 - Python 3.13+ and uv `brew install uv`
-- Ollama: [installer](https://ollama.com/download)
+
+No separate local-model installer is needed: embedding inference runs as the
+`tei` Docker Compose service, self-hosting `Qwen/Qwen3-Embedding-0.6B`.
 
 Create the local environment used by `just show-config` and the evaluation recipes:
 
@@ -25,39 +27,33 @@ The checked-in `config.yml` selects:
 ```yaml
 active:
   inference: gpt5-mini    # OpenAI
-  embedding: nomic-embed  # Ollama
+  embedding: qwen3-embed  # self-hosted TEI
   eval: gpt5-2            # OpenAI judge
   reranker: minilm-l6     # local cross-encoder
 ```
 
-This configuration needs Ollama and an OpenAI API key. For local generation,
-change `active.inference`:
+Embedding already runs locally out of the box — `qwen3-embed` points at the
+in-Compose `tei` service, nothing to install. This configuration needs only an
+OpenAI API key, for generation and the eval judge. For local generation too,
+change `active.inference` to a self-hosted vLLM endpoint you run yourself (see
+the commented `qwen-vllm` example in `config.yml`) — there is no zero-setup
+local LLM option any more.
 
-```yaml
-active:
-  inference: granite4-8b
-  embedding: nomic-embed
-  eval: gpt5-2
-  reranker: minilm-l6
-```
+Available providers are OpenAI, Anthropic, `tei` (embedding only, self-hosted),
+and `vllm` (self-hosted, OpenAI-compatible). The configured generation models
+include `gpt5-mini`, `gpt56-luna`, `claude-haiku`, `claude-sonnet`, and
+`claude-opus`.
 
-Then download the local models:
-
-```bash
-ollama pull granite4.1:8b
-ollama pull nomic-embed-text
-```
-
-Available providers are OpenAI, Anthropic, and Ollama. The configured generation
-models include `gemma3-4b`, `qwen35-4b`, `granite4-8b`, `gpt5-mini`,
-`gpt56-luna`, `claude-haiku`, `claude-sonnet`, and `claude-opus`.
-
-Configured embedding models are `nomic-embed`, `qwen3-embed-06b`, and
-`embeddinggemma` for Ollama, plus `openai-ada`, `openai-3-small`, and
-`openai-3-large` for OpenAI.
+The only configured embedding model is `qwen3-embed` (`tei`, self-hosted), plus
+`openai-ada`, `openai-3-small`, and `openai-3-large` for OpenAI.
 
 See [Chapter 3](03-configuration-tour.md) before changing models on an existing
-index.
+index. **Switching the active embedding model is a breaking change**: it always
+invalidates every stored vector (dimension and/or model differ), and there are
+no schema migrations for it — `services/postgres/init.sql` only runs on a
+volume's first boot. Changing embedding models on a database that already has
+documents means `docker compose down -v` (drops the Postgres volume) and
+re-ingesting everything from scratch.
 
 ## Create secrets first
 
@@ -84,19 +80,29 @@ echo -n "$(openssl rand -hex 24)" > secrets/RAG_SERVER_DB_PASSWORD
 `secrets/.env` holds non-secret values used by some `just` recipes. It is separate
 from Compose secrets and is not needed by `docker compose up`.
 
-## Cache the reranker
+## Cache the reranker and warm the embedding weights
 
 ```bash
 just init
 ```
 
-This downloads the active reranker into `.cache/huggingface`. The server runs in
-offline Hugging Face mode and exits at startup if the configured model is absent.
-For another model, pass its Hugging Face ID:
+This downloads the active reranker into `.cache/huggingface`, and also pulls
+the `tei` image and warms its embedding weights into the `tei_data` volume so
+`docker compose up` isn't the first time either download happens. The server
+runs in offline Hugging Face mode and exits at startup if the configured
+reranker model is absent. For another reranker model, pass its Hugging Face ID:
 
 ```bash
 just init MODEL=BAAI/bge-reranker-base
 ```
+
+If you skip `just init`, the first `docker compose up` against an empty
+`tei_data` volume downloads `Qwen/Qwen3-Embedding-0.6B`'s weights (~1.2GB) from
+HuggingFace itself — measured at **204 seconds, cold, on a fast connection**
+(image pull, ~170s of weight download, ~18s warmup) before `tei` reports
+healthy. That is comfortably inside the compose healthcheck's `start_period:
+300s`, so it looks slow but is not stuck — see
+[10. Troubleshooting](10-troubleshooting.md) if it's taking noticeably longer.
 
 ## Start and check health
 

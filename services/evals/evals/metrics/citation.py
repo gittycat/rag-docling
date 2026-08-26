@@ -15,8 +15,13 @@ from evals.schemas import (
 )
 
 
-def _chunk_by_rank(response: EvalResponse) -> dict[int, Any]:
-    """Build lookup from 1-based rank to RetrievedChunk."""
+def chunk_by_rank(response: EvalResponse) -> dict[int, Any]:
+    """Build lookup from 1-based rank to RetrievedChunk.
+
+    A citation's `source_index` is the 1-based position of the chunk as it was
+    shown to the model, which is the same numbering `rank` carries. Shared with
+    the groundedness metrics so both resolve a marker to a chunk identically.
+    """
     return {c.rank: c for c in response.retrieved_chunks if c.rank is not None}
 
 
@@ -96,7 +101,7 @@ class CitationPrecision(BaseMetric):
 
         gold_chunk_ids = {p.chunk_id for p in question.gold_passages}
         doc_only_ids = _doc_only_gold_ids(question)
-        chunk_by_rank = _chunk_by_rank(response)
+        chunk_lookup = chunk_by_rank(response)
 
         hits = 0
         for citation in citations:
@@ -104,7 +109,7 @@ class CitationPrecision(BaseMetric):
             if citation.chunk_id and citation.chunk_id in gold_chunk_ids:
                 hits += 1
                 continue
-            retrieved = chunk_by_rank.get(citation.source_index)
+            retrieved = chunk_lookup.get(citation.source_index)
             # Document-level annotation: the only resolution available is the doc
             if doc_only_ids and _cited_doc_ids(citation, retrieved) & doc_only_ids:
                 hits += 1
@@ -162,7 +167,7 @@ class CitationRecall(BaseMetric):
 
         citations = response.citations
         gold_chunk_ids = {p.chunk_id for p in question.gold_passages}
-        chunk_by_rank = _chunk_by_rank(response)
+        chunk_lookup = chunk_by_rank(response)
 
         # Collect texts of cited chunks (exact id + text fallback)
         cited_texts: list[str] = []
@@ -171,7 +176,7 @@ class CitationRecall(BaseMetric):
         for citation in citations:
             if citation.chunk_id:
                 cited_exact_ids.add(citation.chunk_id)
-            retrieved = chunk_by_rank.get(citation.source_index)
+            retrieved = chunk_lookup.get(citation.source_index)
             cited_doc_ids |= _cited_doc_ids(citation, retrieved)
             if retrieved and retrieved.text:
                 cited_texts.append(retrieved.text)
@@ -249,7 +254,7 @@ class SectionAccuracy(BaseMetric):
                 details={"note": "No citations in answer"},
             )
 
-        chunk_by_rank = _chunk_by_rank(response)
+        chunk_lookup = chunk_by_rank(response)
         doc_correct = 0
         section_correct = 0
 
@@ -263,7 +268,7 @@ class SectionAccuracy(BaseMetric):
                     continue
 
             # Text-based fallback via retrieved chunk
-            retrieved = chunk_by_rank.get(citation.source_index)
+            retrieved = chunk_lookup.get(citation.source_index)
             if retrieved and retrieved.text:
                 for gold in question.gold_passages:
                     if gold.text and _token_overlap(retrieved.text, gold.text) >= 0.3:

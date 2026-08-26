@@ -20,6 +20,7 @@ import json
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from infrastructure.config.models_config import (
+    ExecutionBoundary,
     ModelsConfig,
     LLMConfig,
     EmbeddingConfig,
@@ -30,24 +31,27 @@ from infrastructure.config.models_config import (
 
 
 def create_mock_models_config():
-    """Create a mock ModelsConfig for tests (uses ollama, no API key required)."""
+    """Create a mock ModelsConfig for tests (uses vllm/tei, no API key required)."""
     return ModelsConfig(
         llm=LLMConfig(
-            provider="ollama",
-            model="gemma3:4b",
-            base_url="http://localhost:11434",
+            provider="vllm",
+            model="Qwen/Qwen2.5-14B-Instruct",
+            base_url="http://vllm:8000/v1",
             timeout=120,
-            keep_alive="10m",
+            execution_boundary=ExecutionBoundary.CUSTOMER_MANAGED,
         ),
         embedding=EmbeddingConfig(
-            provider="ollama",
-            model="nomic-embed-text:latest",
-            base_url="http://localhost:11434",
+            provider="tei",
+            model="Qwen/Qwen3-Embedding-0.6B",
+            base_url="http://tei:80",
+            execution_boundary=ExecutionBoundary.CUSTOMER_MANAGED,
         ),
         eval=EvalConfig(
             provider="anthropic",
             model="claude-sonnet-4-20250514",
             api_key="test-key",
+            requires_api_key=True,
+            execution_boundary=ExecutionBoundary.THIRD_PARTY,
         ),
         reranker=RerankerConfig(enabled=True),
         retrieval=RetrievalConfig(),
@@ -79,14 +83,14 @@ def mock_models_config_fixture():
 # ============================================================================
 
 @pytest.fixture
-def mock_ollama():
-    """Mock Ollama API responses."""
+def mock_tei():
+    """Mock TEI's /info and /health API responses."""
     with patch('services.metrics.httpx.AsyncClient') as mock_client:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "size": 4000000000,  # 4GB
-            "parameters": "4B",
+            "model_id": "Qwen/Qwen3-Embedding-0.6B",
+            "max_input_length": 8192,
         }
 
         # Create async context manager mock
@@ -122,22 +126,22 @@ def mock_system_metrics():
         version="1.0.0",
         models=ModelsConfig(
             llm=ModelInfo(
-                name="gemma3:4b",
-                provider="Ollama",
+                name="Qwen/Qwen2.5-14B-Instruct",
+                provider="Vllm",
                 model_type="llm",
-                is_local=True,
-                size=ModelSize(parameters="4B"),
-                reference_url="https://ollama.com/library/gemma3",
+                execution_boundary=ExecutionBoundary.CUSTOMER_MANAGED,
+                size=ModelSize(parameters="14B"),
+                reference_url=None,
                 description="Test LLM",
                 status="available",
             ),
             embedding=ModelInfo(
-                name="nomic-embed-text:latest",
-                provider="Ollama",
+                name="Qwen/Qwen3-Embedding-0.6B",
+                provider="Tei",
                 model_type="embedding",
-                is_local=True,
-                size=ModelSize(parameters="137M"),
-                reference_url="https://ollama.com/library/nomic-embed-text",
+                execution_boundary=ExecutionBoundary.CUSTOMER_MANAGED,
+                size=ModelSize(parameters="0.6B"),
+                reference_url="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B",
                 description="Test embeddings",
                 status="available",
             ),
@@ -145,7 +149,7 @@ def mock_system_metrics():
                 name="cross-encoder/ms-marco-MiniLM-L-6-v2",
                 provider="HuggingFace",
                 model_type="reranker",
-                is_local=True,
+                execution_boundary=ExecutionBoundary.CUSTOMER_MANAGED,
                 size=ModelSize(parameters="22M", disk_size_mb=80),
                 reference_url="https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2",
                 description="Test reranker",
@@ -155,7 +159,7 @@ def mock_system_metrics():
                 name="claude-sonnet-4-20250514",
                 provider="Anthropic",
                 model_type="eval",
-                is_local=False,
+                execution_boundary=ExecutionBoundary.THIRD_PARTY,
                 reference_url="https://docs.anthropic.com",
                 description="Test eval",
                 status="available",
@@ -188,7 +192,7 @@ def mock_system_metrics():
         document_count=2,
         chunk_count=15,
         health_status="healthy",
-        component_status={"postgres": "healthy", "ollama": "healthy"},
+        component_status={"postgres": "healthy", "tei": "healthy"},
     )
 
     async def mock_get_system_metrics():
@@ -202,8 +206,8 @@ def mock_system_metrics():
 def mock_env_vars():
     """Mock environment variables."""
     env_vars = {
-        'LLM_MODEL': 'gemma3:4b',
-        'EMBEDDING_MODEL': 'nomic-embed-text:latest',
+        'LLM_MODEL': 'Qwen/Qwen2.5-14B-Instruct',
+        'EMBEDDING_MODEL': 'Qwen/Qwen3-Embedding-0.6B',
         'EVAL_MODEL': 'claude-sonnet-4-20250514',
         'ENABLE_RERANKER': 'true',
         'RERANKER_MODEL': 'cross-encoder/ms-marco-MiniLM-L-6-v2',
@@ -211,7 +215,6 @@ def mock_env_vars():
         'RRF_K': '60',
         'RETRIEVAL_TOP_K': '10',
         'ENABLE_CONTEXTUAL_RETRIEVAL': 'false',
-        'OLLAMA_URL': 'http://localhost:11434',
         'DATABASE_HOST': 'localhost',
         'DATABASE_PORT': '5432',
         'DATABASE_NAME': 'ragbench',
@@ -224,36 +227,36 @@ def mock_env_vars():
 # Models Endpoint Tests
 # ============================================================================
 
-def test_models_endpoint_returns_200(mock_ollama, mock_env_vars):
+def test_models_endpoint_returns_200(mock_tei, mock_env_vars):
     """GET /metrics/models should return 200."""
     response = client.get("/metrics/models")
     assert response.status_code == 200
 
 
-def test_models_endpoint_returns_llm_info(mock_ollama, mock_env_vars):
+def test_models_endpoint_returns_llm_info(mock_tei, mock_env_vars):
     """GET /metrics/models should include LLM model info."""
     response = client.get("/metrics/models")
     data = response.json()
 
     assert "llm" in data
-    assert data["llm"]["name"] == "gemma3:4b"
-    assert data["llm"]["provider"] == "Ollama"
+    assert data["llm"]["name"] == "Qwen/Qwen2.5-14B-Instruct"
+    assert data["llm"]["provider"] == "Vllm"
     assert data["llm"]["model_type"] == "llm"
-    assert data["llm"]["is_local"] is True
+    assert data["llm"]["execution_boundary"] == "customer_managed"
 
 
-def test_models_endpoint_returns_embedding_info(mock_ollama, mock_env_vars):
+def test_models_endpoint_returns_embedding_info(mock_tei, mock_env_vars):
     """GET /metrics/models should include embedding model info."""
     response = client.get("/metrics/models")
     data = response.json()
 
     assert "embedding" in data
-    assert data["embedding"]["name"] == "nomic-embed-text:latest"
-    assert data["embedding"]["provider"] == "Ollama"
+    assert data["embedding"]["name"] == "Qwen/Qwen3-Embedding-0.6B"
+    assert data["embedding"]["provider"] == "Tei"
     assert data["embedding"]["model_type"] == "embedding"
 
 
-def test_models_endpoint_returns_reranker_info(mock_ollama, mock_env_vars):
+def test_models_endpoint_returns_reranker_info(mock_tei, mock_env_vars):
     """GET /metrics/models should include reranker model info when enabled."""
     response = client.get("/metrics/models")
     data = response.json()
@@ -263,7 +266,7 @@ def test_models_endpoint_returns_reranker_info(mock_ollama, mock_env_vars):
     assert data["reranker"]["provider"] == "HuggingFace"
 
 
-def test_models_endpoint_returns_eval_info(mock_ollama, mock_env_vars):
+def test_models_endpoint_returns_eval_info(mock_tei, mock_env_vars):
     """GET /metrics/models should include eval model info."""
     response = client.get("/metrics/models")
     data = response.json()
@@ -273,13 +276,103 @@ def test_models_endpoint_returns_eval_info(mock_ollama, mock_env_vars):
     assert data["eval"]["provider"] == "Anthropic"
 
 
-def test_models_endpoint_includes_reference_urls(mock_ollama, mock_env_vars):
+def test_models_endpoint_reports_configured_eval_provider(mock_tei, mock_env_vars):
+    """The eval provider must come from config, not a hardcoded 'Anthropic'."""
+    openai_judge_config = create_mock_models_config()
+    openai_judge_config.eval = EvalConfig(
+        provider="openai",
+        model="gpt-5.2",
+        api_key="test-key",
+        requires_api_key=True,
+        execution_boundary=ExecutionBoundary.THIRD_PARTY,
+    )
+
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=openai_judge_config,
+    ):
+        response = client.get("/metrics/models")
+        data = response.json()
+
+    assert data["eval"]["name"] == "gpt-5.2"
+    assert data["eval"]["provider"] == "Openai"
+    assert data["eval"]["execution_boundary"] == "third_party"
+
+
+def test_models_endpoint_reports_boundary_for_every_role(mock_tei, mock_env_vars):
+    """Every model role reports where it executes."""
+    response = client.get("/metrics/models")
+    data = response.json()
+
+    assert data["llm"]["execution_boundary"] == "customer_managed"
+    assert data["embedding"]["execution_boundary"] == "customer_managed"
+    # The reranker runs in-process, so it executes wherever rag-server does.
+    assert data["reranker"]["execution_boundary"] == "customer_managed"
+    assert data["eval"]["execution_boundary"] == "third_party"
+
+
+def test_undeclared_boundary_is_reported_as_unknown(mock_tei, mock_env_vars):
+    """A model definition with no boundary reports null — never coerced to 'local'."""
+    undeclared_config = create_mock_models_config()
+    undeclared_config.llm.execution_boundary = None
+    undeclared_config.eval.execution_boundary = None
+
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=undeclared_config,
+    ):
+        response = client.get("/metrics/models")
+        data = response.json()
+
+    assert data["llm"]["execution_boundary"] is None
+    assert data["eval"]["execution_boundary"] is None
+
+
+def test_eval_status_follows_the_configured_provider_key(mock_tei, mock_env_vars):
+    """A judge whose key is missing is 'unavailable'; a keyless judge is 'available'."""
+    missing_key_config = create_mock_models_config()
+    missing_key_config.eval = EvalConfig(
+        provider="openai",
+        model="gpt-5.2",
+        requires_api_key=True,
+        api_key=None,
+        execution_boundary=ExecutionBoundary.THIRD_PARTY,
+    )
+
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=missing_key_config,
+    ):
+        assert client.get("/metrics/models").json()["eval"]["status"] == "unavailable"
+
+    self_hosted_config = create_mock_models_config()
+    self_hosted_config.eval = EvalConfig(
+        provider="vllm",
+        model="Qwen/Qwen3-32B-AWQ",
+        base_url="http://vllm:8000/v1",
+        requires_api_key=False,
+        execution_boundary=ExecutionBoundary.CUSTOMER_MANAGED,
+    )
+
+    with patch(
+        "infrastructure.config.models_config.get_models_config",
+        return_value=self_hosted_config,
+    ):
+        data = client.get("/metrics/models").json()
+
+    assert data["eval"]["status"] == "available"
+    assert data["eval"]["execution_boundary"] == "customer_managed"
+
+
+def test_models_endpoint_includes_reference_urls(mock_tei, mock_env_vars):
     """GET /metrics/models should include reference URLs for models."""
     response = client.get("/metrics/models")
     data = response.json()
 
-    assert data["llm"]["reference_url"] is not None
-    assert "ollama.com" in data["llm"]["reference_url"]
+    # The LLM (vllm, an arbitrary HF repo id) has no static MODEL_REFERENCES
+    # entry; the embedding model (a known TEI/HF model) does.
+    assert data["embedding"]["reference_url"] is not None
+    assert "huggingface.co" in data["embedding"]["reference_url"]
 
 
 # ============================================================================
@@ -410,7 +503,7 @@ def test_system_metrics_returns_timestamp(mock_system_metrics):
 # Edge Cases
 # ============================================================================
 
-def test_models_with_reranker_disabled(mock_ollama):
+def test_models_with_reranker_disabled(mock_tei):
     """GET /metrics/models should handle disabled reranker."""
     disabled_reranker_config = create_mock_models_config()
     disabled_reranker_config.reranker.enabled = False

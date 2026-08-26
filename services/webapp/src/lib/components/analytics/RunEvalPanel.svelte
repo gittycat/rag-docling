@@ -31,6 +31,7 @@
 	let samples = $state(100);
 	let seed = $state<number | null>(42);
 	let judgeEnabled = $state(true);
+	let groundedness = $state(false);
 
 	let activeJob = $state<ActiveEvalJob | null>(null);
 	let isSubmitting = $state(false);
@@ -95,7 +96,8 @@
 				datasets: selectedDatasets,
 				samples,
 				seed,
-				judge_enabled: judgeEnabled
+				judge_enabled: judgeEnabled,
+				groundedness
 			});
 			notice = `Run ${job.job_id} queued.`;
 			await poll();
@@ -267,11 +269,22 @@
 				<span>LLM judge enabled</span>
 				<InfoTip text="Disabling the judge skips faithfulness/correctness scoring — faster and cheaper, but the generation group will be empty." />
 			</label>
+
+			<label class="flex items-center gap-2 cursor-pointer md:col-span-2">
+				<input
+					type="checkbox"
+					class="checkbox checkbox-xs checkbox-primary"
+					bind:checked={groundedness}
+					disabled={!judgeEnabled}
+				/>
+				<span>Claim grounding</span>
+				<InfoTip text="Scores each claim in the answer separately and checks whether the passage a claim cites actually supports it. Costs a judge call per claim plus one per claim-citation link, so it is off by default." />
+			</label>
 		</div>
 	{:else}
 		<div class="text-xs text-base-content/50 font-mono">
 			{tier} · {selectedDatasets.join(', ') || 'no datasets'} · {samples} samples ·
-			judge {judgeEnabled ? 'on' : 'off'}
+			judge {judgeEnabled ? 'on' : 'off'}{groundedness ? ' · claim grounding' : ''}
 		</div>
 	{/if}
 </div>

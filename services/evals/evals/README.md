@@ -25,6 +25,8 @@ Measures answer quality using an **LLM-as-judge**. The judge model is whatever `
 
 The judge should not share a provider with `active.inference`: self-preference bias in LLM judges extends across a model family, so a same-provider pairing inflates that provider's own generations. The runner warns at startup when they match and records the warning on the run.
 
+Judge prompts embed retrieved chunks and generated answers verbatim and are never masked, so `data_policy` in `config.yml` decides whether the judge may see corpus content at all. Each `models.eval` entry declares an `execution_boundary` (`customer_managed`, `aws_managed`, `third_party`) describing where that endpoint actually runs — never inferred from the provider name — and `data_policy.allowed_judge_boundaries` is an allow-list. A boundary that is missing or not on the list stops the run. `data_policy.eval_dataset_is_public: true` (the shipped default) waives the check for public benchmark datasets; set it `false` before evaluating your own corpus.
+
 | Metric | What it measures | Range |
 |---|---|---|
 | `faithfulness` | Whether the answer is grounded in the retrieved context (no hallucination) | 0-1, higher is better |
@@ -40,6 +42,23 @@ Measures how accurately the system cites its sources.
 | `citation_precision` | Fraction of citations pointing to gold passages | 0-1, higher is better |
 | `citation_recall` | Fraction of gold passages that are cited | 0-1, higher is better |
 | `section_accuracy` | Whether citations point to the correct document AND section | 0-1, higher is better |
+
+### Groundedness
+
+Claim-level grounding and claim-to-citation entailment. Where the citation group asks whether a cited chunk is one of the gold passages, this asks whether that chunk entails the sentence citing it — a citation can pass the first test and fail this one. Sentence-level claims are segmented deterministically (`evals/claims.py`), including the inline `[1]` markers attached to each claim.
+
+Off by default: it costs one judge call per claim plus one per claim-citation link, against three per question for the whole generation group. Enable with `--groundedness` (CLI), `groundedness: true` (`POST /eval/runs`), or the run panel's "Claim grounding" checkbox. Capped at 5 claims/answer and 2 citations/claim, with truncation reported per question.
+
+The two citation-link metrics need `eval.citation_scope: explicit` in `config.yml`; under the default `retrieved` the model is never asked for markers and they report `n/a`.
+
+| Metric | What it measures | Range |
+|---|---|---|
+| `claim_groundedness` | Fraction of the answer's claims the retrieved context supports | 0-1, higher is better |
+| `citation_entailment` | Fraction of (claim → cited passage) links where the passage entails the claim | 0-1, higher is better |
+| `claim_citation_support` | Fraction of cited claims backed by at least one of their own citations | 0-1, higher is better |
+| `uncited_claim_rate` | Fraction of claims carrying no citation marker | 0-1, lower is better |
+
+`groundedness` is its own weighted-score objective, weighted `0.0` by default — reported, not scored, until an operator decides otherwise.
 
 ### Abstention
 
@@ -59,7 +78,7 @@ Operational metrics. Not factored into accuracy scoring.
 |---|---|---|
 | `latency_p50` | Median query latency | milliseconds |
 | `latency_p95` | 95th percentile query latency | milliseconds |
-| `cost_per_query` | Dollar cost based on model pricing and token usage | USD |
+| `cost_per_query` | Dollar cost from token usage — generation plus judging, each priced at its own model's rates | USD |
 
 ### Weighted Scoring
 
@@ -87,7 +106,8 @@ from the objectives they would otherwise feed.
 
 1. RAG server running at `localhost:8001` (via `docker compose up -d`)
 2. Documents already uploaded and indexed
-3. `ANTHROPIC_API_KEY` set if using LLM judge (generation metrics)
+3. The API key for whatever provider `active.eval` names, if using the LLM judge
+   (generation metrics) — `OPENAI_API_KEY` in the shipped defaults
 
 ### CLI
 
@@ -97,8 +117,8 @@ Run from `services/evals/`:
 # Quick eval (10 samples from RAGBench, no LLM judge)
 python -m evals.cli eval --samples 10 --no-judge
 
-# Full eval with LLM judge
-export ANTHROPIC_API_KEY=sk-ant-...
+# Full eval with LLM judge (key must match active.eval's provider)
+export OPENAI_API_KEY=sk-...
 python -m evals.cli eval --samples 100
 
 # Multiple datasets
@@ -222,7 +242,7 @@ evals/
 │   └── performance.py       LatencyP50, LatencyP95, CostPerQuery
 │
 ├── judges/
-│   └── llm_judge.py         LLMJudge — calls Claude to score faithfulness/correctness/relevancy
+│   └── llm_judge.py         LLMJudge — calls the resolved active.eval model to score faithfulness/correctness/relevancy
 │
 ├── datasets/
 │   ├── base.py              BaseDatasetLoader ABC
@@ -259,9 +279,9 @@ Results are saved to `data/eval_runs/{run_id}_{timestamp}.json` with this struct
   "created_at": "2025-01-15T10:30:00",
   "completed_at": "2025-01-15T10:35:00",
   "config": {
-    "llm_model": "gemma3:4b",
-    "llm_provider": "ollama",
-    "embedding_model": "nomic-embed-text:latest",
+    "llm_model": "Qwen/Qwen2.5-14B-Instruct",
+    "llm_provider": "vllm",
+    "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
     "reranker_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
     "retrieval_top_k": 10,
     "hybrid_search_enabled": true,
@@ -288,6 +308,8 @@ Results are saved to `data/eval_runs/{run_id}_{timestamp}.json` with this struct
   "metadata": {
     "tier": "end_to_end",
     "judge_model": "gpt-5.2",
+    "judge_provider": "openai",
+    "judge_execution_boundary": "third_party",
     "judge_independence_warning": null,
     "scoring": {"weights": {}, "latency_threshold_ms": 30000, "max_cost_per_query_usd": 0.1}
   }

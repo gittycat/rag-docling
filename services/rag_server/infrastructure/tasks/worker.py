@@ -114,10 +114,24 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
         # Persist chunk text/metadata/embeddings in PostgreSQL — this single write
         # populates the BM25 index, the vector index and document introspection
         chunks_data = result.get("chunks_data", [])
+        write_start = time.time()
         if chunks_data:
             logger.info(f"[TASK {task_id}] Storing {len(chunks_data)} chunks in PostgreSQL...")
             async with get_session() as session:
                 await db_docs.add_chunks(session, UUID(doc_id), chunks_data)
+        write_duration = time.time() - write_start
+
+        # Baseline timing summary for this document (parse/embed from the
+        # ingestion pipeline, write from the DB round-trip above) — one line so
+        # later phases have a per-document cost breakdown to compare against.
+        timings = result.get("timings", {})
+        logger.info(
+            f"[TASK {task_id}] Timing breakdown: "
+            f"parse={timings.get('parse_s', 0):.2f}s, "
+            f"contextual={timings.get('contextual_s', 0):.2f}s, "
+            f"embed={timings.get('embed_s', 0):.2f}s, "
+            f"write={write_duration:.2f}s"
+        )
 
         # Store original document for download functionality
         logger.info(f"[TASK {task_id}] Storing original document for downloads...")

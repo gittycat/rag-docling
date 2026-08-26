@@ -23,9 +23,13 @@ class LLMProvider(str, Enum):
     an import mapping in infrastructure/llm/factory.py, a Docker secret declaration in
     the compose files, and a cost-table entry.
     """
-    OLLAMA = "ollama"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    # Any OpenAI-compatible HTTP endpoint we host ourselves (vLLM, TGI's OpenAI
+    # shim, llama.cpp's server). The name follows rag_server's enum, which has
+    # carried this value since self-hosted inference landed there; `base_url` is
+    # what actually decides where it points, not the provider string.
+    VLLM = "vllm"
 
 
 @dataclass
@@ -37,7 +41,10 @@ class LLMConfig:
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     timeout: float = 120.0
-    keep_alive: Optional[str] = None  # Ollama-only
+    # The judge runs at 0 for determinism (evals/judges/llm_judge.py). Every
+    # provider entry in factory.py's _PROVIDER_CONFIG maps it, so a configured
+    # temperature reaches the client instead of being silently dropped.
+    temperature: Optional[float] = None
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -63,7 +70,6 @@ class LLMConfig:
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url,
                 timeout=llm_config.timeout,
-                keep_alive=llm_config.keep_alive,
             )
         except Exception as e:
             logger.error(f"Failed to load LLM config from file: {e}")

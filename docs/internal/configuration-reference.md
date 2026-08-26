@@ -82,64 +82,88 @@ Resolution order, most to least authoritative:
 
 ## Exhaustive `config.yml` reference
 
-Root file: `config.yml` at the repo root. Roughly 123 leaf keys total: 73
-across the 19 named model definitions under `models.*`, plus about 50 across
-`active`, `eval`, `reranker`, `retrieval`, `vector_store`, `database`,
-`chat_memory`, `prompts`, and `pii`. Every key is listed below, grouped by
-top-level section.
+Root file: `config.yml` at the repo root. Roughly 129 leaf keys total: about 76
+across the 16 named model definitions under `models.*` (down from 19 before
+the Ollama removal — three Ollama inference aliases and three Ollama embedding
+aliases were deleted, replaced by one `tei` embedding entry; each of the 13
+non-reranker definitions now also carries an `execution_boundary`), plus about
+53 across `active`, `eval`, `reranker`, `retrieval`, `vector_store`, `database`,
+`chat_memory`, `prompts`, `pii`, and `data_policy`. Every key is listed below,
+grouped by top-level section.
 
 ### `models.inference.*`
 
-Eight named model definitions (a ninth, `qwen-vllm`, is commented out and not
-live). Each is resolved into the top-level `llm` object based on
-`active.inference`, then consumed when building the LLM client.
+Five named model definitions (a sixth, `qwen-vllm`, is commented out and not
+live; a further commented-out placeholder shows what a new cloud-provider
+entry needs, without naming a real one). Each is resolved into the top-level
+`llm` object based on `active.inference`, then consumed when building the LLM
+client. `LLMConfig.keep_alive` — the Ollama-only "keep the model resident"
+setting — was deleted from the schema entirely when Ollama was removed; there
+is no replacement column.
 
-| model key | provider | model | base_url | timeout (s) | keep_alive | requires_api_key |
+| model key | provider | model | base_url | timeout (s) | requires_api_key | execution_boundary |
 |---|---|---|---|---|---|---|
-| `gemma3-4b` | ollama | gemma3:4b | `http://host.docker.internal:11434` | 120 | 10m | — |
-| `llama3-8b` | ollama | llama3:8b | `http://host.docker.internal:11434` | 120 | 10m | — |
-| `gpt5-mini` | openai | gpt-5-mini | `https://api.openai.com/v1` | 120 | — | true |
-| `claude-sonnet` | anthropic | claude-sonnet-4-20250514 | `https://api.anthropic.com` | 120 | — | true |
-| `claude-opus` | anthropic | claude-opus-4-6 | `https://api.anthropic.com` | 120 | — | true |
-| `gemini-pro` | google | gemini-pro | — | 120 | — | true |
-| `deepseek-chat` | deepseek | deepseek-chat | — | 120 | — | true |
-| `moonshot-v1` | moonshot | moonshot-v1-8k | `https://api.moonshot.cn/v1` | 120 | — | true |
+| `gpt56-luna` | openai | gpt-5.6-luna | `https://api.openai.com/v1` | 120 | true | third_party |
+| `gpt5-mini` | openai | gpt-5-mini | `https://api.openai.com/v1` | 120 | true | third_party |
+| `claude-haiku` | anthropic | claude-haiku-4-5 | `https://api.anthropic.com` | 120 | true | third_party |
+| `claude-sonnet` | anthropic | claude-sonnet-5 | `https://api.anthropic.com` | 120 | true | third_party |
+| `claude-opus` | anthropic | claude-opus-5 | `https://api.anthropic.com` | 120 | true | third_party |
 
 `timeout` is an int (seconds); `requires_api_key` is a bool; all other fields
-are strings. `gemini-pro` and `deepseek-chat` have no `base_url` set in
-`config.yml` — they rely on the provider SDK's own default endpoint.
+are strings. Google, DeepSeek, and Moonshot are not currently wired up — no
+compose file declares an API-key secret for them — so `config.yml` carries
+only a commented-out template for adding one, not live entries. The commented
+`qwen-vllm` entry (`provider: vllm`, `base_url: http://vllm:8000/v1`) is the
+documented self-hosted-inference path now that no local LLM runs on the host.
 
 ### `models.embedding.*`
 
 Four named definitions, resolved into the top-level `embedding` object based
 on `active.embedding`.
 
-| model key | provider | model | base_url | requires_api_key | embed_batch_size |
-|---|---|---|---|---|---|
-| `nomic-embed` | ollama | nomic-embed-text:latest | `http://host.docker.internal:11434` | — | 64 |
-| `openai-ada` | openai | text-embedding-ada-002 | `https://api.openai.com/v1` | true | not set (falls back to provider default, 100) |
-| `openai-3-small` | openai | text-embedding-3-small | `https://api.openai.com/v1` | true | 100 |
-| `openai-3-large` | openai | text-embedding-3-large | `https://api.openai.com/v1` | true | not set (falls back to provider default, 100) |
+| model key | provider | model | base_url | requires_api_key | embed_batch_size | execution_boundary |
+|---|---|---|---|---|---|---|
+| `qwen3-embed` | tei | Qwen/Qwen3-Embedding-0.6B | `http://tei:80` | — | 32 | customer_managed |
+| `openai-ada` | openai | text-embedding-ada-002 | `https://api.openai.com/v1` | true | not set (falls back to provider default, 100) | third_party |
+| `openai-3-small` | openai | text-embedding-3-small | `https://api.openai.com/v1` | true | 100 | third_party |
+| `openai-3-large` | openai | text-embedding-3-large | `https://api.openai.com/v1` | true | not set (falls back to provider default, 100) | third_party |
 
 Effective batch size is `embed_batch_size` from the entry if present,
-otherwise a per-provider default (64 for ollama, 100 for openai) baked into
-the embeddings module. Two of the four openai entries omit the field and
+otherwise a per-provider default (32 for tei, 100 for openai) baked into
+the embeddings module. Two of the three openai entries omit the field and
 silently rely on that fallback.
+
+`qwen3-embed` also sets `timeout: 60` and two TEI-only `EmbeddingConfig`
+fields, `query_instruction` and `text_instruction`, that `TextEmbeddingsInference`
+applies asymmetrically: `query_instruction` is prepended on the query-embedding
+path only, `text_instruction` on the document-embedding path only. The
+checked-in config sets `query_instruction` to Qwen3's documented instruction
+prefix and leaves `text_instruction` empty — so queries get the prefix and
+documents never do, which cannot be applied to the wrong path by accident. Both
+fields are `None`/unused for every other provider.
 
 ### `models.eval.*`
 
 Four named definitions, resolved into the top-level `eval` object (merged
 with the `eval.*` settings block below) based on `active.eval`. This is the
-model used both for the citation-behavior config surfaced to clients and, when
-not overridden by the separate `EvalConfig` CLI/YAML surface, as the eval
-LLM judge.
+model used both for the citation-behavior config surfaced to clients and as the
+eval LLM judge — `active.eval` is now the single source of judge identity, with
+no separate CLI or dataclass default that can override it (see
+[eval-framework.md](eval-framework.md#the-llm-judge)).
 
-| model key | provider | model | requires_api_key |
-|---|---|---|---|
-| `claude-sonnet` | anthropic | claude-sonnet-4-20250514 | true |
-| `claude-opus` | anthropic | claude-opus-4-5-20251101 | true |
-| `gpt5-mini` | openai | gpt-5-mini | true |
-| `gpt5-2` | openai | gpt-5.2 | true |
+| model key | provider | model | requires_api_key | execution_boundary |
+|---|---|---|---|---|
+| `claude-sonnet` | anthropic | claude-sonnet-4-20250514 | true | third_party |
+| `claude-opus` | anthropic | claude-opus-4-5-20251101 | true | third_party |
+| `gpt5-mini` | openai | gpt-5-mini | true | third_party |
+| `gpt5-2` | openai | gpt-5.2 | true | third_party |
+
+`base_url` and `timeout` are also accepted on an eval definition (the shipped
+four all set both). They used to be dropped silently, which made a judge endpoint
+that is not the provider's default URL unaddressable.
+
+`execution_boundary` is required in practice: `data_policy` refuses a judge whose
+boundary is absent. See [`data_policy.*`](#data_policy) below.
 
 ### `models.reranker.*`
 
@@ -160,8 +184,8 @@ Three named definitions, resolved into `reranker.model` / `reranker.top_n`
 | key | type | default | effect |
 |---|---|---|---|
 | `active.inference` | str | `gpt5-mini` | selects `models.inference.<key>` as the live `llm` config |
-| `active.embedding` | str | `nomic-embed` | selects `models.embedding.<key>` as the live `embedding` config |
-| `active.eval` | str | `gpt5-2` | selects `models.eval.<key>` as the live `eval` model config |
+| `active.embedding` | str | `qwen3-embed` | selects `models.embedding.<key>` as the live `embedding` config |
+| `active.eval` | str | `gpt5-2` | selects `models.eval.<key>` as the live `eval` model config, and is the sole source of the eval service's judge identity |
 | `active.reranker` | str | `minilm-l6` | selects `models.reranker.<key>` as the live `reranker` config |
 
 ### `eval.*` (non-model-specific evaluation settings)
@@ -198,7 +222,7 @@ only matters if the key were absent from the file.
 
 | key | type | default | effect |
 |---|---|---|---|
-| `vector_store.dimension` | int | 768 | output dimension of the active embedding model; must match the `vector(768)` declaration of `document_chunks.embedding` in `init.sql` |
+| `vector_store.dimension` | int | 1024 | output dimension of the active embedding model; must match the `vector(1024)` declaration of `document_chunks.embedding` in `init.sql` — see `database.md` for the full four-location list this must stay in sync with |
 
 `dimension` is not a knob that reshapes anything at runtime — the column type is
 the real constraint, and `init.sql` does not re-run against an existing volume.
@@ -241,7 +265,6 @@ every document.
 | key | type | default | effect |
 |---|---|---|---|
 | `pii.enabled` | bool | `false` | master toggle for the PII masking tier (cloud-generation path); also read by evals' own PII config copy |
-| `pii.allow_cloud_judge` | bool | `false` | opt-out allowing a cloud LLM judge to run against a PII-sensitive corpus; only evals actually branches on this — rag-server's copy declares the field but does not enforce it |
 | `pii.entities` | list of 7 strings | see `config.yml` | Presidio entity types to detect and mask |
 | `pii.masking_strategy` | `"tokens"` | `tokens` | dead — only one literal value is legal and nothing branches on it, see below |
 | `pii.token_format` | str | `[[[{entity_type}_{index}]]]` | template for mask tokens |
@@ -263,18 +286,55 @@ every document.
 | `pii.audit.enabled` | bool | `true` | gate on audit-log emission for mask/unmask operations |
 | `pii.audit.log_level` | str | `INFO` | log level for the dedicated PII audit logger |
 
+<a id="data_policy"></a>
+
+### `data_policy.*`
+
+Where corpus content is allowed to be processed. Deliberately independent of
+`pii.*`: content can be commercially confidential without containing a single PII
+entity, and nothing on the eval path is masked in any case. Replaced the retired
+`pii.allow_cloud_judge` flag.
+
+| key | type | default | effect |
+|---|---|---|---|
+| `data_policy.corpus_confidential` | bool | `true` | whether corpus content needs protecting at all; `false` disables the judge gate entirely |
+| `data_policy.allowed_judge_boundaries` | list of `execution_boundary` values | `[customer_managed, aws_managed]` | allow-list of boundaries a confidential corpus may be judged in; anything absent — including an endpoint that declares no boundary — is refused |
+| `data_policy.eval_dataset_is_public` | bool | `false` in code, `true` in the checked-in `config.yml` | declares that the eval *dataset* (not the corpus) is public or synthetic, so judge egress leaks nothing; the only escape hatch |
+
+The schema is declared in both services so `config.yml` validates identically
+either side, but only the eval service enforces it — rag-server runs no judge.
+Enforcement is `enforce_judge_boundary()`, called at config load and again in
+`resolve_judge_config()`, so the judge object the runtime calls is the one that
+was checked. See [pii-masking.md](pii-masking.md#the-judge-gate-is-not-a-pii-control).
+
+### `execution_boundary` values
+
+Declared per model definition under `models.*`, describing the resolved endpoint
+rather than the provider name — an OpenAI-compatible transport can address a
+container the operator runs or `api.openai.com`, and only the config author knows
+which. Mirrored verbatim in both services' `models_config.py`.
+
+| value | meaning |
+|---|---|
+| `customer_managed` | a host or VPC the operator runs: local Docker, their own EC2 or K8s |
+| `aws_managed` | Bedrock/SageMaker — inside the customer's AWS boundary, not on their host |
+| `third_party` | OpenAI, Anthropic, any vendor-hosted API |
+
+Absent is not a fourth value: a definition with no `execution_boundary` is
+*unknown*, and unknown fails closed.
+
 ### Inspecting configuration
 
 `just show-config` and `just show-config-full` both run against rag-server's
 config loader/schema only (not evals'), with secret validation disabled so
 they work without live API keys.
 
-`show-config` (compact) prints: inference provider/model (+ `keep_alive` if
-set), embedding provider/model, reranker model and `top_n` (or "disabled"),
-and eval judge provider/model.
+`show-config` (compact) prints: inference provider/model, embedding
+provider/model, reranker model and `top_n` (or "disabled"), and eval judge
+provider/model.
 
 `show-config-full` additionally prints: inference provider, model, base_url,
-timeout, keep_alive, and whether an API key is configured (never the key
+timeout, and whether an API key is configured (never the key
 itself); embedding provider, model, base_url; reranker enabled/model/`top_n`;
 retrieval `top_k`, hybrid search on/off (+ RRF k if on), contextual retrieval
 on/off; eval provider, model, citation scope, citation format, API-key
@@ -303,7 +363,6 @@ Python or `$env/dynamic/private` in the webapp.
 | `LOG_LEVEL` | log verbosity | `INFO` for the core logger, `WARNING` for the task worker and evals API | `docker-compose.yml` sets `WARNING` everywhere; the cloud overlay re-sets `WARNING` again (a no-op) |
 | `MAX_UPLOAD_SIZE` | max upload size in MB, surfaced via the config API | `80` | `docker-compose.yml` (rag-server, task-worker, and webapp — the webapp's copy is unread, see the auth-token gap below) |
 | `USE_CACHED_RERANKER` | when truthy, sets `HF_HUB_OFFLINE=1` to skip Hugging Face network calls for a pre-cached reranker | falsy (unset) | `docker-compose.yml` (`true`, rag-server + task-worker) |
-| `OLLAMA_URL` | Ollama endpoint for metrics/cost lookups | `http://host.docker.internal:11434` | not set in `docker-compose.yml` (relies on the default); set only in test fixtures |
 | `WORKER_CONCURRENCY` | concurrent document-processing claim loops, capped by a hardcoded ceiling of 8 | `2` | `docker-compose.yml` (task-worker only) |
 | `RAG_SERVER_URL` | URL evals/webapp use to call rag-server | `http://localhost:8001` | `docker-compose.yml` (webapp, evals) |
 | `EVALS_SERVICE_URL` | URL the webapp proxies `/api/eval/*` to | `http://localhost:8002` | `docker-compose.yml` (webapp) |
@@ -311,13 +370,19 @@ Python or `$env/dynamic/private` in the webapp.
 | `RAG_SERVER_AUTH_TOKEN_FILE` | path to the bearer-token secret file for server-tier auth | unset (auth disabled) | `docker-compose.server.yml` (rag-server, webapp) |
 | `RAG_SERVER_AUTH_TOKEN` | direct token value, used by the webapp only as a fallback if `_FILE` is unset or unreadable | unset | never set by any compose file — a dead code path in practice |
 | `SERVER_DOMAIN` | TLS/domain name for the reverse proxy, substituted by Caddy itself | `localhost` | `docker-compose.server.yml` (caddy) |
-| `EMBEDDING_MODEL` | embedding model name surfaced in the models-info endpoint | `unknown` | never set by any compose file — always resolves to `"unknown"` in every real deployment; only set in test fixtures |
 | `WEBAPP_ORIGIN` | overrides the webapp's `ORIGIN` in the cloud tier (compose-level substitution only) | `http://localhost:8000` | host shell / `.env`, consumed by `docker-compose.cloud.yml` |
-| `OLLAMA_HOST` | overrides the `extra_hosts` mapping for the cloud tier (compose-level substitution only) | `host-gateway` | host shell / `.env`, consumed by `docker-compose.cloud.yml` |
 | `REGISTRY`, `VERSION` | container registry/tag for cloud deploys (compose-level substitution only) | `latest` | host shell / `.env`, consumed by `docker-compose.cloud.yml` |
 
+`EMBEDDING_MODEL` and `OLLAMA_URL` are gone from this table as of the
+Ollama→TEI migration. `OLLAMA_URL` is fully removed — no code path reads it
+any more. `EMBEDDING_MODEL` is no longer read by any application code either
+(`GET /models/info` now reads `models_config.embedding.model` straight from
+`config.yml` — see `docs/suggestions.md` §6, resolved); it survives only as a
+vestige in `services/rag_server/tests/conftest.py`'s test-fixture environment,
+where nothing consumes it either.
+
 Test-only environment variables (`DATABASE_HOST`, `DATABASE_PORT`,
-`DATABASE_NAME`, `OLLAMA_URL`, `EMBEDDING_MODEL`, `LLM_MODEL`,
+`DATABASE_NAME`, `EMBEDDING_MODEL`, `LLM_MODEL`,
 `ANTHROPIC_API_KEY`) are set directly by test fixtures and are not part of the
 runtime config surface described here.
 
@@ -361,7 +426,7 @@ Base file: `docker-compose.yml`.
 | `docker-compose.yml` | base | webapp, rag-server, postgres, task-worker, evals; `public`/`private` bridge networks; all ports published to host | local development / default `just up` |
 | `docker-compose.bench.yml` | standalone stack — own `-bench` service names, networks, and volumes, but shares the `secrets/` directory and `config.yml` mount | `postgres-bench` uses `tmpfs` for its data directory (ephemeral, wiped on stop); `rag-server-bench` published on host port 8003 instead of 8001; no `evals` or `webapp` services at all; `config.yml` mounted read-only | ephemeral benchmark runs, isolated from the main stack's data |
 | `docker-compose.ci.yml` | fully independent stack, not an overlay — no `services:` in common with the base | own network for Forgejo + runner; nothing shared with the base | self-hosted CI/CD infrastructure, unrelated to the RAG application; run with its own `-f` flag, never combined with the base |
-| `docker-compose.cloud.yml` | overlay (`-f docker-compose.yml -f docker-compose.cloud.yml`) | replaces `build:` with `image: <name>:${VERSION:-latest}` for webapp, rag-server, and task-worker; parameterizes the webapp's `ORIGIN` via `WEBAPP_ORIGIN`; parameterizes the Ollama host via `OLLAMA_HOST` | deploying pre-built images to a cloud host instead of building on-target |
+| `docker-compose.cloud.yml` | overlay (`-f docker-compose.yml -f docker-compose.cloud.yml`) | replaces `build:` with `image: <name>:${VERSION:-latest}` for webapp, rag-server, and task-worker; parameterizes the webapp's `ORIGIN` via `WEBAPP_ORIGIN` | deploying pre-built images to a cloud host instead of building on-target |
 | `docker-compose.server.yml` | overlay | adds a Caddy reverse-proxy service (automatic HTTPS via `SERVER_DOMAIN`); unpublishes ports on webapp, rag-server, and evals so only Caddy is internet-facing; adds the `RAG_SERVER_AUTH_TOKEN` secret and `RAG_SERVER_AUTH_TOKEN_FILE` environment variable to rag-server and webapp, turning on bearer-token auth | confidential-compute VM or thin-client tier, single public entrypoint through Caddy |
 
 `just deploy` for the server or cloud environment runs `docker compose -f
@@ -460,9 +525,9 @@ change behavior.
 | Inference pipeline reranker call | `top_n = max(5, retrieval_top_k // 2)` | The formula that silently overrides `config.yml`'s `models.reranker.*.top_n` — see Dead configuration above. Neither the `5` floor nor the `// 2` divisor is a config key. |
 | Inference pipeline context-window budgeting | roughly a 50% chat-history / 40% context / 10% response split, with a `3000`-token fallback when LLM metadata introspection fails | An operator switching LLM providers (different context windows) has no way to tune this split without a code change. The 3000-token fallback is used silently whenever a provider's context-window metadata cannot be determined. |
 | Ingestion contextual-prefix preview | `chunk_preview = node.get_content()[:400]` | The 400-character chunk preview length fed into the (paid) contextual-retrieval prompt is a magic number affecting both prompt quality and per-request token cost. |
-| Embeddings module | `_DEFAULT_BATCH_SIZE = {"ollama": 64, "openai": 100}` | Per-provider fallback batch size used whenever a model definition omits `embed_batch_size` — true today for `openai-ada` and `openai-3-large`. An operator editing those entries would not know the effective batch size without reading the code. |
+| Embeddings module | `_DEFAULT_BATCH_SIZE = {"openai": 100, "tei": 32}` | Per-provider fallback batch size used whenever a model definition omits `embed_batch_size` — true today for `openai-ada` and `openai-3-large`. An operator editing those entries would not know the effective batch size without reading the code. |
 | Provider API-key validation calls (five call sites) | `httpx.AsyncClient(timeout=10.0)` | A fixed 10-second timeout for validating a provider API key at boot, independent of the per-model `timeout` set in `config.yml`. |
 | rag-server health route | an inline dict of roughly 14 hardcoded model price entries | Duplicates — with different, and drifting, values — the separate cost tables in the evals CLI config. Two independent hardcoded pricing tables exist for overlapping sets of models, neither sourced from `config.yml` or an external pricing feed. |
-| Evals CLI config (`evals/config.py`) | default scoring weights (accuracy, faithfulness, citation, retrieval, cost, latency) and per-model USD-per-token cost tables | Eval scoring weights and model costs are Python constants, editable only through the separate `EvalConfig.from_yaml()` / CLI surface described in the introduction above — not through `config.yml`. |
+| Evals CLI config (`evals/config.py`) | default scoring weights (accuracy, faithfulness, citation, groundedness, retrieval, cost, latency) and per-model USD-per-token cost tables | Eval scoring weights and model costs are Python constants, editable only through the separate `EvalConfig.from_yaml()` / CLI surface described in the introduction above — not through `config.yml`. |
 | Postgres service compose command | `max_connections=200` | The only place that sets the Postgres server-side connection limit. It has no `config.yml` counterpart — the application-side pool (`database.pool_size` + `database.max_overflow`) must be kept under it by hand. |
 | Auth module | no token rotation or expiry; a single static secret file | Adequate for the stated scope, but there is no TTL or rotation configuration for `RAG_SERVER_AUTH_TOKEN` at all. |

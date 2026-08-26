@@ -63,7 +63,7 @@ networks.
 | `docker-compose.yml` | base | The full local/dev stack: `webapp`, `rag-server`, `postgres`, `task-worker`, `evals`. Everything runs on a `public` bridge network plus a `private` bridge network that is `internal: true` (no gateway, no internet access) — Postgres sits only on `private`. |
 | `docker-compose.bench.yml` | standalone | An ephemeral benchmark stack (`postgres-bench` on `tmpfs`, `rag-server-bench` on host port 8003, `task-worker-bench`), on its own `bench-public`/`bench-private` networks and its own volume names, so a benchmark run never touches dev data. There is no `just` recipe for it — bring it up with `docker compose -f docker-compose.bench.yml up -d` and down with the matching `down`. Everything in it is meant to be thrown away. |
 | `docker-compose.ci.yml` | standalone | Forgejo (git host + CI web UI, port 3000, plus SSH on 222) and `forgejo-runner` (mounts the host Docker socket to execute CI jobs, runs as root). Its network is a plain bridge, not isolated. Long-lived infrastructure, independent of the application stack's lifecycle. |
-| `docker-compose.cloud.yml` | overlay | Replaces local `build:` with `image:` for `webapp`, `rag-server`, and `task-worker` (pulling `<service>:${VERSION:-latest}` from a registry) so a cloud host runs pre-built images instead of building on the target machine. Also templates `OLLAMA_HOST` into `extra_hosts` so Ollama can run on a separate host. |
+| `docker-compose.cloud.yml` | overlay | Replaces local `build:` with `image:` for `webapp`, `rag-server`, and `task-worker` (pulling `<service>:${VERSION:-latest}` from a registry) so a cloud host runs pre-built images instead of building on the target machine. |
 | `docker-compose.server.yml` | overlay | Adds a Caddy reverse proxy (TLS termination, `tls internal` self-signed by default, or a real domain via `SERVER_DOMAIN` for automatic Let's Encrypt) and removes direct host port publishing from `webapp`, `rag-server`, and `evals` — only Caddy publishes ports. Adds bearer-token auth (`RAG_SERVER_AUTH_TOKEN`, delivered as a Docker secret) required by clients reaching the server over a network rather than localhost. |
 
 Pushing images to a registry has no `just` recipe. The cloud overlay expects images to already
@@ -82,8 +82,10 @@ just deploy cloud    # docker compose -f docker-compose.yml -f docker-compose.cl
 just deploy-down server   # tear down the same overlay combination
 ```
 
-`just deploy` runs `preflight` first (checks the Docker daemon is reachable, and conditionally
-checks Ollama reachability if `config.yml`'s active model points at it).
+`just deploy` runs `preflight` first, which now only checks that the Docker daemon is
+reachable. There is nothing host-side left to probe: embedding inference (`tei`) and any
+self-hosted vLLM model are compose services, gated by `depends_on: service_healthy` rather
+than by a preflight check.
 
 ## Versioning and release
 

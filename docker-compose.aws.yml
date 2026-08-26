@@ -3,17 +3,19 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d
 #
 # Pulls prebuilt images from ECR (built/pushed via `just ecr-push`) instead
-# of building locally, runs a local Ollama alongside the app, and locks down
-# which services are network-reachable: only webapp is published (the ALB
-# routes to its 8000:3000 mapping). rag-server and evals stay unpublished —
-# evals in particular has no authentication of its own and must never be
-# reachable from outside the instance.
+# of building locally, runs a local TEI (embedding inference) alongside the
+# app, and locks down which services are network-reachable: only webapp is
+# published (the ALB routes to its 8000:3000 mapping). rag-server and evals
+# stay unpublished — evals in particular has no authentication of its own and
+# must never be reachable from outside the instance.
 #
 # Resource limits below are budgeted for a 16 GB / 4 vCPU host:
-# postgres 3G/1.0, rag-server 4G/1.5, task-worker 3G/1.0, ollama 3G/1.0,
+# postgres 3G/1.0, rag-server 4G/1.5, task-worker 3G/1.0, tei 3G/2.0,
 # webapp 512M/0.5, evals 1G/0.5 (memory sums to 14.5G of 16G headroom for the
 # host + Docker; cpus are ceilings, not reservations, so they may oversubscribe
-# the 4 vCPUs without starving the host).
+# the 4 vCPUs without starving the host). tei's cpu ceiling is raised to 2.0
+# (up from the previous local-inference container's 1.0) — query embedding is
+# now on the synchronous request path and needs the headroom.
 #
 # Prerequisites:
 # 1. Images pushed to ECR (`just ecr-push`) — set REGISTRY to the ECR repo
@@ -21,11 +23,11 @@
 # 2. secrets/RAG_SERVER_AUTH_TOKEN populated (see docker-compose.server.yml)
 # 3. EC2 user data exports WEBAPP_ORIGIN to the ALB's public HTTPS URL
 #    before this overlay is applied
-# 4. config.yml's Ollama `base_url` entries point at http://ollama:11434.
-#    OLLAMA_URL below is read only by services/metrics.py — the LLM and
-#    embedding clients read base_url straight out of config.yml, so the golden
-#    AMI bake rewrites it once (infra/assets/bake.sh) rather than leaving two
-#    sources of truth.
+# 4. tei is a compose service on the private network in every environment, so
+#    config.yml's embedding `base_url` is always http://tei:80 — no bake-time
+#    `sed` rewrite of the embedding base_url is needed at all any more (the
+#    previous host-based local-inference setup needed one; that rewrite has
+#    been removed from infra/assets/bake.sh).
 
 services:
   webapp:
@@ -61,7 +63,6 @@ services:
       - RAG_SERVER_DB_PASSWORD
       - RAG_SERVER_AUTH_TOKEN
     environment:
-      - OLLAMA_URL=http://ollama:11434
       - RAG_SERVER_AUTH_TOKEN_FILE=/run/secrets/RAG_SERVER_AUTH_TOKEN
     extra_hosts: !reset []
     deploy:
@@ -74,8 +75,6 @@ services:
     image: ${REGISTRY}/rag-server:${VERSION:-latest}
     build: !reset null
     init: true
-    environment:
-      - OLLAMA_URL=http://ollama:11434
     extra_hosts: !reset []
     deploy:
       resources:
@@ -102,14 +101,19 @@ services:
           memory: 1G
           cpus: "0.5"
 
-  # Local Ollama for demo — reachable from rag-server/task-worker on the
-  # private network; also on the public network so a bake-time `ollama pull`
-  # can reach the internet. No ports published.
-  ollama:
-    image: ollama/ollama
+  # Local TEI for demo — reachable from rag-server/task-worker on the
+  # private network; also on the public network so a bake-time image pull
+  # / weight warm can reach the internet. No ports published.
+  tei:
+    # No versioned arm64 CPU tag is published upstream — pinned by digest.
+    # See docker-compose.yml's tei service for the full rationale.
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-latest@sha256:35c50d7494de22deecdb783b8f5b7e1d05765709bd90071b03469b9440d28656
     restart: unless-stopped
+    # --max-batch-tokens 2048: see docker-compose.yml's tei service for why —
+    # the TEI default (16384) never finishes CPU warmup on this model.
+    command: ["--model-id", "Qwen/Qwen3-Embedding-0.6B", "--port", "80", "--max-client-batch-size", "32", "--max-batch-tokens", "2048"]
     volumes:
-      - ollama_data:/root/.ollama
+      - tei_data:/data
     networks:
       - public
       - private
@@ -117,10 +121,10 @@ services:
       resources:
         limits:
           memory: 3G
-          cpus: "1.0"
+          cpus: "2.0"
 
 volumes:
-  ollama_data:
+  tei_data:
     driver: local
 
 secrets:

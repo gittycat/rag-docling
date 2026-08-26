@@ -145,8 +145,8 @@ class PgVectorRetriever(BaseRetriever):
         logger.debug(f"[VECTOR] Searching for: {query_str[:100]}...")
 
         try:
-            # Must be the async variant: the sync one blocks the event loop on an
-            # Ollama round-trip, which would serialise the asyncio.gather() in
+            # Must be the async variant: the sync one blocks the event loop on a
+            # TEI round-trip, which would serialise the asyncio.gather() in
             # HybridRRFRetriever._aretrieve and stop BM25 running concurrently.
             query_embedding = await Settings.embed_model.aget_query_embedding(query_str)
         except Exception as e:

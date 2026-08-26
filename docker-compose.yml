@@ -37,7 +37,6 @@ services:
       - DATABASE_HOST=postgres
       - DATABASE_PORT=5432
       - DATABASE_NAME=ragbench
-      - OLLAMA_URL=http://host.docker.internal:11434
       - LOG_LEVEL=WARNING
       - MAX_UPLOAD_SIZE=80
       - SHARED_UPLOAD_DIR=/tmp/shared
@@ -46,6 +45,8 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
+        condition: service_healthy
+      tei:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
@@ -99,6 +100,49 @@ services:
       - private
     restart: unless-stopped
 
+  # TEI (HuggingFace Text Embeddings Inference) - serves Qwen3-Embedding-0.6B
+  # for the active embedding model (config.yml models.embedding.qwen3-embed).
+  tei:
+    # No versioned arm64 CPU tag is published upstream — HuggingFace only
+    # publishes versioned CPU tags (cpu-1.9, cpu-1.8, ...) as amd64-only
+    # manifests. cpu-arm64-latest is the only arm64 CPU image, so it is
+    # pinned by digest here to avoid silently floating onto a new build.
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-latest@sha256:35c50d7494de22deecdb783b8f5b7e1d05765709bd90071b03469b9440d28656
+    restart: unless-stopped
+    # --max-batch-tokens 2048: TEI's warmup pushes one synthetic max-size batch
+    # through the model before it will serve anything. On this 0.6B model on
+    # CPU, the TEI default of 16384 makes that warmup batch too large — warmup
+    # never completes (measured 8+ minutes, still not done) and /health never
+    # returns 200, so the container never comes up. 2048 warms up in ~18s.
+    # Confirmed side effect: this also clamps max_input_length to 2048 tokens,
+    # 4x our ~500-token chunks (Settings.chunk_size = 500), so truncation never
+    # bites. Do not raise this back toward the TEI default.
+    command: ["--model-id", "Qwen/Qwen3-Embedding-0.6B", "--port", "80", "--max-client-batch-size", "32", "--max-batch-tokens", "2048"]
+    volumes:
+      # Caches the downloaded model weights so a container restart/recreate
+      # doesn't re-pull them from HuggingFace.
+      - tei_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      # Cold start downloads ~1.2GB of safetensors before warmup even begins —
+      # measured ~170s on a fast connection, plus ~18s warmup. 120s was too
+      # short and marked the service unhealthy on any first boot with an empty
+      # tei_data volume, failing depends_on: service_healthy for rag-server and
+      # task-worker. `just init` / bake.sh pre-warm the volume so steady-state
+      # boots are fast; this grace period only covers the genuinely-cold case.
+      start_period: 300s
+    networks:
+      # `private` is internal: true (no egress), which is all TEI needs once its
+      # weights are cached. But a cold tei_data volume has to fetch ~1.2GB from
+      # huggingface.co, so it also sits on `public` — the same reason the Ollama
+      # service it replaced was dual-homed. Nothing is published from either
+      # network; this is egress only.
+      - private
+      - public
+
   # Task Worker - Async document processing via SKIP LOCKED
   task-worker:
     build:
@@ -116,7 +160,6 @@ services:
       - DATABASE_HOST=postgres
       - DATABASE_PORT=5432
       - DATABASE_NAME=ragbench
-      - OLLAMA_URL=http://host.docker.internal:11434
       - LOG_LEVEL=WARNING
       - MAX_UPLOAD_SIZE=80
       - SHARED_UPLOAD_DIR=/tmp/shared
@@ -128,6 +171,8 @@ services:
       postgres:
         condition: service_healthy
       rag-server:
+        condition: service_healthy
+      tei:
         condition: service_healthy
     networks:
       - private
@@ -188,6 +233,8 @@ volumes:
   postgres_data:
     driver: local
   docs_repo:
+    driver: local
+  tei_data:
     driver: local
 
 secrets:

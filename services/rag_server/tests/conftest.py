@@ -24,9 +24,9 @@ _DEFAULT_ENV = {
     "DATABASE_HOST": "localhost",
     "DATABASE_PORT": "5432",
     "DATABASE_NAME": "ragbench",
-    "OLLAMA_URL": "http://localhost:11434",
-    "EMBEDDING_MODEL": "nomic-embed-text:latest",
-    "LLM_MODEL": "gemma3:4b",
+    "TEI_URL": "http://localhost:8080",
+    "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
+    "LLM_MODEL": "Qwen/Qwen2.5-14B-Instruct",
 }
 
 for key, value in _DEFAULT_ENV.items():
@@ -125,9 +125,9 @@ def integration_env():
         "DATABASE_HOST": os.getenv("DATABASE_HOST", "localhost"),
         "DATABASE_PORT": os.getenv("DATABASE_PORT", "5432"),
         "DATABASE_NAME": os.getenv("DATABASE_NAME", "ragbench"),
-        "OLLAMA_URL": os.getenv("OLLAMA_URL", "http://localhost:11434"),
-        "EMBEDDING_MODEL": os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest"),
-        "LLM_MODEL": os.getenv("LLM_MODEL", "gemma3:4b"),
+        "TEI_URL": os.getenv("TEI_URL", "http://localhost:8080"),
+        "EMBEDDING_MODEL": os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B"),
+        "LLM_MODEL": os.getenv("LLM_MODEL", "Qwen/Qwen2.5-14B-Instruct"),
         "ENABLE_HYBRID_SEARCH": "true",
         "ENABLE_RERANKER": "true",
         "ENABLE_CONTEXTUAL_RETRIEVAL": "false",  # Disable for faster tests
@@ -152,7 +152,7 @@ def integration_env():
 
 
 def create_mock_models_config():
-    """Create a mock ModelsConfig for unit tests (uses ollama, no API key required)."""
+    """Create a mock ModelsConfig for unit tests (uses vllm/tei, no API key required)."""
     from infrastructure.config.models_config import (
         ModelsConfig,
         LLMConfig,
@@ -164,16 +164,19 @@ def create_mock_models_config():
 
     return ModelsConfig(
         llm=LLMConfig(
-            provider="ollama",
-            model="gemma3:4b",
-            base_url="http://localhost:11434",
+            provider="vllm",
+            model="Qwen/Qwen2.5-14B-Instruct",
+            base_url="http://vllm:8000/v1",
             timeout=120,
-            keep_alive="10m",
         ),
         embedding=EmbeddingConfig(
-            provider="ollama",
-            model="nomic-embed-text:latest",
-            base_url="http://localhost:11434",
+            provider="tei",
+            model="Qwen/Qwen3-Embedding-0.6B",
+            base_url="http://tei:80",
+            embed_batch_size=32,
+            timeout=60,
+            query_instruction="Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+            text_instruction="",
         ),
         eval=EvalConfig(
             provider="anthropic",

@@ -10,7 +10,7 @@ export type Health = 'good' | 'warn' | 'bad' | 'unknown';
 export type Bracket = 'retrieval' | 'generation';
 
 const RETRIEVAL_GROUPS = new Set(['retrieval']);
-const GENERATION_GROUPS = new Set(['generation', 'citation', 'abstention']);
+const GENERATION_GROUPS = new Set(['generation', 'citation', 'groundedness', 'abstention']);
 
 const HEALTH_RANK: Record<Health, number> = { unknown: 0, good: 1, warn: 2, bad: 3 };
 

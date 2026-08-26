@@ -2,7 +2,7 @@
 Integration test fixtures requiring docker services.
 
 Run with: pytest tests/integration -v --run-integration
-Requires: docker compose up -d (postgres, ollama)
+Requires: docker compose up -d (postgres, tei)
 """
 import pytest
 import os
@@ -51,19 +51,19 @@ def check_services(integration_env):
     except Exception as e:
         pytest.fail(f"PostgreSQL not available: {e}")
 
-    # Check Ollama
-    ollama_url = integration_env.get("OLLAMA_URL", "http://localhost:11434")
+    # Check TEI
+    tei_url = integration_env.get("TEI_URL", "http://localhost:8080")
     try:
-        resp = httpx.get(f"{ollama_url}/api/tags", timeout=5.0)
+        resp = httpx.get(f"{tei_url}/health", timeout=5.0)
         resp.raise_for_status()
     except Exception as e:
-        pytest.fail(f"Ollama not available at {ollama_url}: {e}")
+        pytest.fail(f"TEI not available at {tei_url}: {e}")
 
-    # Check required models are available
-    models = [m.get("name", "") for m in resp.json().get("models", [])]
-    for required in ["gemma3", "nomic-embed-text"]:
-        if not any(required in m for m in models):
-            pytest.fail(f"Required Ollama model '{required}' not found. Available: {models}")
+    # Check the expected embedding model is loaded
+    info = httpx.get(f"{tei_url}/info", timeout=5.0).json()
+    model_id = info.get("model_id", "")
+    if "Qwen3-Embedding" not in model_id:
+        pytest.fail(f"Unexpected TEI model loaded: {model_id!r}")
 
     # Check RAG server
     rag_url = os.getenv("RAG_SERVER_URL", "http://localhost:8001")
@@ -123,7 +123,7 @@ def sample_pdf(tmp_path):
 
     Key Concepts:
     1. PostgreSQL with pgvector stores embeddings.
-    2. Ollama provides local LLM inference capabilities.
+    2. TEI provides local embedding inference; vLLM provides local LLM inference.
     3. pg_search provides BM25 full-text search.
     4. Hybrid search combines dense and sparse retrieval methods.
 

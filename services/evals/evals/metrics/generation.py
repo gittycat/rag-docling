@@ -5,6 +5,7 @@ Measures answer quality using LLM-as-judge evaluation.
 
 from typing import Any
 
+from evals.config import resolve_judge_config
 from evals.metrics.base import BaseMetric
 from evals.judges import LLMJudge
 from evals.schemas import (
@@ -30,7 +31,8 @@ class Faithfulness(BaseMetric):
     @property
     def judge(self) -> LLMJudge:
         if self._judge is None:
-            self._judge = LLMJudge()
+            # Resolved from active.eval, explicitly — LLMJudge has no default.
+            self._judge = LLMJudge(resolve_judge_config())
         return self._judge
 
     @property
@@ -99,7 +101,8 @@ class AnswerCorrectness(BaseMetric):
     @property
     def judge(self) -> LLMJudge:
         if self._judge is None:
-            self._judge = LLMJudge()
+            # Resolved from active.eval, explicitly — LLMJudge has no default.
+            self._judge = LLMJudge(resolve_judge_config())
         return self._judge
 
     @property
@@ -169,7 +172,8 @@ class AnswerRelevancy(BaseMetric):
     @property
     def judge(self) -> LLMJudge:
         if self._judge is None:
-            self._judge = LLMJudge()
+            # Resolved from active.eval, explicitly — LLMJudge has no default.
+            self._judge = LLMJudge(resolve_judge_config())
         return self._judge
 
     @property

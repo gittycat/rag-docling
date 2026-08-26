@@ -14,7 +14,7 @@ logging to stdout. There is no external log aggregation, no tracing, and (see
 | `GET /health` | evals | Nothing — returns `{"status": "ok"}` unconditionally, no dependency checks. |
 
 Both are trivial liveness probes: they confirm the process is up and serving
-HTTP, not that its dependencies (Postgres, Ollama) are reachable.
+HTTP, not that its dependencies (Postgres, TEI) are reachable.
 Docker's own healthchecks for `rag-server` and `evals` poll exactly these
 endpoints (via a Python `urllib` one-liner), so the Docker-level "healthy"
 status inherits the same limitation — it verifies the uvicorn process
@@ -26,7 +26,7 @@ at all.
 Real component health lives elsewhere: `GET /metrics/system` (below) actually
 issues a `SELECT 1` against Postgres, a BM25 probe query against
 `idx_chunks_bm25`, a vector probe against `idx_chunks_embedding`, and a
-`GET /api/tags` against Ollama, and reports both an
+`GET /health` against the TEI embedding service, and reports both an
 overall `health_status` (`"healthy"` / `"degraded"`) and a per-component
 `component_status` dict. If you need to know whether the system is actually
 working, use `/metrics/system`, not `/health`.
@@ -54,8 +54,8 @@ All under `services/rag_server/api/routes/metrics.py`:
 
 | Route | Returns |
 |---|---|
-| `GET /metrics/system` | Model config, retrieval config, `document_count`, `chunk_count`, `health_status`, and `component_status` (`postgres`, `bm25`, `vector_store`, `ollama`) — the one endpoint that actually checks dependencies, described above. |
-| `GET /metrics/models` | Per-model detail (LLM, embedding, reranker, eval): name, provider, parameter count, disk size (queried live from Ollama where applicable), context window, a reference URL, and a load/availability status. |
+| `GET /metrics/system` | Model config, retrieval config, `document_count`, `chunk_count`, `health_status`, and `component_status` (`postgres`, `bm25`, `vector_store`, `tei`) — the one endpoint that actually checks dependencies, described above. |
+| `GET /metrics/models` | Per-model detail (LLM, embedding, reranker, eval): name, provider, parameter count, disk size (read live from TEI's `/info` for the embedding model), context window, a reference URL, and a load/availability status. |
 | `GET /metrics/retrieval` | Current retrieval configuration: hybrid search (BM25 + vector + RRF) on/off, contextual retrieval on/off, reranker enabled/model/`top_n`, `top_k`. |
 
 A module docstring in `metrics.py` says evaluation-specific endpoints "moved
@@ -67,48 +67,42 @@ stale.
 
 Two more endpoints live in `api/routes/health.py` rather than `metrics.py`:
 `GET /models/info` (current LLM/embedding/reranker model, hosting type, and
-cost-per-1M-token rates — see "Cost tracker" below for where those rates come
+cost-per-1M-token rates — see "Pricing" below for where those rates come
 from) and `GET /config` (currently just `max_upload_size_mb`, read from the
 `MAX_UPLOAD_SIZE` env var).
 
-## Cost tracker
+## Pricing
 
-`services/rag_server/services/cost_tracker.py` tracks token usage and
-estimates USD cost for a run. `CostTracker` is a plain dataclass:
-`track_query(input_tokens, output_tokens)` accumulates running totals and a
-per-query list; `get_metrics(model_name)` returns total input/output/overall
-tokens, `estimated_cost_usd`, and `cost_per_query_usd`; `reset()` clears all
-of it. State is **in-memory only** — there is no persistence layer backing
-the tracker, so counts reset whenever the process restarts.
+Per-1M-token rates live in one module per service: `services/evals/evals/pricing.py`
+and `services/rag_server/services/pricing.py`. The services share no Python package,
+so the rate table and its matching logic are duplicated the same way `LLMProvider`
+is. rag-server carries only the resolution half (`resolve_rates` and its helpers);
+the eval service adds the cost-computation functions on top.
 
-Pricing comes from a hardcoded per-1M-token lookup table, `TOKEN_PRICING`,
-matched by exact model name first and then by prefix (so `gemma3:4b`
-normalizes to `gemma3` and matches the Ollama entry). Unknown models fall
-back to a conservative `DEFAULT_PRICING` of `{"input": 1.00, "output": 3.00}`
-per 1M tokens.
+The rate tables are kept identical by hand and currently agree — same rates for every
+shared model, with one legacy `gpt-3.5-turbo` entry only rag-server still carries.
+This replaced three independent tables (`cost_tracker.py`, an inline dict in
+`health.py`, and `evals/config.py`) that had drifted to different values for the same
+models. A divergence check belongs in CI; there is not one yet.
 
-### Two independent, drifting pricing tables
+`resolve_rates(model, input_per_1m=None, output_per_1m=None)` returns a `ModelRates`
+with a `source` of `"table"` (matched the static roster), `"injected"` (rates passed
+by the caller), or `None` when the model is **unpriced**.
 
-There are **two separate hardcoded pricing tables in the codebase**, neither
-sourced from `config.yml` or an external pricing feed, and they do not agree:
+Unpriced is a real state, not zero. An open-weight model served from vLLM has an HF
+repo id (`Qwen/Qwen3-32B-AWQ`) that matches no static entry, and reporting it as
+free would make self-hosting win any cost comparison by default. Unpriced models are
+excluded from cost scoring and surface as `null` with `cost_rate_source: "unpriced"`
+on `GET /models/info`.
 
-- `services/rag_server/services/cost_tracker.py` — `TOKEN_PRICING`, keyed by
-  model-name prefix (e.g. `claude-3-5-sonnet`, `gpt-4o`, `deepseek-chat`),
-  covering OpenAI, Anthropic, Google, DeepSeek, Moonshot, and zero-cost Ollama
-  entries.
-- `services/rag_server/api/routes/health.py` — an inline `MODEL_COSTS` dict
-  used only by `GET /models/info`, keyed by exact model name (e.g.
-  `claude-3-5-sonnet-20241022`) rather than prefix, with a different model
-  roster (no Ollama entries at all) and at least one differing rate
-  (`deepseek-chat` is `{0.27, 1.10}` here vs `{0.14, 0.28}` in
-  `cost_tracker.py`).
+To price a self-hosted endpoint, inject the amortized rate — GPU instance price
+divided by measured throughput — via the `cost_per_1m_input_tokens` /
+`cost_per_1m_output_tokens` overrides that the eval runner already plumbs through.
+A rate of zero must be declared explicitly (as the TEI embedder is in
+`EMBEDDING_COSTS`); it is never inferred from a missing entry.
 
-A third, also-independent table exists in the `evals` service
-(`services/evals/evals/config.py` — `MODEL_COSTS`/`EMBEDDING_COSTS`, used for
-eval cost scoring) with yet another set of values for overlapping models.
-None of the three tables import from or validate against each other. An
-operator relying on the cost figures from one endpoint should not assume they
-match what another part of the system reports for the same model.
+Judge tokens count. `CostPerQuery` attributes generation and judge usage separately;
+an eval run's judge calls are usually where the token volume actually sits.
 
 ## Latency tracker
 
@@ -168,9 +162,6 @@ stream, which does not scale past a handful of concurrent requests.
 
 ## Recommendations (not currently implemented)
 
-- Reconcile the pricing tables (`cost_tracker.py`, `health.py`,
-  `evals/config.py`) into a single source of truth, or source them from a
-  config file / pricing feed instead of three hand-maintained Python dicts.
 - Add a request/correlation ID generated at the edge (webapp or rag-server
   ingress) and threaded through logging calls and any outbound calls to
   task-worker/evals, so a single request's log lines can be joined across

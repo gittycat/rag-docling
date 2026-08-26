@@ -27,7 +27,7 @@ venv.
 ### Integration tests
 
 Integration tests live in `services/rag_server/tests/integration/` and exercise the real stack —
-Postgres, Ollama, and the rag-server HTTP API — through a disposable container that
+Postgres, TEI, and the rag-server HTTP API — through a disposable container that
 reuses the `rag-server` service's own image and environment (see "Integration test design"
 below). The main compose stack (`just up`) must already be running.
 
@@ -82,7 +82,7 @@ all skipped by default:
 
 | Marker | Selects | Enabling flag | Default |
 |---|---|---|---|
-| `integration` | tests requiring Docker services (Postgres, Ollama) | `--run-integration` | skipped |
+| `integration` | tests requiring Docker services (Postgres, TEI) | `--run-integration` | skipped |
 | `slow` | tests taking longer than 30 seconds | `--run-slow` | skipped |
 | `eval` | RAG evaluation tests, require an API key for the active eval provider | `--run-eval` (plus optional `--eval-samples=N`) | skipped |
 
@@ -109,8 +109,11 @@ the real image, the real secrets mounts, the real `private`/`public` network pla
 
 The integration `conftest.py` layers two more pieces on top of this:
 
-- A session-scoped `check_services` fixture fails the whole session up front if Postgres, Ollama,
-  or the rag-server `/health` endpoint aren't reachable, then drains the task queue (waits up to
+- A session-scoped `check_services` fixture fails the whole session up front if Postgres, TEI,
+  or the rag-server `/health` endpoint aren't reachable. It does more than ping TEI: it also
+  reads `/info` and fails if the loaded model is not the expected one, so a stale container
+  serving the wrong model is caught up front rather than producing quietly wrong vectors.
+  It then drains the task queue (waits up to
   600 seconds for `job_tasks` rows to leave `pending`/`in_progress`) so pre-existing async work
   doesn't interfere with the run.
 - When `/run/secrets` exists on disk (i.e. the tests are actually running inside the `rag-server`
@@ -137,7 +140,7 @@ The integration `conftest.py` layers two more pieces on top of this:
   responses while workers are still committing progress.
 - `reset_config_singleton` (autouse, unit tests) resets the models-config singleton before and
   after every test; `mock_models_config` patches `get_models_config` to a fixed configuration
-  (Ollama LLM/embedding, Anthropic eval, reranker enabled) for isolated unit tests.
+  (vLLM LLM, TEI embedding, Anthropic eval, reranker enabled) for isolated unit tests.
 
 ## `tests/test_bm25_query_safety.py`
 
@@ -156,8 +159,9 @@ interpolated into the SQL string (`docs/suggestions.md` #4.4).
 ## Import-time side effects
 
 `infrastructure/tasks/task_worker.py` used to call `init_settings()`/`initialize_settings()` at
-module scope, which reached the network (an Ollama reachability probe that `sys.exit(1)`s on
-failure). Importing it without Ollama running took down the whole pytest
+module scope, which reached the network (an embedding-endpoint reachability probe that
+`sys.exit(1)`s on failure — `check_ollama_reachable` then, `check_embedding_endpoint_reachable`
+now). Importing it without that endpoint running took down the whole pytest
 collection with `INTERNALERROR`/`SystemExit`, and the tests worked around it by patching during
 the import. Both calls now happen in `main()`; `test_task_worker_concurrency.py` asserts the
 import stays inert (`docs/suggestions.md` #4.9).

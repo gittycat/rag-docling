@@ -4,6 +4,7 @@ import statistics
 from typing import Any
 
 from evals.metrics.base import BaseMetric
+from evals.pricing import ModelRates, UsageTotals, resolve_rates
 from evals.schemas import (
     EvalQuestion,
     EvalResponse,
@@ -177,9 +178,17 @@ class LatencyP95(BaseMetric):
 
 
 class CostPerQuery(BaseMetric):
-    """Average cost per query in USD.
+    """Average cost per query in USD — answer generation plus judging.
 
     Lower is better.
+
+    Two things this deliberately refuses to do. It will not price a model it has
+    no rates for: the value is None ("unpriced") and the runner leaves the cost
+    objective out of the weighted score, because an unpriced model is unmeasured,
+    not free. And it will not report generation cost as if it were the run's
+    cost: judging is three LLM calls per query and is where an eval run's token
+    volume actually sits, so judge usage is added in — attributed separately in
+    the details so the two remain distinguishable.
     """
 
     def __init__(
@@ -187,32 +196,36 @@ class CostPerQuery(BaseMetric):
         model: str,
         cost_per_1m_input_tokens: float | None = None,
         cost_per_1m_output_tokens: float | None = None,
+        judge_usage: UsageTotals | None = None,
+        judge_model: str | None = None,
+        judge_cost_per_1m_input_tokens: float | None = None,
+        judge_cost_per_1m_output_tokens: float | None = None,
     ):
-        """Initialize with model name and cost rates.
+        """Initialize with the generation model and, optionally, judge usage.
 
-        Args:
-            model: Model name for display
-            cost_per_1m_input_tokens: Cost per 1M input tokens in USD (looks up from MODEL_COSTS if None)
-            cost_per_1m_output_tokens: Cost per 1M output tokens in USD (looks up from MODEL_COSTS if None)
+        Explicit rates are injected rather than looked up — that is the hook an
+        amortized self-hosted rate (instance price / measured throughput) arrives
+        through, and it is why they default to None instead of 0.0.
         """
-        from evals.config import MODEL_COSTS
-        costs = MODEL_COSTS.get(model, {"input": 0.0, "output": 0.0})
-        if costs is None:
-            for pattern, pattern_costs in MODEL_COSTS.items():
-                if pattern.endswith("/*"):
-                    provider = pattern[:-2]
-                    if model.startswith(provider) or provider in model.lower():
-                        costs = pattern_costs
-                        break
-            else:
-                costs = {"input": 0.0, "output": 0.0}
         self._model = model
-        self._input_cost = cost_per_1m_input_tokens if cost_per_1m_input_tokens is not None else costs["input"]
-        self._output_cost = cost_per_1m_output_tokens if cost_per_1m_output_tokens is not None else costs["output"]
+        self._rates = resolve_rates(
+            model, cost_per_1m_input_tokens, cost_per_1m_output_tokens
+        )
+        self._judge_usage = judge_usage
+        self._judge_model = judge_model or (judge_usage.model if judge_usage else None)
+        self._judge_rates = resolve_rates(
+            self._judge_model,
+            judge_cost_per_1m_input_tokens,
+            judge_cost_per_1m_output_tokens,
+        )
 
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def rates(self) -> ModelRates | None:
+        return self._rates
 
     @property
     def name(self) -> str:
@@ -224,11 +237,19 @@ class CostPerQuery(BaseMetric):
 
     @property
     def description(self) -> str:
-        return "Average cost per query in USD"
+        return "Average cost per query in USD (generation + judging)"
 
     @property
     def requires_gold(self) -> bool:
         return False
+
+    def _rate_details(self) -> dict[str, Any]:
+        return {
+            "model": self._model,
+            "rate_source": self._rates.source if self._rates else "unpriced",
+            "cost_per_1m_input_tokens": self._rates.input_per_1m if self._rates else None,
+            "cost_per_1m_output_tokens": self._rates.output_per_1m if self._rates else None,
+        }
 
     def compute(
         self,
@@ -236,14 +257,27 @@ class CostPerQuery(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
-        cost = 0.0
+        """Per-question generation cost. Judge usage is a batch-level quantity."""
+        usage = response.metrics.token_usage if response.metrics else None
+        prompt_tokens = usage.prompt_tokens if usage else 0
+        completion_tokens = usage.completion_tokens if usage else 0
 
-        if response.metrics and response.metrics.token_usage:
-            usage = response.metrics.token_usage
-            # Calculate cost using instance rates
-            cost = (
-                (usage.prompt_tokens / 1_000_000) * self._input_cost +
-                (usage.completion_tokens / 1_000_000) * self._output_cost
+        cost = (
+            self._rates.cost(prompt_tokens, completion_tokens)
+            if self._rates is not None
+            else None
+        )
+
+        details: dict[str, Any] = {
+            "cost_usd": cost,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            **self._rate_details(),
+        }
+        if cost is None:
+            details["note"] = (
+                f"Model '{self._model}' is unpriced — no rates in the pricing table, "
+                "MODEL_PRICE_OVERRIDES or /models/info. Excluded from cost scoring."
             )
 
         return MetricResult(
@@ -251,20 +285,7 @@ class CostPerQuery(BaseMetric):
             value=cost,
             group=self.group,
             sample_size=1,
-            details={
-                "cost_usd": cost,
-                "model": self.model,
-                "prompt_tokens": (
-                    response.metrics.token_usage.prompt_tokens
-                    if response.metrics and response.metrics.token_usage
-                    else 0
-                ),
-                "completion_tokens": (
-                    response.metrics.token_usage.completion_tokens
-                    if response.metrics and response.metrics.token_usage
-                    else 0
-                ),
-            },
+            details=details,
         )
 
     async def compute_batch(
@@ -275,48 +296,107 @@ class CostPerQuery(BaseMetric):
         concurrency: int = 10,
         **kwargs: Any,
     ) -> MetricResult:
-        """Compute average cost per query across batch."""
-        costs = []
+        """Average cost per query across the batch, judging included."""
         total_prompt_tokens = 0
         total_completion_tokens = 0
         per_question: dict[str, float] = {}
+        counted = 0
 
         for q, r in zip(questions, responses):
-            if r.metrics and r.metrics.token_usage:
-                usage = r.metrics.token_usage
-                # Calculate cost using instance rates
-                cost = (
-                    (usage.prompt_tokens / 1_000_000) * self._input_cost +
-                    (usage.completion_tokens / 1_000_000) * self._output_cost
+            usage = r.metrics.token_usage if r.metrics else None
+            if not usage:
+                continue
+            counted += 1
+            total_prompt_tokens += usage.prompt_tokens
+            total_completion_tokens += usage.completion_tokens
+            if self._rates is not None:
+                per_question[q.id] = self._rates.cost(
+                    usage.prompt_tokens, usage.completion_tokens
                 )
-                costs.append(cost)
-                per_question[q.id] = cost
-                total_prompt_tokens += usage.prompt_tokens
-                total_completion_tokens += usage.completion_tokens
 
-        if not costs:
+        judge = self._judge_usage
+        judge_has_usage = judge is not None and judge.has_usage
+
+        if counted == 0 and not judge_has_usage:
             return MetricResult(
                 name=self.name,
-                value=0.0,
+                value=None,
                 group=self.group,
                 sample_size=0,
-                details={"note": "No token usage data available"},
+                details={
+                    "note": (
+                        "No token usage data available — cost is unknown, not zero."
+                    ),
+                    **self._rate_details(),
+                },
             )
 
-        avg_cost = sum(costs) / len(costs)
-        total_cost = sum(costs)
+        # An unpriced component makes the total unknowable, so the whole metric
+        # goes unpriced rather than silently under-reporting the workload.
+        unpriced = []
+        if counted > 0 and self._rates is None:
+            unpriced.append("generation")
+        if judge_has_usage and self._judge_rates is None:
+            unpriced.append("judge")
+
+        generation_cost = (
+            self._rates.cost(total_prompt_tokens, total_completion_tokens)
+            if self._rates is not None
+            else None
+        )
+        if not judge_has_usage:
+            judge_cost = 0.0
+        elif self._judge_rates is not None:
+            judge_cost = self._judge_rates.cost(
+                judge.prompt_tokens, judge.completion_tokens
+            )
+        else:
+            judge_cost = None
+
+        # Queries are the denominator for both components: judging is a per-query
+        # cost of running this eval, it is just billed in a different place.
+        query_count = counted or len(questions) or 1
+
+        if unpriced:
+            total_cost = None
+            avg_cost = None
+        else:
+            total_cost = (generation_cost or 0.0) + (judge_cost or 0.0)
+            avg_cost = total_cost / query_count
+
+        details: dict[str, Any] = {
+            "avg_cost_usd": avg_cost,
+            "total_cost_usd": total_cost,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "generation_cost_usd": generation_cost,
+            "per_question": per_question,
+            "query_count": query_count,
+            **self._rate_details(),
+        }
+
+        if judge is not None:
+            details["judge"] = {
+                **judge.as_dict(),
+                "model": self._judge_model,
+                "cost_usd": judge_cost,
+                "rate_source": (
+                    self._judge_rates.source if self._judge_rates else "unpriced"
+                ),
+            }
+
+        if unpriced:
+            details["unpriced_components"] = unpriced
+            details["note"] = (
+                f"Unpriced: {', '.join(unpriced)}. Cost is unmeasured, not zero, "
+                "so this run is excluded from the cost objective. Supply rates via "
+                "MODEL_PRICE_OVERRIDES or /models/info."
+            )
 
         return MetricResult(
             name=self.name,
             value=avg_cost,
             group=self.group,
-            sample_size=len(costs),
-            details={
-                "avg_cost_usd": avg_cost,
-                "total_cost_usd": total_cost,
-                "total_prompt_tokens": total_prompt_tokens,
-                "total_completion_tokens": total_completion_tokens,
-                "model": self.model,
-                "per_question": per_question,
-            },
+            sample_size=counted,
+            details=details,
         )

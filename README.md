@@ -32,15 +32,20 @@ These metrics allow admins to determine the best combinations of LLM models and 
 - **RAG Pipeline**: Docling, LlamaIndex
 - **Vector store**: pgvector + pgvectorscale StreamingDiskANN, inside the same PostgreSQL
 - **Search**: Hybrid (BM25 + Vector + RRF)
-- **LLM**: Ollama (local) or cloud providers (OpenAI, Anthropic, etc.)
+- **LLM**: cloud providers (OpenAI, Anthropic, etc.) or a self-hosted vLLM endpoint
+- **Embeddings**: self-hosted HuggingFace Text Embeddings Inference (TEI), runs as a Docker Compose service
 - **Infrastructure**: Docker compose
 
 ## Requirements
 
 - **Docker** - Docker Desktop, OrbStack, or Podman
-- **Ollama** - For local AI models (optional if using cloud only)
 - **4GB RAM** - For local development with slow inference.
 - **2GB disk** - For models and data for development.
+
+Embeddings run locally out of the box via the `tei` Compose service — no separate
+install. On the very first boot it downloads the embedding model's weights
+(~1.2GB), which takes a few minutes on a fast connection; `just init` pre-warms
+this so `docker compose up` isn't the first time it happens.
 
 ## Status
 
@@ -58,26 +63,18 @@ All code is reviewed, tested (TDD), and validated for correctness and security.
 
 **macOS:**
 ```bash
-# Install Ollama
-brew install ollama
-
-# Download AI models
-ollama pull gemma3:4b
-ollama pull nomic-embed-text
-
 # Install Docker
 brew install orbstack            # or Docker Desktop if you prefer
 ```
 
-**Linux:**
-```bash
-# Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
+**Linux:** install Docker via your distribution's usual method.
 
-# Download AI models
-ollama pull gemma3:4b
-ollama pull nomic-embed-text
-```
+Embedding inference (TEI, serving `Qwen/Qwen3-Embedding-0.6B`) runs as a Docker
+Compose service — nothing to install on the host beyond Docker itself. Fully
+local generation is not out-of-the-box the way embeddings are: it requires
+pointing `active.inference` at a self-hosted vLLM endpoint you run separately
+(see the commented `qwen-vllm` example in `config.yml`); otherwise generation
+uses a cloud provider.
 
 ### 2. Download ragbench source
 
@@ -95,15 +92,17 @@ The `config.yml` file defines available models and RAG settings. The `active` se
 
 ```yaml
 active:
-  inference: gemma3-4b    # LLM for answering questions
-  embedding: nomic-embed  # Model for document embeddings
-  eval: claude-sonnet     # Model for evaluation metrics
+  inference: gpt5-mini    # LLM for answering questions
+  embedding: qwen3-embed  # Model for document embeddings
+  eval: gpt5-2            # Model for evaluation metrics
   reranker: minilm-l6     # Model for result reranking
 ```
 
-To switch models, change the active model name to any model defined in the `models` section. Local models (Ollama) work out of the box. Cloud models require API keys.
+To switch models, change the active model name to any model defined in the `models` section. `qwen3-embed` (self-hosted TEI) works out of the box — it's a Docker Compose service, not a host install. Cloud models require API keys.
 
-> Note: the checked-in `config.yml` may have cloud models active. For a local-only start, set `active.inference` and `active.embedding` to Ollama-backed models (e.g. `gemma3-4b`, `nomic-embed`); otherwise create the matching API key files under `secrets/` first.
+> Note: the checked-in `config.yml`'s embedding model already runs locally via TEI; `active.inference` and `active.eval` default to cloud models and need matching API key files under `secrets/`. To keep generation on-prem too, point `active.inference` at a self-hosted vLLM endpoint (see the commented `qwen-vllm` example in `config.yml`) — there is no local, zero-setup LLM option any more.
+>
+> **Breaking change note:** the active embedding model determines `vector_store.dimension` and the `document_chunks.embedding` column type. Switching embedding models always invalidates every stored vector — see [getting-running](docs/guide/02-getting-running.md) before changing it on a database that already has documents in it.
 
 **Secrets**:
 
@@ -119,11 +118,8 @@ Database access also uses secrets per service. Create the required files under `
 ### 4. Start the Application
 
 ```bash
-# Start Ollama (if not already running)
-ollama serve &
-
-# Pre-fetch the re-ranking model
-# This significantly speeds up the rag-server container startup.
+# Pre-fetch the re-ranking model and warm the TEI embedding weights.
+# This significantly speeds up the rag-server and tei container startup.
 just init
 
 # Start RAG Bench

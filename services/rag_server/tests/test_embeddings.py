@@ -16,19 +16,20 @@ from infrastructure.config.models_config import (
 
 
 def create_mock_models_config():
-    """Create a mock ModelsConfig for tests (uses ollama, no API key required)."""
+    """Create a mock ModelsConfig for tests (uses vllm/tei, no API key required)."""
     return ModelsConfig(
         llm=LLMConfig(
-            provider="ollama",
-            model="gemma3:4b",
-            base_url="http://localhost:11434",
+            provider="vllm",
+            model="Qwen/Qwen2.5-14B-Instruct",
+            base_url="http://vllm:8000/v1",
             timeout=120,
-            keep_alive="10m",
         ),
         embedding=EmbeddingConfig(
-            provider="ollama",
-            model="nomic-embed-text:latest",
-            base_url="http://localhost:11434",
+            provider="tei",
+            model="Qwen/Qwen3-Embedding-0.6B",
+            base_url="http://tei:80",
+            query_instruction="Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+            text_instruction="",
         ),
         eval=EvalConfig(
             provider="anthropic",
@@ -49,10 +50,10 @@ def mock_config():
 
 
 def test_embedding_function_initializes(mock_config):
-    """Ollama provider should dispatch to OllamaEmbedding with configured model"""
+    """TEI provider should dispatch to TextEmbeddingsInference with configured model"""
     from infrastructure.llm.embeddings import get_embedding_function
 
-    with patch("llama_index.embeddings.ollama.OllamaEmbedding") as mock_embeddings:
+    with patch("llama_index.embeddings.text_embeddings_inference.TextEmbeddingsInference") as mock_embeddings:
         mock_instance = MagicMock()
         mock_embeddings.return_value = mock_instance
 
@@ -61,15 +62,15 @@ def test_embedding_function_initializes(mock_config):
 
         mock_embeddings.assert_called_once()
         call_kwargs = mock_embeddings.call_args.kwargs
-        assert call_kwargs["model_name"] == "nomic-embed-text:latest"
-        assert call_kwargs["embed_batch_size"] == 64
+        assert call_kwargs["model_name"] == "Qwen/Qwen3-Embedding-0.6B"
+        assert call_kwargs["embed_batch_size"] == 32
 
 
 def test_embedding_function_has_correct_endpoint(mock_config):
-    """Embedding function should use correct Ollama endpoint"""
+    """Embedding function should use correct TEI endpoint"""
     from infrastructure.llm.embeddings import get_embedding_function
 
-    with patch("llama_index.embeddings.ollama.OllamaEmbedding") as mock_embeddings:
+    with patch("llama_index.embeddings.text_embeddings_inference.TextEmbeddingsInference") as mock_embeddings:
         mock_instance = MagicMock()
         mock_embeddings.return_value = mock_instance
 
@@ -77,7 +78,23 @@ def test_embedding_function_has_correct_endpoint(mock_config):
 
         call_kwargs = mock_embeddings.call_args.kwargs
         assert "base_url" in call_kwargs
-        assert "11434" in call_kwargs["base_url"]
+        assert call_kwargs["base_url"] == "http://tei:80"
+
+
+def test_embedding_function_applies_asymmetric_instructions(mock_config):
+    """query_instruction/text_instruction pass through, including an empty-but-not-None text_instruction."""
+    from infrastructure.llm.embeddings import get_embedding_function
+
+    with patch("llama_index.embeddings.text_embeddings_inference.TextEmbeddingsInference") as mock_embeddings:
+        mock_instance = MagicMock()
+        mock_embeddings.return_value = mock_instance
+
+        get_embedding_function()
+
+        call_kwargs = mock_embeddings.call_args.kwargs
+        assert call_kwargs["query_instruction"].startswith("Instruct:")
+        # "" is falsy but not None — must survive the `if value is not None` guard.
+        assert call_kwargs["text_instruction"] == ""
 
 
 def test_embedding_function_with_custom_config():
@@ -85,32 +102,32 @@ def test_embedding_function_with_custom_config():
     from infrastructure.llm.embeddings import get_embedding_function
 
     config = create_mock_models_config()
-    config.embedding.base_url = "http://custom-ollama:12345"
+    config.embedding.base_url = "http://custom-tei:12345"
 
     with patch("infrastructure.llm.embeddings.get_models_config", return_value=config):
-        with patch("llama_index.embeddings.ollama.OllamaEmbedding") as mock_embeddings:
+        with patch("llama_index.embeddings.text_embeddings_inference.TextEmbeddingsInference") as mock_embeddings:
             mock_instance = MagicMock()
             mock_embeddings.return_value = mock_instance
 
             embedding_fn = get_embedding_function()
 
             call_kwargs = mock_embeddings.call_args.kwargs
-            assert call_kwargs["base_url"] == "http://custom-ollama:12345"
+            assert call_kwargs["base_url"] == "http://custom-tei:12345"
 
 
 def test_embedding_function_generates_embeddings(mock_config):
-    """Embedding function should generate 768-dimensional embeddings"""
+    """Embedding function should generate 1024-dimensional embeddings"""
     from infrastructure.llm.embeddings import get_embedding_function
 
-    with patch("llama_index.embeddings.ollama.OllamaEmbedding") as mock_embeddings_class:
+    with patch("llama_index.embeddings.text_embeddings_inference.TextEmbeddingsInference") as mock_embeddings_class:
         mock_instance = MagicMock()
-        mock_instance.get_text_embedding.return_value = [0.1] * 768
+        mock_instance.get_text_embedding.return_value = [0.1] * 1024
         mock_embeddings_class.return_value = mock_instance
 
         embedding_fn = get_embedding_function()
         embedding = embedding_fn.get_text_embedding("test document")
 
-        assert len(embedding) == 768
+        assert len(embedding) == 1024
         assert all(isinstance(x, float) for x in embedding)
         mock_instance.get_text_embedding.assert_called_once()
 
@@ -119,12 +136,12 @@ def test_embedding_function_handles_multiple_texts(mock_config):
     """Embedding function should handle batch processing"""
     from infrastructure.llm.embeddings import get_embedding_function
 
-    with patch("llama_index.embeddings.ollama.OllamaEmbedding") as mock_embeddings_class:
+    with patch("llama_index.embeddings.text_embeddings_inference.TextEmbeddingsInference") as mock_embeddings_class:
         mock_instance = MagicMock()
         mock_instance.get_text_embedding_batch.return_value = [
-            [0.1] * 768,
-            [0.2] * 768,
-            [0.3] * 768,
+            [0.1] * 1024,
+            [0.2] * 1024,
+            [0.3] * 1024,
         ]
         mock_embeddings_class.return_value = mock_instance
 
@@ -133,7 +150,7 @@ def test_embedding_function_handles_multiple_texts(mock_config):
         embeddings = embedding_fn.get_text_embedding_batch(texts)
 
         assert len(embeddings) == 3
-        assert all(len(emb) == 768 for emb in embeddings)
+        assert all(len(emb) == 1024 for emb in embeddings)
         mock_instance.get_text_embedding_batch.assert_called_once_with(texts)
 
 

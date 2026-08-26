@@ -34,7 +34,7 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 ### 📊 Observability & Evaluation
 - **Built-in evaluation service** — a standalone API that runs automated quality assessments against multiple datasets (RAGBench, SQuAD 2.0, QASPER, HotpotQA, MS MARCO) plus your own golden Q&A.
 - **Five headline metrics** — Retrieval Relevance, Faithfulness, Answer Completeness, Answer Relevance, and Response Latency, distilled for at-a-glance dashboards.
-- **LLM-as-judge scoring** — a configurable judge model (OpenAI or Anthropic) scores faithfulness, answer correctness, and answer relevancy. Retrieval, citation, and abstention metrics are computed without a judge, so they are deterministic and free.
+- **LLM-as-judge scoring** — a configurable judge model (OpenAI or Anthropic, selected by `active.eval`) scores faithfulness, answer correctness, and answer relevancy. Retrieval, citation, and abstention metrics are computed without a judge, so they are deterministic and free.
 - **Run comparison & trends** — compare configurations side-by-side to find the best model/setting mix for your data and cost constraints. See [the tuning workflow](docs/guide/06-tuning-workflow.md) for how to tell a real difference from noise.
 
 ### 💬 Conversational RAG
@@ -60,26 +60,36 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 | **Async Processing** | PostgreSQL `SKIP LOCKED` work queue |
 | **Chat & Persistence** | PostgreSQL (sessions, history, metadata) |
 | **Privacy** | Microsoft Presidio + spaCy (PII detection & masking) |
-| **Evaluation** | In-house metrics, LLM-as-judge (Anthropic Claude) |
+| **Evaluation** | In-house metrics, LLM-as-judge (configurable — OpenAI by default) |
 | **Frontend** | SvelteKit, Tailwind CSS, DaisyUI |
-| **LLM Inference** | Ollama (local) or OpenAI / Anthropic / Google / DeepSeek / Moonshot (cloud) |
+| **Embedding Inference** | Self-hosted HuggingFace Text Embeddings Inference (TEI), a Docker Compose service |
+| **LLM Inference** | OpenAI / Anthropic / Google / DeepSeek / Moonshot (cloud) or a self-hosted vLLM endpoint |
 | **Deployment** | Docker Compose |
 
 ### Running fully local
 
 | Purpose | Model | Runs on |
 |---------|-------|---------|
-| Answer generation | gemma3:4b | Ollama (local) |
-| Embeddings | nomic-embed-text | Ollama (local) |
+| Answer generation | your choice | self-hosted vLLM endpoint (not a Compose service — see `config.yml`'s commented `qwen-vllm` example) |
+| Embeddings | Qwen3-Embedding-0.6B | TEI, a Docker Compose service (`tei`) |
 | Reranking | ms-marco-MiniLM-L-6-v2 | HuggingFace (local) |
 
-Set `active.inference` and `active.embedding` to Ollama-backed entries in
-`config.yml` and no request leaves your network. Note that the checked-in
-`config.yml` ships with cloud models selected for generation and evaluation — see
+Embeddings run locally out of the box — the checked-in `config.yml`'s active
+embedding model (`qwen3-embed`) already points at the in-Compose `tei` service,
+no setup required. Generation defaults to a cloud model; to keep it on-prem too,
+point `active.inference` at a vLLM endpoint you run yourself and no request
+leaves your network. See
 [the getting-running guide](docs/guide/02-getting-running.md) before first boot.
 
-Evaluation uses an LLM-as-judge, which requires a cloud model unless you point it
-at a local one. All model choices are swappable in `config.yml`.
+Evaluation uses an LLM-as-judge, and the shipped judge is a vendor-hosted model.
+Because judge prompts carry retrieved chunks and answers verbatim and are never
+masked, whether corpus content may reach it is a policy decision rather than a
+side effect: each model definition declares an `execution_boundary`
+(`customer_managed`, `aws_managed`, or `third_party`) and `data_policy` names the
+boundaries a confidential corpus is allowed to be judged in. A judge outside that
+allow-list — or one that declares no boundary — stops the run. See
+[privacy and PII](docs/guide/08-privacy-and-pii.md). All model choices are
+swappable in `config.yml`.
 
 ---
 
@@ -92,9 +102,14 @@ RAGBench ships as a set of Docker Compose services:
 - **Task worker** — async document ingestion
 - **Evaluation service** (FastAPI) — automated quality scoring
 - **PostgreSQL 17** — vector search, BM25 search, chat, queue, and metadata
-- **Ollama** (on the host) — local model inference
+- **TEI** (Compose service) — self-hosted embedding inference
 
-Minimum footprint for local development: Docker, Ollama, ~4 GB RAM, ~2 GB disk. Production on-prem deployments benefit from a GPU server sized for larger open-source models.
+Minimum footprint for local development: Docker, ~4 GB RAM, ~2 GB disk. The
+`tei` service's first cold start downloads its embedding model's weights from
+HuggingFace (a few minutes on a fast connection); `just init` pre-warms this
+so it isn't paid on first `docker compose up`. Production on-prem deployments
+benefit from a GPU server sized for larger open-source models, including for
+self-hosted generation via vLLM.
 
 ---
 

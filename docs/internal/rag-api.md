@@ -38,7 +38,7 @@ browser never sees or sends it.
 |---|---|---|---|---|
 | `GET /documents` | List all indexed documents | Query params `sort_by` (`uploaded_at`\|`file_name`\|`name`\|`chunks`, default `uploaded_at`; `name` is accepted as an alias for `file_name`) and `sort_order` (`asc`\|`desc`, default `desc`). Invalid values silently fall back to the defaults rather than erroring. | `DocumentListResponse { documents: list[dict] }`. Each dict has `id`, `file_name`, `file_type`, `chunks`, `uploaded_at`, `file_size_bytes`. Not sub-modeled — FastAPI does not validate the dict's inner keys. | 500 on any DB error |
 | `POST /documents/check-duplicates` | Check whether files (by content hash) already exist before uploading | `FileCheckRequest { files: list[{filename, size, hash}] }` | `FileCheckResponse { results: dict[filename, FileCheckResult] }`, where `FileCheckResult` is `{filename, exists, document_id, existing_filename, reason}` | 500 on DB error |
-| `POST /upload` | Upload one or more files for ingestion | `multipart/form-data`, field `files` (repeated) | `BatchUploadResponse { status: "queued", batch_id, tasks: list[{task_id, filename}] }` | 503 if the active embedding provider is Ollama and it fails a pre-flight reachability check (`GET {ollama_base_url}/api/tags`); 400 if every file was rejected (unsupported extension) and none queued |
+| `POST /upload` | Upload one or more files for ingestion | `multipart/form-data`, field `files` (repeated) | `BatchUploadResponse { status: "queued", batch_id, tasks: list[{task_id, filename}] }` | 503 if the active embedding provider is TEI and it fails a pre-flight reachability check (`GET {tei_base_url}/health`); 400 if every file was rejected (unsupported extension) and none queued |
 | `GET /tasks/{batch_id}/status` | Poll ingestion progress for a batch | Path param `batch_id` (UUID) | `BatchProgressResponse { batch_id, total, completed, tasks: dict }` | 404 if batch not found; 400 if `batch_id` is not a valid UUID |
 | `DELETE /documents/{document_id}` | Delete a document and its indexed chunks | Path param `document_id` (UUID) | `DeleteResponse { status: "success", message }` | 404 if not found; 400 if `document_id` is not a valid UUID |
 | `GET /documents/{document_id}/download` | Download the original uploaded file | Path param `document_id` (UUID) | Raw file bytes (`FileResponse`, `media_type=application/octet-stream`) | 404 if the document row exists but the stored file is gone, or if the document doesn't exist at all; 400 on invalid UUID |
@@ -174,17 +174,17 @@ of the key (or just the last 3 for very short keys), never the full value.
 
 | Method & path | Purpose | Request | Response | Notable status codes |
 |---|---|---|---|---|
-| `GET /health` | Liveness check, unauthenticated | none | `{"status": "healthy"}` | Always 200 if the process is up — does not probe Postgres or Ollama |
-| `GET /models/info` | Model + pricing summary for the active LLM | none | `ModelsInfoResponse { llm_model, llm_provider, llm_hosting, embedding_model, reranker_model, reranker_enabled, cost_per_1m_input_tokens, cost_per_1m_output_tokens }` | — |
+| `GET /health` | Liveness check, unauthenticated | none | `{"status": "healthy"}` | Always 200 if the process is up — does not probe Postgres or TEI |
+| `GET /models/info` | Model + pricing summary for the active LLM | none | `ModelsInfoResponse { llm_model, llm_provider, llm_execution_boundary, embedding_model, reranker_model, reranker_enabled, cost_per_1m_input_tokens, cost_per_1m_output_tokens }` | — |
 | `GET /config` | Server-side operational config exposed to clients | none | `ConfigResponse { max_upload_size_mb }` (from env var `MAX_UPLOAD_SIZE`, default `80`) | — |
 | `GET /metrics/system` | Full system overview: models, retrieval config, doc/chunk counts, component health | none | `SystemMetrics` (nests `ModelsConfig`, `RetrievalConfig`, `document_count`, `chunk_count`, `health_status`, `component_status: dict[str, str]`) | 500 on error |
-| `GET /metrics/models` | Just the models portion of the above, standalone | none | `ModelsConfig { llm, embedding, reranker?, eval? }`, each a `ModelInfo` with `name`, `provider`, `model_type`, `is_local`, `size`, `reference_url`, `description`, `status` | 500 on error |
+| `GET /metrics/models` | Just the models portion of the above, standalone | none | `ModelsConfig { llm, embedding, reranker?, eval? }`, each a `ModelInfo` with `name`, `provider`, `model_type`, `execution_boundary`, `size`, `reference_url`, `description`, `status` | 500 on error |
 | `GET /metrics/retrieval` | Just the retrieval-config portion, standalone | none | `RetrievalConfig { retrieval_top_k, final_top_n, hybrid_search, contextual_retrieval, reranker, pipeline_description }` | 500 on error |
 
 `GET /health` differs from `/metrics/system`'s `component_status` in what it
 actually checks: `/health` only confirms the FastAPI process is answering
-requests. `/metrics/system` separately probes Postgres (`SELECT 1`) and Ollama
-(`GET {ollama_url}/api/tags`) and reports `"healthy"` / `"unhealthy"` /
+requests. `/metrics/system` separately probes Postgres (`SELECT 1`) and TEI
+(`GET {tei_base_url}/health`) and reports `"healthy"` / `"unhealthy"` /
 `"unavailable"` per component, rolling them up into `health_status`
 (`"healthy"` only if every component reported `"healthy"`, else `"degraded"`).
 

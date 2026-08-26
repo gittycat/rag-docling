@@ -12,6 +12,7 @@ class MetricGroup(str, Enum):
     RETRIEVAL = "retrieval"
     GENERATION = "generation"
     CITATION = "citation"
+    GROUNDEDNESS = "groundedness"
     ABSTENTION = "abstention"
     PERFORMANCE = "performance"
 
@@ -132,7 +133,7 @@ class ConfigSnapshot:
 
     Attributes:
         llm_model: LLM model name/identifier
-        llm_provider: LLM provider (ollama, anthropic, etc.)
+        llm_provider: LLM provider (vllm, anthropic, etc.)
         embedding_model: Embedding model name
         reranker_model: Reranker model (if enabled)
         retrieval_top_k: Number of chunks to retrieve (None if not captured)

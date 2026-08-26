@@ -68,7 +68,7 @@ requires re-ingestion.
 | Task worker | — | Background document processing |
 | Eval service | 8002 | Evaluation runs and saved results |
 | PostgreSQL | — | Documents, chunks, embeddings, chat history, tasks, and both search indexes |
-| Ollama | 11434 | Optional local inference on the host |
+| TEI | 80 (in-compose) | Self-hosted embedding inference, always on |
 
 The eval service calls the same RAG server endpoint as the application. An
 end-to-end eval therefore measures the code path used by real queries.

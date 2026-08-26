@@ -10,6 +10,17 @@ import yaml
 
 from evals.cache import CacheConfig
 
+# Pricing lives in evals.pricing — one table, one set of matching rules, and
+# "unpriced" as a real state instead of a silent $0. These names are re-exported
+# because callers have always imported them from evals.config.
+from evals.pricing import (  # noqa: F401
+    EMBEDDING_COSTS,
+    MODEL_COSTS,
+    ModelRates,
+    get_model_cost,
+    resolve_rates,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +70,7 @@ DEFAULT_WEIGHTS = {
     "accuracy": 0.30,  # Answer correctness
     "faithfulness": 0.20,  # Grounding in context
     "citation": 0.20,  # Citation precision/recall
+    "groundedness": 0.0,  # Claim-level grounding — reported, not scored, by default
     "retrieval": 0.15,  # Retrieval quality
     "cost": 0.10,  # Cost per query
     "latency": 0.05,  # Response time
@@ -105,46 +117,6 @@ class ScoringConfig:
         )
 
 
-# Cost lookup table (USD per 1M tokens)
-# Lookup is exact-match on the full model id (then "provider/*" wildcards), and
-# an unmatched model silently costs $0 — every model reachable from config.yml
-# must have an entry here or the cost objective scores it as free.
-MODEL_COSTS = {
-    # Anthropic
-    "claude-opus-5": {"input": 5.00, "output": 25.00},
-    "claude-opus-4-5-20251101": {"input": 5.00, "output": 25.00},
-    "claude-sonnet-5": {"input": 3.00, "output": 15.00},
-    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
-    # Retired 2026-06-15 (returns 404) but still referenced by config.yml's
-    # eval tier — priced so a run against it is not scored as free.
-    "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
-    "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
-    "claude-haiku-3-5-20241022": {"input": 0.80, "output": 4.00},
-    # OpenAI
-    "gpt-4o": {"input": 2.50, "output": 10.00},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "gpt-5-mini": {"input": 0.25, "output": 2.00},
-    "gpt-5-nano": {"input": 0.05, "output": 0.40},
-    "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
-    "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
-    "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
-    "gpt-5.2": {"input": 1.75, "output": 14.00},
-    "gpt-4-turbo": {"input": 10.00, "output": 30.00},
-    # Google, DeepSeek, and Moonshot providers are not currently supported
-    # (no Docker secret declared) — see rag_server/infrastructure/llm/config.py.
-    # Local/Ollama - free
-    "ollama/*": {"input": 0.0, "output": 0.0},
-}
-
-EMBEDDING_COSTS = {
-    # Per 1M tokens
-    "text-embedding-3-small": 0.02,
-    "text-embedding-3-large": 0.13,
-    "nomic-embed-text": 0.0,  # Ollama - free
-    "ollama/*": 0.0,
-}
-
-
 @dataclass
 class MetricConfig:
     """Configuration for which metrics to compute."""
@@ -154,21 +126,85 @@ class MetricConfig:
     citation: bool = True
     abstention: bool = True
     performance: bool = True
+    # Off by default because it is the only metric group whose cost scales with
+    # the *shape* of the answer rather than the number of questions: one judge
+    # call per claim, plus one per claim-citation link, against three per question
+    # for the whole generation group. Enable it deliberately (`--groundedness`),
+    # knowing the bill. See metrics/groundedness.py.
+    groundedness: bool = False
 
     # Retrieval metric parameters
     recall_k_values: list[int] = field(default_factory=lambda: [1, 3, 5, 10])
     precision_k_values: list[int] = field(default_factory=lambda: [1, 3, 5])
 
+    # Groundedness cost brakes. Both truncate rather than sample, and truncation
+    # is reported per question so a capped answer is visibly capped.
+    max_claims_per_answer: int = 5
+    max_citations_per_claim: int = 2
+
 
 @dataclass
 class JudgeConfig:
-    """Configuration for LLM-as-judge evaluation."""
+    """The fully resolved identity of the judge a run will actually call.
 
+    provider and model have no defaults on purpose. They used to default to
+    Anthropic, and because every entry point constructed JudgeConfig(enabled=...)
+    the defaults always won — `active.eval` in config.yml was dead configuration
+    and every run called Anthropic regardless of what it said. Build this with
+    resolve_judge_config(), never by hand outside tests.
+
+    execution_boundary carries the ExecutionBoundary *value* (a plain string such
+    as "third_party") rather than the enum, so this dataclass stays free of any
+    dependency on the infrastructure package and serializes into run metadata
+    unchanged.
+    """
+
+    provider: str
+    model: str
     enabled: bool = True
-    provider: str = "anthropic"
-    model: str = "claude-sonnet-4-20250514"
+    base_url: str | None = None
     temperature: float = 0.0
+    timeout: float = 120.0
     max_retries: int = 3
+    execution_boundary: str | None = None
+
+
+def resolve_judge_config(enabled: bool = True) -> JudgeConfig:
+    """Resolve the judge from `active.eval` in config.yml.
+
+    The single source of judge identity. Raises rather than falling back: a judge
+    that cannot be resolved must stop the run, not quietly become someone else's
+    API. Re-validates the resolved object against the data policy so the thing
+    the runtime calls is the thing that was checked.
+    """
+    from infrastructure.config.models_config import (
+        enforce_judge_boundary,
+        get_models_config,
+    )
+
+    models_config = get_models_config()
+    eval_config = models_config.eval
+
+    enforce_judge_boundary(
+        eval_config.execution_boundary,
+        models_config.data_policy,
+        f"{eval_config.provider}/{eval_config.model}",
+    )
+
+    return JudgeConfig(
+        provider=eval_config.provider,
+        model=eval_config.model,
+        enabled=enabled,
+        base_url=eval_config.base_url,
+        temperature=0.0,
+        timeout=float(eval_config.timeout),
+        max_retries=3,
+        execution_boundary=(
+            eval_config.execution_boundary.value
+            if eval_config.execution_boundary is not None
+            else None
+        ),
+    )
 
 
 @dataclass
@@ -191,7 +227,7 @@ class EvalConfig:
     )
     samples_per_dataset: int | None = 100
     metrics: MetricConfig = field(default_factory=MetricConfig)
-    judge: JudgeConfig = field(default_factory=JudgeConfig)
+    judge: JudgeConfig = field(default_factory=resolve_judge_config)
     scoring: ScoringConfig = field(default_factory=ScoringConfig.from_models_config)
     rag_server_url: str = "http://localhost:8001"
     runs_dir: Path = field(default_factory=lambda: Path("data/eval_runs"))
@@ -275,15 +311,21 @@ class EvalConfig:
                 "citation": self.metrics.citation,
                 "abstention": self.metrics.abstention,
                 "performance": self.metrics.performance,
+                "groundedness": self.metrics.groundedness,
                 "recall_k_values": self.metrics.recall_k_values,
                 "precision_k_values": self.metrics.precision_k_values,
+                "max_claims_per_answer": self.metrics.max_claims_per_answer,
+                "max_citations_per_claim": self.metrics.max_citations_per_claim,
             },
             "judge": {
                 "enabled": self.judge.enabled,
                 "provider": self.judge.provider,
                 "model": self.judge.model,
+                "base_url": self.judge.base_url,
                 "temperature": self.judge.temperature,
+                "timeout": self.judge.timeout,
                 "max_retries": self.judge.max_retries,
+                "execution_boundary": self.judge.execution_boundary,
             },
             "scoring": {
                 "weights": self.scoring.weights,
@@ -315,39 +357,3 @@ class EvalConfig:
             for ds in self.datasets
             if aspect in DATASET_ASPECTS.get(ds, [])
         ]
-
-
-def get_model_cost(
-    model: str,
-    prompt_tokens: int,
-    completion_tokens: int,
-) -> float:
-    """Calculate cost for a query based on model and token counts.
-
-    Args:
-        model: Model identifier
-        prompt_tokens: Number of input tokens
-        completion_tokens: Number of output tokens
-
-    Returns:
-        Cost in USD
-    """
-    # Check for exact match first
-    costs = MODEL_COSTS.get(model)
-
-    # Check for provider wildcard (e.g., "ollama/*")
-    if costs is None:
-        for pattern, pattern_costs in MODEL_COSTS.items():
-            if pattern.endswith("/*"):
-                provider = pattern[:-2]
-                if model.startswith(provider) or provider in model.lower():
-                    costs = pattern_costs
-                    break
-
-    # Default to free if unknown
-    if costs is None:
-        costs = {"input": 0.0, "output": 0.0}
-
-    return (
-        prompt_tokens * costs["input"] + completion_tokens * costs["output"]
-    ) / 1_000_000

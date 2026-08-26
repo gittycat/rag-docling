@@ -20,7 +20,10 @@
 		if (!modelsInfo) return null;
 		if (config.llm_model && config.llm_model !== modelsInfo.llm_model) return null;
 		const { cost_per_1m_input_tokens: input, cost_per_1m_output_tokens: output } = modelsInfo;
-		if (input === 0 && output === 0) return 'free (local)';
+		// Unpriced is not free. Saying 'free (local)' for a model nobody has priced
+		// is the claim this panel must not make on the operator's behalf.
+		if (input == null || output == null) return 'unpriced';
+		if (input === 0 && output === 0) return '$0.00 (configured)';
 		return `$${input.toFixed(2)} in · $${output.toFixed(2)} out / 1M tok`;
 	});
 

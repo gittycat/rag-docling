@@ -36,10 +36,19 @@
 		retrieval: 'Retrieval',
 		generation: 'Generation',
 		citation: 'Citation',
+		groundedness: 'Claim grounding',
 		abstention: 'Abstention',
 		cost_speed: 'Cost & speed'
 	};
-	const GROUP_ORDER = ['headline', 'retrieval', 'generation', 'citation', 'abstention', 'cost_speed'];
+	const GROUP_ORDER = [
+		'headline',
+		'retrieval',
+		'generation',
+		'citation',
+		'groundedness',
+		'abstention',
+		'cost_speed'
+	];
 
 	// Row descriptor: how to pull + format a value across runs.
 	interface Row {

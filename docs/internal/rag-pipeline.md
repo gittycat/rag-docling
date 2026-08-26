@@ -165,18 +165,35 @@ until it is dropped by hand; nothing reads or writes it.
 ## Embedding generation
 
 The embedding model and provider are selected via `active.embedding` in
-`config.yml` (currently `nomic-embed`, resolving to `nomic-embed-text:latest`
-served by Ollama). Only Ollama and OpenAI embedding providers are implemented;
-selecting anything else raises at startup. Embedding batch size defaults per
-provider (64 for Ollama, 100 for OpenAI) unless overridden by config.
+`config.yml` (currently `qwen3-embed`, resolving to `Qwen/Qwen3-Embedding-0.6B`
+served by the in-compose `tei` service). Only the `tei` and `openai` embedding
+providers are implemented; selecting anything else raises at startup. Embedding
+batch size defaults per provider (32 for TEI, matching its
+`--max-client-batch-size` default; 100 for OpenAI) unless overridden by config.
 
 At ingestion time, chunks are grouped into batches of `INGEST_BATCH_SIZE = 32`
 (a separate, hardcoded constant, distinct from the embedding client's own
-batch size). Each batch is embedded with one call to the embedding model, the
-resulting vectors are assigned onto the chunk nodes, and the batch is inserted
-into the vector store. A progress callback fires once per batch, which is why
-the "chunks completed" counter surfaced to the API can jump by up to 32 at a
-time rather than incrementing per chunk.
+batch size). Batches are issued **concurrently**, bounded by a semaphore sized
+from `retrieval.embed_concurrency` (default 8) — the same pattern
+`_add_contextual_retrieval_async` uses. The resulting vectors are assigned onto
+the chunk nodes, and the whole document's chunks are then inserted in a single
+`add_chunks()` write. A progress callback fires once per batch, which is why the
+"chunks completed" counter surfaced to the API can jump by up to 32 at a time
+rather than incrementing per chunk.
+
+A caveat on that concurrency, because the knob is easy to misread: it exists for
+the burst GPU embedder, where TEI can coalesce concurrent requests into larger
+forward passes. Against the always-on CPU `tei` container it does essentially
+nothing — measured at **1.01x** over serial on 160 chunks, because that
+container is compute-bound rather than round-trip-bound. Raising
+`embed_concurrency` will not make laptop ingestion faster.
+
+Batch failures are retried with exponential backoff. The retry classifier
+handles `httpx.HTTPStatusError` for 429 and 5xx (honouring `Retry-After` when
+TEI sends it) and falls back to substring matching on connection-style errors
+for everything else. A 400 is deliberately **not** retried — that is a bad
+request, typically an over-length chunk, and retrying it only delays the
+failure.
 
 Batch embedding retries up to 3 times with exponential backoff (2s, then 4s),
 but only for errors that look connection-related (matching
@@ -188,7 +205,7 @@ immediately and aborts the whole document's ingestion.
 
 Every chunk becomes one row in `document_chunks`: the text in `content`, the
 metadata in `metadata` (JSONB), and the embedding in `embedding`, a
-`vector(768)` column indexed with pgvectorscale's StreamingDiskANN. There is no
+`vector(1024)` column indexed with pgvectorscale's StreamingDiskANN. There is no
 second store and no collection concept — documents are distinguished by the
 `document_id` foreign key. See `database.md` for the schema and `retrieval.md`
 for how the two indexes are queried.

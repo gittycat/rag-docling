@@ -4,8 +4,8 @@ RAGBench supports two privacy modes:
 
 | Mode | Configuration | Strength |
 |---|---|---|
-| Keep processing local | Ollama-backed inference and embeddings | Structural: document text is not sent to a model provider |
-| Use cloud generation with masking | `pii.enabled: true` and local embeddings | Mitigation: detected identifiers are replaced before cloud calls |
+| Keep processing local | Self-hosted `tei` embeddings and a self-hosted `vllm` inference endpoint | Structural: document text is not sent to a model provider |
+| Use cloud generation with masking | `pii.enabled: true` and local (`tei`) embeddings | Mitigation: detected identifiers are replaced before cloud calls |
 
 Masking is weaker. Use local processing for genuinely sensitive documents.
 
@@ -39,9 +39,8 @@ Restart the services. Startup refuses two unsafe or incomplete configurations:
 | Cloud embedding provider | Embedding receives raw document text; masking covers the generation path |
 | GLiNER enabled but not installed | The requested detector cannot run |
 
-The eval service also refuses a cloud judge unless
-`pii.allow_cloud_judge: true`. Judge prompts contain unmasked chunks and answers.
-Enable this only for evaluation data that contains no real PII.
+Evaluation has its own, separate refusal that does not depend on `pii.enabled` —
+see [Where evaluation data may go](#where-evaluation-data-may-go) below.
 
 ## What is masked
 
@@ -54,6 +53,63 @@ Enable this only for evaluation data that contains no real PII.
 
 The generated contextual prefix is unmasked before local storage and embedding.
 Masking is a transmission-time control, not storage encryption.
+
+## Where evaluation data may go
+
+Masking never applies to evaluation. The LLM judge is given retrieved chunks and
+generated answers verbatim, so an eval run sends *more* corpus text to the judge
+than an ordinary query sends to the generation model. Turning `pii.enabled` on
+does not change this.
+
+Because of that, judge egress is controlled by its own `data_policy` block rather
+than by the masking settings. Two ideas do the work:
+
+**Execution boundary.** Every model definition under `models.*` declares where
+that endpoint actually runs:
+
+| `execution_boundary` | Means |
+|---|---|
+| `customer_managed` | A host or VPC you run — local Docker, your own EC2 or Kubernetes |
+| `aws_managed` | Bedrock or SageMaker: inside your AWS account, but not on your host |
+| `third_party` | OpenAI, Anthropic, or any other vendor-hosted API |
+
+The boundary is a property of the endpoint, not of the provider name. The same
+OpenAI-compatible protocol can address a container you run or a vendor's API, and
+only you know which — so you declare it. A model definition that declares no
+boundary is treated as unknown, and unknown is refused.
+
+**Data policy.** `data_policy` states what your corpus tolerates:
+
+```yaml
+data_policy:
+  corpus_confidential: true          # default: silence is not consent to publish
+  allowed_judge_boundaries:          # allow-list; anything absent is refused
+    - customer_managed
+    - aws_managed
+  eval_dataset_is_public: false      # the only escape hatch
+```
+
+The eval service refuses to start a run when the corpus is confidential and the
+resolved judge's boundary is not on the allow-list — including when it declares no
+boundary at all.
+
+`eval_dataset_is_public` is about the evaluation **dataset**, not the corpus. The
+public HuggingFace benchmarks (`ragbench`, `qasper`, `squad_v2`, `hotpotqa`,
+`msmarco`) contain nothing of yours, so judging them at a third-party endpoint
+leaks nothing. The checked-in `config.yml` ships `eval_dataset_is_public: true`
+for exactly that reason, which is what lets the default third-party judge run out
+of the box.
+
+**Set `eval_dataset_is_public: false` before evaluating your own documents** —
+that is, before running the `golden` dataset or any end-to-end run over your own
+corpus.
+
+Every judge definition shipped in `models.eval` is `third_party`, so with
+`eval_dataset_is_public: false` the shipped allow-list refuses the run. Adding
+`third_party` to `allowed_judge_boundaries` is a deliberate statement that your
+corpus may reach a vendor API — a decision to record, not a workaround for the
+check. An in-boundary judge is the better answer; the transport for one is not
+built yet.
 
 ## How detection works
 

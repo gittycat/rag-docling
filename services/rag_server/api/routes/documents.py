@@ -140,19 +140,19 @@ async def check_duplicate_documents(request: FileCheckRequest):
 async def upload_documents(files: List[UploadFile] = File(...)):
     logger.info(f"[UPLOAD] Upload endpoint called with {len(files)} files")
 
-    # Pre-flight check: reject early if Ollama is unreachable
+    # Pre-flight check: reject early if TEI is unreachable
     config = get_models_config()
-    if config.embedding.provider == "ollama":
+    if config.embedding.provider == "tei":
         import httpx
         base_url = (config.embedding.base_url or "").rstrip("/")
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{base_url}/api/tags")
+                resp = await client.get(f"{base_url}/health")
                 resp.raise_for_status()
         except Exception:
             raise HTTPException(
                 status_code=503,
-                detail="Ollama is not reachable. Please ensure Ollama is running before uploading documents.",
+                detail="TEI is not reachable. Please ensure the tei service is running before uploading documents.",
             )
 
     for f in files:

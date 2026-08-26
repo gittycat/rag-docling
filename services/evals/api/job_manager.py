@@ -27,7 +27,7 @@ from api.schemas import (
     RunDetailResponse,
     RunSummary,
 )
-from evals.config import DatasetName, EvalConfig, EvalTier, JudgeConfig
+from evals.config import DatasetName, EvalConfig, EvalTier, MetricConfig, resolve_judge_config
 from evals.runner import EvaluationRunner
 from evals.samples import SAMPLES_SUFFIX
 
@@ -115,6 +115,7 @@ class JobManager:
         samples: int = 100,
         seed: int | None = 42,
         judge_enabled: bool = True,
+        groundedness: bool = False,
         rag_server_url: str = "http://rag-server:8001",
     ) -> str:
         """Start or queue an eval job. Returns job_id.
@@ -135,7 +136,8 @@ class JobManager:
             rag_server_url=rag_server_url,
             runs_dir=self.runs_dir,
             tier=eval_tier,
-            judge=JudgeConfig(enabled=judge_enabled),
+            judge=resolve_judge_config(enabled=judge_enabled),
+            metrics=MetricConfig(groundedness=groundedness),
         )
         pending = _PendingJob(
             job_id=job_id,

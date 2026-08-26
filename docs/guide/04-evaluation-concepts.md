@@ -75,6 +75,42 @@ Interpret them according to `eval.citation_scope`:
 Without gold passages, citation metrics are `n/a`. Do not compare citation scores
 across datasets with different annotation coverage.
 
+## Claim grounding metrics
+
+Citation metrics ask whether a cited chunk is one of the gold passages. They do
+not ask whether that chunk supports the sentence citing it, so a citation can be
+"correct" while pointing at a passage that says something else. Faithfulness has
+the mirror problem: one judgement over the whole answer, which cannot say which
+sentence drifted and never looks at citations at all.
+
+This group splits the answer into sentence-level claims, reads the `[1]` markers
+attached to each one, and judges the pairs.
+
+| Metric | Meaning | Better direction |
+|---|---|---|
+| `claim_groundedness` | Fraction of claims the retrieved context supports | Higher |
+| `citation_entailment` | Fraction of citations whose passage supports the claim citing it | Higher |
+| `claim_citation_support` | Fraction of cited claims backed by something they cite | Higher |
+| `uncited_claim_rate` | Fraction of claims that cite nothing | Lower |
+
+Read the first three alongside the fourth: an answer that cites one sentence
+perfectly and leaves nine uncited scores 1.0 on all three.
+
+Two things to know before turning it on:
+
+- **It costs.** One judge call per claim, plus one per claim-citation link, on top
+  of the three per question the generation metrics use. It is off by default —
+  tick "Claim grounding" in the dashboard's run panel, or pass `--groundedness`
+  to `python -m evals.cli eval`. Capped at 5 claims per answer and 2 citations per
+  claim; the cap is reported per question when it bites.
+- **It needs `eval.citation_scope: explicit`.** Under the default `retrieved` the
+  model is never asked to emit `[1]` markers, so the two citation metrics are
+  `n/a` and `uncited_claim_rate` is 1.0 for every answer.
+
+The `groundedness` objective is weighted `0.0` in `config.yml`, so these metrics
+are reported without changing your headline score. Raising that weight is a
+scoring change: runs from before and after are not comparable.
+
 ## Abstention metrics
 
 Abstention means refusing to answer when the context is insufficient.
@@ -99,7 +135,7 @@ incomparable.
 | `latency_p50_ms` | Typical eval query |
 | `latency_p95_ms` | Slow-tail experience |
 | `latency_avg_ms` | Mean and per-question comparison data |
-| `cost_per_query` | Estimated API cost from token counts |
+| `cost_per_query` | Estimated API cost from token counts — answer generation **and** judging |
 
 Eval queries run concurrently, so latency is useful for like-for-like comparisons,
 not as an absolute user-experience measurement. Cost uses hardcoded price tables;
@@ -107,7 +143,7 @@ use it to compare configurations, not forecast a bill.
 
 ## The weighted score
 
-`eval.scoring` combines six objectives into one score:
+`eval.scoring` combines seven objectives into one score:
 
 ```yaml
 eval:
@@ -116,6 +152,7 @@ eval:
       accuracy: 0.30
       faithfulness: 0.20
       citation: 0.20
+      groundedness: 0.0     # claim grounding — reported, not scored
       retrieval: 0.15
       cost: 0.10
       latency: 0.05

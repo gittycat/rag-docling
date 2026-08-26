@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # ============================================================================
 
+# Matches TEI's --max-client-batch-size default (32), so a single batch never
+# gets rejected by the server-side cap.
 INGEST_BATCH_SIZE = 32
 
 SUPPORTED_EXTENSIONS = {
@@ -462,6 +464,112 @@ def add_document_metadata_to_chunks(
     return nodes
 
 
+def _is_retryable_error(e: Exception) -> tuple[bool, float | None]:
+    """Classify an embedding-batch failure as retryable, and pull a Retry-After hint.
+
+    TEI returns HTTP 429 when its internal queue is full and 5xx on transient
+    server trouble — both are worth retrying, unlike a 400 (bad request, e.g. a
+    chunk that overflows the model's max input length), which will never succeed
+    on retry. Non-httpx errors (raw connection failures, timeouts from the
+    underlying transport) fall back to the substring check.
+
+    Returns (retryable, retry_after_seconds).
+    """
+    import httpx
+
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        if status not in (429, 500, 502, 503, 504):
+            return False, None
+        retry_after = e.response.headers.get("Retry-After")
+        if retry_after is not None:
+            try:
+                return True, float(retry_after)
+            except ValueError:
+                pass
+        return True, None
+
+    error_msg = str(e).lower()
+    is_connection_error = any(
+        term in error_msg for term in ["eof", "connection", "timeout", "refused", "unavailable"]
+    )
+    return is_connection_error, None
+
+
+async def _process_batch_with_retry(
+    batch: List[TextNode], max_retries: int = 3, base_delay: float = 2.0
+) -> None:
+    """Embed a batch of nodes with exponential backoff retry on retryable errors."""
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            texts = [node.get_content(metadata_mode=MetadataMode.EMBED) for node in batch]
+            embeddings = await Settings.embed_model.aget_text_embedding_batch(texts)
+            for node, embedding in zip(batch, embeddings):
+                node.embedding = embedding
+            return  # Success
+        except Exception as e:
+            last_error = e
+            retryable, retry_after = _is_retryable_error(e)
+
+            if retryable and attempt < max_retries - 1:
+                delay = retry_after if retry_after is not None else base_delay * (2 ** attempt)
+                logger.warning(f"[EMBEDDING] Retryable error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                logger.info(f"[EMBEDDING] Retrying in {delay:.1f}s...")
+                await asyncio.sleep(delay)
+            else:
+                # Not retryable or last attempt - raise immediately
+                raise
+
+    # All retries failed
+    raise Exception(f"Failed to embed batch after {max_retries} attempts. Last error: {str(last_error)}") from last_error
+
+
+async def _embed_chunks_async(
+    nodes: List[TextNode],
+    progress_callback: Optional[Callable[[int, int], None]],
+    concurrency: int,
+) -> None:
+    total_nodes = len(nodes)
+    batches = [
+        (batch_start, nodes[batch_start:batch_start + INGEST_BATCH_SIZE])
+        for batch_start in range(0, total_nodes, INGEST_BATCH_SIZE)
+    ]
+    total_batches = len(batches)
+
+    sem = asyncio.Semaphore(concurrency)
+    embedding_start = time.time()
+    processed = 0
+
+    async def _process(batch_start: int, batch: List[TextNode]) -> None:
+        nonlocal processed
+        batch_num = batch_start // INGEST_BATCH_SIZE + 1
+        async with sem:
+            batch_start_time = time.time()
+            try:
+                await _process_batch_with_retry(batch, max_retries=3, base_delay=2.0)
+            except Exception as e:
+                raise Exception(
+                    f"Failed to embed batch {batch_num} "
+                    f"(chunks {batch_start + 1}-{batch_start + len(batch)}/{total_nodes}): {str(e)}"
+                ) from e
+
+            processed += len(batch)
+            batch_duration = time.time() - batch_start_time
+            elapsed = time.time() - embedding_start
+            avg_per_node = elapsed / processed
+            est_remaining = avg_per_node * (total_nodes - processed)
+            logger.info(
+                f"[EMBEDDING] Batch {batch_num}/{total_batches} embedded ({batch_duration:.2f}s) - "
+                f"Elapsed: {elapsed:.1f}s, Est. remaining: {est_remaining:.1f}s"
+            )
+            if progress_callback:
+                progress_callback(processed, total_nodes)
+
+    await asyncio.gather(*(_process(batch_start, batch) for batch_start, batch in batches))
+
+
 def embed_chunks(
     nodes: List[TextNode],
     progress_callback: Optional[Callable[[int, int], None]] = None
@@ -469,90 +577,34 @@ def embed_chunks(
     """
     Generate embeddings for chunks in batches, assigning them to node.embedding.
 
-    Flow:
-    - For each batch of INGEST_BATCH_SIZE chunks:
-      - Generate embeddings in a single batched call
-      - Assign each embedding to its node
-      - Call progress callback for tracking
-    - Includes retry logic for Ollama connection errors, at batch granularity
+    Batches of INGEST_BATCH_SIZE chunks are embedded concurrently, bounded by
+    retrieval.embed_concurrency (mirrors the contextual-retrieval concurrency
+    pattern in _add_contextual_retrieval_async), with per-batch retry on
+    retryable TEI errors (see _process_batch_with_retry).
 
     Nothing is persisted here: the embeddings ride along with the chunk rows
     into Postgres in a single add_chunks() write.
-
-    This is the second most time-consuming step (~15% of processing time).
     """
     logger.info(f"[EMBEDDING] Starting embedding generation for {len(nodes)} chunks")
 
-    if nodes:
-        first_text = nodes[0].get_content()
-        preview = first_text[:100] + "..." if len(first_text) > 100 else first_text
-        logger.info(f"[EMBEDDING] First chunk preview: {preview}")
+    if not nodes:
+        return
+
+    first_text = nodes[0].get_content()
+    preview = first_text[:100] + "..." if len(first_text) > 100 else first_text
+    logger.info(f"[EMBEDDING] First chunk preview: {preview}")
+
+    concurrency = get_models_config().retrieval.embed_concurrency
 
     embedding_start = time.time()
-    total_nodes = len(nodes)
-    processed = 0
-
-    for batch_start in range(0, total_nodes, INGEST_BATCH_SIZE):
-        batch = nodes[batch_start:batch_start + INGEST_BATCH_SIZE]
-        batch_num = batch_start // INGEST_BATCH_SIZE + 1
-        batch_start_time = time.time()
-
-        logger.info(f"[EMBEDDING] Embedding batch {batch_num} ({len(batch)} chunks, {batch_start + 1}-{batch_start + len(batch)}/{total_nodes})...")
-
-        try:
-            _process_batch_with_retry(batch, max_retries=3, base_delay=2.0)
-        except Exception as e:
-            raise Exception(f"Failed to embed batch {batch_num} (chunks {batch_start + 1}-{batch_start + len(batch)}/{total_nodes}): {str(e)}") from e
-
-        processed += len(batch)
-        batch_duration = time.time() - batch_start_time
-        elapsed = time.time() - embedding_start
-        avg_per_node = elapsed / processed
-        est_remaining = avg_per_node * (total_nodes - processed)
-
-        logger.info(f"[EMBEDDING] Batch {batch_num} embedded ({batch_duration:.2f}s) - Elapsed: {elapsed:.1f}s, Est. remaining: {est_remaining:.1f}s")
-
-        if progress_callback:
-            progress_callback(processed, total_nodes)
+    # Safe: this function only runs inside the task-worker's executor thread
+    # (see infrastructure/tasks/worker.py), which has no running event loop —
+    # same guarantee add_contextual_retrieval() relies on for its asyncio.run().
+    asyncio.run(_embed_chunks_async(nodes, progress_callback, concurrency))
 
     total_duration = time.time() - embedding_start
     avg_per_node = total_duration / len(nodes)
     logger.info(f"[EMBEDDING] Embedding complete ({total_duration:.2f}s, avg: {avg_per_node:.2f}s per chunk)")
-
-
-def _process_batch_with_retry(batch: List[TextNode], max_retries: int = 3, base_delay: float = 2.0):
-    """
-    Embed a batch of nodes with exponential backoff retry for connection errors.
-    """
-    last_error = None
-
-    for attempt in range(max_retries):
-        try:
-            texts = [node.get_content(metadata_mode=MetadataMode.EMBED) for node in batch]
-            embeddings = Settings.embed_model.get_text_embedding_batch(texts)
-            for node, embedding in zip(batch, embeddings):
-                node.embedding = embedding
-            return  # Success
-        except Exception as e:
-            last_error = e
-            error_msg = str(e).lower()
-
-            # Check if it's a connection error
-            is_connection_error = any(term in error_msg for term in [
-                'eof', 'connection', 'timeout', 'refused', 'unavailable'
-            ])
-
-            if is_connection_error and attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)  # Exponential backoff
-                logger.warning(f"[EMBEDDING] Connection error (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                logger.info(f"[EMBEDDING] Retrying in {delay:.1f}s...")
-                time.sleep(delay)
-            else:
-                # Not a connection error or last attempt - raise immediately
-                raise
-
-    # All retries failed
-    raise Exception(f"Failed to embed batch after {max_retries} attempts. Last error: {str(last_error)}") from last_error
 
 
 # ============================================================================
@@ -667,7 +719,15 @@ def ingest_document(
         'filename': filename,
         'chunks': len(nodes),
         'chunks_data': chunks_data,
-        'status': 'success'
+        'status': 'success',
+        # Baseline timings for the parse/embed/write breakdown the caller logs
+        # once the DB write (outside this pipeline — see infrastructure/tasks/
+        # worker.py) completes.
+        'timings': {
+            'parse_s': chunk_duration,
+            'contextual_s': contextual_duration,
+            'embed_s': embed_duration,
+        },
     }
 
 

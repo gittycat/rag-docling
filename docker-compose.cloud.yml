@@ -28,9 +28,6 @@ services:
     build: !reset null
     environment:
       - LOG_LEVEL=WARNING
-    # Cloud-specific: Ollama runs on same server or separate host
-    extra_hosts:
-      - "host.docker.internal:${OLLAMA_HOST:-host-gateway}"
 
   task-worker:
     # image: ${REGISTRY:-ghcr.io/youruser/ragbench}/rag-server:${VERSION:-latest}
@@ -38,5 +35,3 @@ services:
     build: !reset null
     environment:
       - LOG_LEVEL=WARNING
-    extra_hosts:
-      - "host.docker.internal:${OLLAMA_HOST:-host-gateway}"

@@ -46,12 +46,14 @@ metrics before upgrading generation.
 
 ```yaml
 active:
-  embedding: nomic-embed
+  embedding: qwen3-embed
 ```
 
 The embedding model defines similarity for vector search. It can have a large
 effect on retrieval, but changing it invalidates all stored vectors. Restart and
-re-ingest every document after a change.
+re-ingest every document after a change. The checked-in `qwen3-embed` is a
+self-hosted TEI service (`Qwen/Qwen3-Embedding-0.6B`, 1024 dimensions) that
+runs as the `tei` Compose service — no separate install.
 
 When `pii.enabled` is true, the embedding provider must be local. Startup fails if
 you select a cloud embedder because raw chunk text is embedded without masking.
@@ -175,6 +177,10 @@ The eval model judges faithfulness, correctness, and relevance. A capable judge 
 more expensive; a judge from the same provider family as the generation model may
 favour that family. Calibrate a new judge before relying on it.
 
+`active.eval` is the only place the judge is chosen. Both the CLI and the eval API
+resolve it from here, and the resolved provider, model and execution boundary are
+recorded in the run's metadata, so a saved run says which judge actually scored it.
+
 `eval.citation_scope` controls what counts as a citation:
 
 - `retrieved`: every retrieved chunk counts; this mostly re-measures retrieval.
@@ -198,7 +204,16 @@ Important keys:
 | `pii.spacy_model` | spaCy model used for name detection |
 | `pii.gliner.enabled` | Adds a stronger, slower recognizer |
 | `pii.output_guardrails.block_on_detection` | Blocks detected output on non-streaming responses |
-| `pii.allow_cloud_judge` | Allows unmasked eval data to reach a cloud judge |
+
+Evaluation is governed separately, because nothing on the eval path is masked:
+the judge sees retrieved chunks and answers verbatim whatever `pii.enabled` says.
+
+| Key | Effect |
+|---|---|
+| `models.*.<name>.execution_boundary` | Declares where that endpoint runs: `customer_managed`, `aws_managed`, or `third_party`. Never inferred from the provider name; an endpoint that declares none is refused |
+| `data_policy.corpus_confidential` | Whether corpus content needs protecting at all (default `true`) |
+| `data_policy.allowed_judge_boundaries` | Allow-list of boundaries a confidential corpus may be judged in (default `customer_managed`, `aws_managed`) |
+| `data_policy.eval_dataset_is_public` | Set `true` only while evaluating public or synthetic datasets; set it `false` before running the `golden` dataset or an end-to-end run over your own corpus |
 
 See [Chapter 8](08-privacy-and-pii.md) before enabling cloud processing for
 sensitive data.

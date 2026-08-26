@@ -25,6 +25,18 @@ This document outlines planned features and enhancements for the RAG system, org
 - Persistent storage with no TTL
 - Progress tracking for async uploads
 
+### Execution-Boundary Data Policy (Aug 2026)
+- `ExecutionBoundary` (`customer_managed` / `aws_managed` / `third_party`) declared
+  per model definition in `config.yml`, describing the resolved endpoint rather
+  than being inferred from the provider name
+- `data_policy` replaces the retired `pii.allow_cloud_judge` flag with an
+  allow-list (`corpus_confidential`, `allowed_judge_boundaries`,
+  `eval_dataset_is_public`); a missing boundary fails closed
+- Judge egress is no longer coupled to `pii.enabled` — confidential content need
+  not contain PII (see [internal/design-decisions.md](internal/design-decisions.md))
+- `active.eval` is now the single source of judge identity; it was previously dead
+  configuration (see [suggestions.md](suggestions.md) §4.11)
+
 ### PII Masking for Cloud LLMs (Feb 2026)
 - Microsoft Presidio + spaCy reversible token masking before cloud LLM calls
 - Masks query, retrieved context, chat history, and session titles on the cloud generation path; contextual-retrieval ingestion calls masked as of Jul 2026
@@ -45,10 +57,22 @@ This document outlines planned features and enhancements for the RAG system, org
 - ~48% retrieval improvement over single-method
 
 ### Vector Store Moved into PostgreSQL (Aug 2026)
-- Embeddings live in an `embedding vector(768)` column on `document_chunks`, indexed with pgvectorscale StreamingDiskANN; the separate vector-database service is gone
+- Embeddings live in an `embedding vector(768)` column on `document_chunks`, indexed with pgvectorscale StreamingDiskANN; the separate vector-database service is gone. (768 was the dimension at the time, from Ollama's `nomic-embed-text`; the column is `vector(1024)` today — see the TEI/Qwen3 migration below.)
 - BM25 and vector search now read one table in one database, fused by the unchanged RRF
-- Corpus ceiling on a 16 GB machine rises from roughly 150k to roughly 765k documents (assuming 10-page documents, ~11 chunks each — the real unit is chunks) — StreamingDiskANN keeps the index on disk with an SBQ-compressed representation in RAM (~96 bytes/vector at 768 dims, against ~3.2 KB for a fully in-memory HNSW index)
+- Corpus ceiling on a 16 GB machine rises from roughly 150k to roughly 765k documents (assuming 10-page documents, ~11 chunks each — the real unit is chunks) — StreamingDiskANN keeps the index on disk with an SBQ-compressed representation in RAM (~96 bytes/vector at 768 dims, against ~3.2 KB for a fully in-memory HNSW index; the per-vector RAM figure scales with dimension, so it is higher now at 1024 — not remeasured)
 - Chunk text is stored twice instead of three times, and deletion is the existing `ON DELETE CASCADE`, so orphaned vectors are structurally impossible
+
+### Local Embedding Moved from Ollama to TEI (Aug 2026)
+- Local embedding inference moved from Ollama (`nomic-embed-text`, 768-dim) to a
+  self-hosted HuggingFace Text Embeddings Inference (TEI) service running
+  `Qwen/Qwen3-Embedding-0.6B` at 1024 dimensions
+- Ollama is removed from the project entirely — both the embedding and LLM
+  provider paths. `vllm` is now the documented self-hosted-inference option for
+  generation
+- **Breaking change:** the dimension change means `document_chunks.embedding`
+  is `vector(1024)`; there are no migrations for this, so upgrading requires
+  dropping the Postgres volume and re-ingesting every document — see
+  [getting-running](guide/02-getting-running.md)
 
 ### Contextual Retrieval (Oct 2025)
 - LLM-generated chunk context before embedding
@@ -56,7 +80,8 @@ This document outlines planned features and enhancements for the RAG system, org
 - Zero query-time overhead (adds 85% to indexing)
 
 ### DeepEval Framework Integration (Dec 2025)
-- Anthropic Claude Sonnet 4 as LLM judge
+- Anthropic Claude Sonnet 4 as LLM judge (DeepEval has since been dropped, and the
+  judge is now whatever `active.eval` names — OpenAI by default)
 - Five metric categories: Contextual Precision, Contextual Recall, Faithfulness, Answer Relevancy, Hallucination
 - Pytest integration with custom markers
 - Unified CLI for evaluation
@@ -94,7 +119,7 @@ Improvements to the integration test suite and CI pipeline. The current 25 integ
 1. **Define markers** — Add `smoke` and `full` to `pyproject.toml` markers and `conftest.py`
 2. **Assign markers** — Tag `test_infrastructure.py` (all 8) + core pipeline tests (upload, chunks, query, canary, delete) as `smoke`. Tag remaining tests as `full`.
 3. **Add justfile recipes** — `just test-integration-smoke` (`-m "integration and smoke"`) and update `just test-integration-full` to use `-m "integration and full"`
-4. **Execution model** — Smoke lane: 8-12 minutes with warm Ollama cache. Full lane: 20-35 minutes.
+4. **Execution model** — Smoke lane: 8-12 minutes with a warm TEI weights cache. Full lane: 20-35 minutes.
 
 ### Forgejo CI Integration Jobs
 
@@ -115,9 +140,9 @@ Improvements to the integration test suite and CI pipeline. The current 25 integ
 2. **`integration-full` job (scheduled + manual dispatch)**
    - Trigger: cron schedule + manual dispatch + `[full-integration]` in commit message
    - Same artifact strategy as smoke
-   - Keep Ollama model cache on runner for speed/stability
+   - Keep the TEI weights volume cached on the runner for speed/stability
 
-3. **Artifact publishing** — JUnit XML for test results, `docker compose logs` for `rag-server`, `pgmq-worker`, `postgres`, `ollama`
+3. **Artifact publishing** — JUnit XML for test results, `docker compose logs` for `rag-server`, `pgmq-worker`, `postgres`, `tei`
 
 ### Tier 2 Integration Tests
 
@@ -173,7 +198,7 @@ Improvements to the integration test suite and CI pipeline. The current 25 integ
 #### Tasks
 
 1. **Replace internet-downloaded fixtures** — `large_public_markdown` (downloads from GitHub) and `large_public_pdf` (downloads from arXiv) should either use local synthetic files or be restricted to the `full` tier only.
-2. **Pin model names** — Ensure Ollama model tags in fixtures and `check_services` match `config.yml` exactly (currently hardcoded as `gemma3` and `nomic-embed-text`).
+2. **Pin model names** — Ensure model identifiers in fixtures and `check_services` match `config.yml` exactly (currently hardcoded as `Qwen/Qwen3-Embedding-0.6B` for the TEI embedder).
 3. **Bounded retries** — Ensure all polling loops (`wait_for_task`, `upload_and_wait`) have transparent retry counts in logs for CI debugging.
 
 ---
@@ -483,13 +508,23 @@ Look at embedding Virtualization.framework directly — Apple's Swift API lets y
 
 ### AWS Demo Embedding Model Constraint
 
-The AWS demo deployment runs `nomic-embed-text` via Ollama on CPU, on the same EC2
-instance as `rag-server`, rather than a stronger cloud embedding model. This is not
-a cost decision — it is forced by `validate_privacy_posture()`
-(`services/rag_server/infrastructure/config/models_config.py:428`), which refuses
-to boot when `pii.enabled: true` is combined with a non-local embedding provider,
-because PII masking covers the LLM path but never the embedding path. The demo
-runs with `pii.enabled: true`, so the embedding provider must stay local.
-Moving to a stronger embedding model on this deployment means either a GPU
-instance for Ollama, or accepting a cloud embedding provider with
-`pii.enabled: false`.
+The checked-in `config.yml` ships with `pii.enabled: false`, so this constraint
+is not active in the demo as currently configured — but it applies the moment
+an operator turns PII masking on, so it is worth recording here.
+
+The AWS demo deployment runs `Qwen/Qwen3-Embedding-0.6B` via the self-hosted
+`tei` service on CPU, on the same EC2 instance as `rag-server`, rather than a
+stronger cloud embedding model. This is not a cost decision — it is forced by
+`validate_privacy_posture()`
+(`services/rag_server/infrastructure/config/models_config.py`), which refuses
+to boot when `pii.enabled: true` is combined with a non-local embedding
+provider, because PII masking covers the LLM path but never the embedding
+path. (This is the embedding half of that check only. The judge half moved out
+of `validate_privacy_posture()` into `data_policy` / `enforce_judge_boundary()`
+and no longer depends on `pii.enabled` at all — the embedding constraint below
+is unaffected by that move.) `LOCAL_EMBEDDING_PROVIDERS` recognizes `tei` (it previously recognized
+`ollama`, now removed), so `pii.enabled: true` remains legal with the current
+embedding stack — it just means the embedding provider must stay local (TEI)
+whenever PII masking is on. Moving to a stronger embedding model on this
+deployment while keeping `pii.enabled: true` means either a bigger host for
+TEI, or accepting a cloud embedding provider with `pii.enabled: false`.

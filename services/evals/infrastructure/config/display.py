@@ -26,8 +26,6 @@ def _print_compact_banner(config) -> None:
 
     # LLM
     llm_info = f"{config.llm.provider}/{config.llm.model}"
-    if config.llm.keep_alive:
-        llm_info += f" (keep_alive={config.llm.keep_alive})"
     print(f"  LLM (inference):  {llm_info}")
 
     # Embedding
@@ -60,8 +58,6 @@ def _print_full_banner(config) -> None:
     if config.llm.base_url:
         print(f"  Base URL:    {config.llm.base_url}")
     print(f"  Timeout:     {config.llm.timeout}s")
-    if config.llm.keep_alive:
-        print(f"  Keep Alive:  {config.llm.keep_alive}")
     print(f"  API Key:     {'configured' if config.llm.api_key else 'not set'}")
 
     # Embedding section

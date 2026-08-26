@@ -52,7 +52,7 @@ Masking runs on every path that sends text to the configured (possibly cloud) LL
 reranker. Both are required to stay local/VM-side, and this is enforced as a hard
 boot-time invariant, not a convention — `pii.enabled: true` is rejected at
 config-load time if the embedding provider is not in the local-provider set
-(currently just `ollama`). The reasoning is that embeddings and reranking need the
+(currently just `tei`). The reasoning is that embeddings and reranking need the
 real text to produce useful vectors and relevance scores, and since both stay
 local by construction, masking them would only cost quality for no privacy
 benefit — the point of masking is to protect text going to a *remote* LLM, and
@@ -181,24 +181,64 @@ itself — only counts and entity type names.
 
 ## Boot-time privacy validation
 
-The system refuses to start under two conditions, both enforced at config-load time
-rather than left as a runtime risk:
+`ModelsConfig.validate_privacy_posture()` in rag-server refuses to start under two
+conditions, both enforced at config-load time rather than left as a runtime risk:
 
 1. **`pii.enabled: true` with a non-local embedding provider.** Since embeddings
    are never masked (by design, see above), allowing `pii.enabled` with a cloud
    embedding provider would defeat the entire point of the tier — the corpus text
    would go to the cloud embedding API in the clear regardless of what masking is
    configured for the LLM path. Config load raises rather than silently permitting
-   this combination.
-2. **A cloud judge provider without `pii.allow_cloud_judge: true`.** The eval
-   service's LLM judge interpolates retrieved chunks and generated answers
-   verbatim into its prompt — masking is not applied there because it would
-   distort the very text being judged. With `pii.enabled: true`, pointing the
-   judge at a cloud provider is refused unless the operator explicitly sets
-   `pii.allow_cloud_judge: true`, which is treated as an explicit statement that
-   the eval dataset holds no real PII (e.g. it's synthetic). The alternative that
-   doesn't require this override is pointing the judge at a local provider
-   (`ollama`).
+   this combination. The local set is `LOCAL_EMBEDDING_PROVIDERS = {"tei"}`.
+2. **`pii.gliner.enabled: true` without the `gliner` package installed.** A missing
+   optional dependency must not quietly downgrade detection to spaCy-only after
+   the operator asked for GLiNER.
 
 Both refusals happen once, at startup — there is no partial-degradation mode where
 the server starts anyway with a warning.
+
+## The judge gate is not a PII control
+
+The eval service's LLM judge interpolates retrieved chunks and generated answers
+verbatim into its prompt — masking is not applied there, because it would distort
+the very text being judged. An eval run therefore ships *more* corpus content to
+the judge than a normal query ships to the generation LLM, and it does so whether
+`pii.enabled` is true or false.
+
+That gate used to hang off `pii.enabled` plus a `pii.allow_cloud_judge` opt-out.
+Both halves were wrong, and both are gone:
+
+- Confidential content need not contain a single PII entity, so `pii.enabled` was
+  never the right predicate for corpus egress.
+- "Local" was inferred from a provider string via a `LOCAL_JUDGE_PROVIDERS` set
+  that was in fact empty, so every judge counted as cloud regardless of where it
+  actually ran.
+
+The replacement lives in `data_policy` and is enforced by
+`enforce_judge_boundary()` in **both** services' `infrastructure/config/models_config.py`
+(the two services share no package, so the enum and the policy model are mirrored,
+the same duplication as `LLMProvider`). Only the eval service actually calls it on
+a judge — rag-server runs no judge — but the schema is declared in both so
+`config.yml` validates identically either side, which is the same arrangement
+`pii.allow_cloud_judge` had.
+
+`ExecutionBoundary` is declared per model definition and describes the resolved
+endpoint, never the provider name:
+
+| value | meaning |
+|---|---|
+| `customer_managed` | a host or VPC the operator runs — local Docker, their own EC2 or K8s |
+| `aws_managed` | Bedrock/SageMaker: inside the customer's AWS boundary, not on their host |
+| `third_party` | OpenAI, Anthropic, any vendor-hosted API |
+
+`DataPolicyConfig` holds the policy: `corpus_confidential` (default `true`),
+`allowed_judge_boundaries` (an allow-list, default
+`{customer_managed, aws_managed}`), and `eval_dataset_is_public` (default `false`
+in code; the checked-in `config.yml` sets it `true`, which is what permits the
+shipped third-party judge).
+
+`enforce_judge_boundary()` returns early when the corpus is not confidential or the
+eval dataset is declared public. Otherwise a boundary of `None` raises — **missing
+boundary fails closed** — and so does any boundary outside the allow-list. It runs
+twice: once at config load, and again in `resolve_judge_config()` at judge
+resolution, so the object the runtime calls is the object that was checked.

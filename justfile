@@ -18,7 +18,7 @@ default:
 build:
     docker compose build
 
-# Check host dependencies (Docker daemon, Ollama) and fail early with a clear message
+# Check host dependencies (Docker daemon) and fail early with a clear message
 [group('core')]
 preflight:
     #!/usr/bin/env bash
@@ -27,18 +27,9 @@ preflight:
         echo "ERROR: Docker daemon is not running. Start OrbStack or Docker Desktop." >&2
         exit 1
     fi
-    # Ollama is only required when an active model in config.yml uses the ollama provider
-    needs_ollama=false
-    for name in $(awk '/^active:/{f=1;next} f&&/^[^ ]/{exit} f{print $2}' config.yml); do
-        provider=$(awk -v m="$name:" '$1==m{f=1;next} f&&$1=="provider:"{print $2; exit}' config.yml)
-        [ "$provider" = "ollama" ] && needs_ollama=true
-    done
-    if $needs_ollama && ! curl -sf --max-time 3 http://localhost:11434/api/version > /dev/null; then
-        echo "ERROR: Ollama is not running on localhost:11434, but an active model in config.yml uses the ollama provider." >&2
-        echo "Start it by opening the Ollama app or running 'ollama serve'." >&2
-        exit 1
-    fi
-    echo "Preflight OK: Docker daemon running$($needs_ollama && echo ", Ollama reachable" || true)"
+    # Embedding inference (tei) and any self-hosted vllm model run as compose
+    # services now, health-checked via depends_on — nothing to preflight on the host.
+    echo "Preflight OK: Docker daemon running"
 
 # Start all services (rag-server, task-worker, webapp, evals, postgres)
 [group('core')]
@@ -55,6 +46,50 @@ down:
 logs:
     docker compose logs -f
 
+# A dead embedder does NOT look like an outage: a query whose embedding call
+# fails is caught in vector_retriever._aretrieve, which logs and returns [], so
+# hybrid search silently degrades to BM25-only and the demo still answers — just
+# worse. Reading /metrics/system alone doesn't catch it either: get_vector_health()
+# reports "unknown" until a search has actually run in that process, and "unknown"
+# is not "unhealthy". So this issues a real query first to force an embedding
+# round-trip, THEN reads the health surface.
+
+# Fail loudly if the vector path is silently degrading to BM25-only (run before demoing)
+[group('core')]
+demo-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BASE="${RAG_SERVER_URL:-http://localhost:8001}"
+    TOKEN="$(cat secrets/RAG_SERVER_AUTH_TOKEN 2>/dev/null || echo "")"
+    # Array, not a bare ${TOKEN:+...} expansion — the header value has a space in
+    # it and word-splitting would send it as three broken arguments.
+    AUTH=()
+    [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
+
+    echo "1/3 tei /health"
+    docker compose exec -T tei curl -fsS http://localhost:80/health > /dev/null
+    echo "    ok"
+
+    echo "2/3 forcing a real query (so vector health stops being 'unknown')"
+    # is_temporary keeps this probe out of the session table.
+    curl -fsS -X POST "$BASE/query" \
+        -H "Content-Type: application/json" \
+        "${AUTH[@]}" \
+        -d '{"query": "demo-check vector path probe", "is_temporary": true}' \
+        > /dev/null
+    echo "    ok"
+
+    echo "3/3 asserting vector_store is healthy, not silently degraded"
+    STATUS="$(curl -fsS "$BASE/metrics/system" "${AUTH[@]}" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["component_status"]["vector_store"])')"
+    if [ "$STATUS" != "healthy" ]; then
+        echo "ERROR: vector_store is '$STATUS' — queries are degrading to BM25-only." >&2
+        echo "       Check the tei service before demoing: docker compose logs tei" >&2
+        exit 1
+    fi
+    echo "    vector_store: healthy"
+    echo "Demo check passed."
+
 # ============================================================================
 # Setup
 # ============================================================================
@@ -65,13 +100,20 @@ setup:
     cd services/rag_server && \
     uv sync --group dev --python 3.13
 
-# Pre-download the reranker model into .cache/huggingface (bind-mounted)
+# Pre-download the reranker model and warm the TEI/Qwen3 embedding weights
 [group('setup')]
 init MODEL="cross-encoder/ms-marco-MiniLM-L-6-v2":
     # Created host-side so the bind mounts are owned by the invoking user, not root
     mkdir -p .cache/huggingface .cache/datasets data/eval_runs data/calibration
     docker compose run --rm --no-deps --build rag-server \
       .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('{{MODEL}}')"
+    docker compose pull tei
+    docker compose up -d tei
+    # 420s, not 120s: this recipe exists precisely to warm a cold tei_data volume,
+    # which downloads ~1.2GB of safetensors before warmup starts. Measured at 204s
+    # to healthy on a fast connection — 120s would time out on the very case this
+    # recipe is for.
+    timeout 420 bash -c 'until docker compose exec -T tei curl -sf http://localhost:80/health > /dev/null 2>&1; do sleep 3; done'
 
 # Remove __pycache__, .pytest_cache and *.pyc
 [group('setup')]
@@ -361,3 +403,83 @@ aws-up:
 [group('aws')]
 aws-down:
     cd infra && npx cdk destroy RagbenchDemoStack --force
+
+# Deploy the burst embedding stack and point config.yml's TEI base_url at it
+[group('aws')]
+embed-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    AWS_REGION="${AWS_REGION:-ap-southeast-2}"
+    # Every physical name is env-qualified, so a recipe that guesses would
+    # touch the wrong environment's registry, parameters or stack.
+    ENV_NAME="${AWS_ENV:-}"
+    if [ -z "$ENV_NAME" ]; then
+        echo "ERROR: no environment selected. Run 'setenv <dev|staging|demo|prod>'." >&2
+        exit 1
+    fi
+
+    # Construct id stays bare in every environment; the deployed stack name does
+    # not — stackName() in infra/lib/config.ts suffixes everything but demo.
+    STACK=RagbenchEmbedStack
+    [ "$ENV_NAME" = "demo" ] || STACK="RagbenchEmbedStack-${ENV_NAME}"
+
+    # -c embedStack=true is mandatory: infra/bin/ragbench.ts leaves this stack out
+    # of the app tree entirely without it, so a bare deploy fails with "no such
+    # stack". That gate is deliberate — it keeps a bare `cdk deploy --all` from
+    # ever standing up a GPU instance.
+    cd infra && npx cdk deploy "$STACK" -c embedStack=true --require-approval never
+    cd - > /dev/null
+
+    ENDPOINT=$(aws ssm get-parameter --region "$AWS_REGION" \
+        --name "/ragbench/${ENV_NAME}/embed-endpoint" --query 'Parameter.Value' --output text)
+    if [ -z "$ENDPOINT" ] || [ "$ENDPOINT" = "None" ]; then
+        echo "ERROR: ${STACK} deployed but /ragbench/${ENV_NAME}/embed-endpoint is empty." >&2
+        exit 1
+    fi
+
+    # Address-range-scoped so this only ever touches the qwen3-embed block's
+    # base_url, never an unrelated one elsewhere in config.yml. Back up first and
+    # verify the rewrite landed — restore on any failure so config.yml is never
+    # left half-edited.
+    cp config.yml config.yml.bak
+    if ! sed -i '' "/model: Qwen\\/Qwen3-Embedding-0.6B/,/embed_batch_size/ s|base_url: .*|base_url: ${ENDPOINT}|" config.yml \
+        || ! grep -q "base_url: ${ENDPOINT}" config.yml; then
+        echo "ERROR: failed to rewrite config.yml's embedding base_url; restoring backup." >&2
+        mv config.yml.bak config.yml
+        exit 1
+    fi
+    rm -f config.yml.bak
+
+    echo "Embed endpoint: ${ENDPOINT}"
+    echo "config.yml embedding base_url -> ${ENDPOINT}"
+
+# Point config.yml's TEI base_url back at the in-compose service, then tear down the burst embedding stack
+[group('aws')]
+embed-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ENV_NAME="${AWS_ENV:-}"
+    if [ -z "$ENV_NAME" ]; then
+        echo "ERROR: no environment selected. Run 'setenv <dev|staging|demo|prod>'." >&2
+        exit 1
+    fi
+    # Same construct-id vs stack-name split as embed-up.
+    STACK=RagbenchEmbedStack
+    [ "$ENV_NAME" = "demo" ] || STACK="RagbenchEmbedStack-${ENV_NAME}"
+
+    # Same address-range-scoped rewrite as embed-up, reverted. Done before the
+    # destroy call so a failed destroy doesn't leave a half-edited file — the
+    # edit itself is verified and rolled back on its own before that call runs.
+    cp config.yml config.yml.bak
+    if ! sed -i '' "/model: Qwen\\/Qwen3-Embedding-0.6B/,/embed_batch_size/ s|base_url: .*|base_url: http://tei:80|" config.yml \
+        || ! grep -q "base_url: http://tei:80" config.yml; then
+        echo "ERROR: failed to revert config.yml's embedding base_url; restoring backup." >&2
+        mv config.yml.bak config.yml
+        exit 1
+    fi
+    rm -f config.yml.bak
+    echo "config.yml embedding base_url -> http://tei:80"
+
+    # -c embedStack=true here too — without it the stack isn't in the app tree
+    # and destroy has nothing to match, leaving the GPU instance running.
+    cd infra && npx cdk destroy "$STACK" -c embedStack=true --force

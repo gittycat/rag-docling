@@ -43,7 +43,7 @@ class _StubLLM:
 
 
 def _judge(*responses, max_retries=3) -> LLMJudge:
-    judge = LLMJudge(JudgeConfig(model="stub", max_retries=max_retries))
+    judge = LLMJudge(JudgeConfig(provider="stub", model="stub", max_retries=max_retries))
     judge._llm = _StubLLM(*responses)
     return judge
 

@@ -21,9 +21,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from pgvector.sqlalchemy import Vector
 
-# Embedding dimension for the active model (nomic-embed-text). Changing it
-# requires re-creating the schema and re-ingesting every document.
-EMBEDDING_DIMENSION = 768
+# Embedding dimension for the active model (Qwen/Qwen3-Embedding-0.6B, served by
+# the tei service). Must stay in lockstep with vector_store.dimension in
+# config.yml and the vector(N) column in services/postgres/init.sql — there are
+# no Alembic migrations, so changing it means dropping the Postgres volume and
+# re-ingesting every document.
+EMBEDDING_DIMENSION = 1024
 
 
 class Base(DeclarativeBase):

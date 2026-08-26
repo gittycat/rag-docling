@@ -2,7 +2,7 @@
 Integration tests for document management endpoints.
 
 Run with: pytest tests/integration/test_api_documents.py -v --run-integration
-Requires: docker compose up -d (rag-server, pgmq-worker, postgres, ollama)
+Requires: docker compose up -d (rag-server, pgmq-worker, postgres, tei)
 """
 import pytest
 import sys

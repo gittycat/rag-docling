@@ -18,7 +18,7 @@ def test_provider_comparison_ignores_case():
 
 
 def test_different_providers_do_not_warn():
-    assert check_judge_independence("ollama", "openai") is None
+    assert check_judge_independence("vllm", "openai") is None
 
 
 def test_missing_provider_does_not_warn():

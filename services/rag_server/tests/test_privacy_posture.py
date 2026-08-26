@@ -13,7 +13,7 @@ from infrastructure.config.models_config import (
 
 def build_config(embedding_provider: str, pii_enabled: bool) -> ModelsConfig:
     return ModelsConfig(
-        llm=LLMConfig(provider="ollama", model="gemma3:4b"),
+        llm=LLMConfig(provider="vllm", model="Qwen/Qwen2.5-14B-Instruct"),
         embedding=EmbeddingConfig(provider=embedding_provider, model="some-embed-model"),
         eval=EvalConfig(provider="anthropic", model="claude-sonnet-4-20250514", api_key="test-key"),
         reranker=RerankerConfig(),
@@ -23,7 +23,7 @@ def build_config(embedding_provider: str, pii_enabled: bool) -> ModelsConfig:
 
 
 def test_privacy_posture_allows_local_embedding_with_pii_enabled():
-    config = build_config("ollama", pii_enabled=True)
+    config = build_config("tei", pii_enabled=True)
     config.validate_privacy_posture()  # should not raise
 
 

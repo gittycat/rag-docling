@@ -7,19 +7,25 @@ from infrastructure.config.models_config import EmbeddingConfig, get_models_conf
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BATCH_SIZE = {"ollama": 64, "openai": 100}
+_DEFAULT_BATCH_SIZE = {"openai": 100, "tei": 32}  # tei matches --max-client-batch-size default
 
 # Provider configuration: maps provider to (module_path, class_name, param_mapping)
 _PROVIDER_CONFIG: dict[str, tuple[str, str, dict[str, str | None]]] = {
-    "ollama": (
-        "llama_index.embeddings.ollama",
-        "OllamaEmbedding",
-        {"model": "model_name", "base_url": None},
-    ),
     "openai": (
         "llama_index.embeddings.openai",
         "OpenAIEmbedding",
         {"model": None, "api_key": None, "base_url": "api_base"},
+    ),
+    "tei": (
+        "llama_index.embeddings.text_embeddings_inference",
+        "TextEmbeddingsInference",
+        {
+            "model": "model_name",
+            "base_url": None,
+            "query_instruction": None,
+            "text_instruction": None,
+            "timeout": None,
+        },
     ),
 }
 

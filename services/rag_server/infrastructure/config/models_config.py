@@ -2,6 +2,7 @@
 
 import logging
 import re
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
@@ -9,6 +10,26 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from app.settings import get_api_key_for_provider
+
+
+class ExecutionBoundary(str, Enum):
+    """Where a resolved model endpoint actually executes.
+
+    This is a property of the *endpoint*, never inferred from `provider`: an
+    OpenAI-compatible transport can point at a vLLM container we run or at
+    api.openai.com, and only the config author knows which. Mirrored verbatim in
+    services/evals/infrastructure/config/models_config.py — the two services share
+    no package (same duplication as LLMProvider).
+
+    A model definition that declares no boundary is *unknown*, and unknown fails
+    closed: it is never treated as inside the boundary.
+    """
+
+    CUSTOMER_MANAGED = "customer_managed"  # a host/VPC we run: local Docker, our EC2, our K8s
+    AWS_MANAGED = "aws_managed"  # Bedrock/SageMaker — inside the customer's AWS boundary
+    THIRD_PARTY = "third_party"  # OpenAI, Anthropic, any vendor-hosted API
+
+
 class LLMConfig(BaseModel):
     """Configuration for the main LLM."""
 
@@ -16,9 +37,9 @@ class LLMConfig(BaseModel):
     model: str
     base_url: str | None = None
     timeout: int = 120
-    keep_alive: str | None = None
     api_key: str | None = None
     requires_api_key: bool = False
+    execution_boundary: ExecutionBoundary | None = None
 
     @field_validator("model")
     @classmethod
@@ -46,6 +67,13 @@ class EmbeddingConfig(BaseModel):
     api_key: str | None = None
     requires_api_key: bool = False
     embed_batch_size: int | None = None
+    # TEI-only: applied asymmetrically by TextEmbeddingsInference (query vs. document
+    # path) — see infrastructure/llm/embeddings.py and the config.yml comment above the
+    # active embedding entry.
+    query_instruction: str | None = None
+    text_instruction: str | None = None
+    timeout: float | None = None
+    execution_boundary: ExecutionBoundary | None = None
 
     @field_validator("model")
     @classmethod
@@ -69,8 +97,14 @@ class EvalModelConfig(BaseModel):
 
     provider: str
     model: str
+    # base_url/timeout mirror LLMConfig: a judge endpoint is addressable the same
+    # way an inference endpoint is, and a self-hosted judge is unreachable without
+    # base_url. They used to be silently dropped here.
+    base_url: str | None = None
+    timeout: int = 120
     api_key: str | None = None
     requires_api_key: bool = False
+    execution_boundary: ExecutionBoundary | None = None
 
     @field_validator("model")
     @classmethod
@@ -111,8 +145,11 @@ class EvalConfig(BaseModel):
 
     provider: str
     model: str
+    base_url: str | None = None
+    timeout: int = 120
     api_key: str | None = None
     requires_api_key: bool = False
+    execution_boundary: ExecutionBoundary | None = None
     citation_scope: Literal["retrieved", "explicit"] = "retrieved"
     citation_format: Literal["numeric"] = "numeric"
     abstention_phrases: list[str] = Field(
@@ -196,6 +233,10 @@ class RetrievalConfig(BaseModel):
     rrf_k: int = 60
     enable_contextual_retrieval: bool = True
     contextual_concurrency: int = 8
+    # Bounds concurrent embed_chunks() batches in flight against the embedding
+    # endpoint (see pipelines/ingestion.py). TEI serialises internally past its own
+    # batch queue, so this caps client-side fan-out, not server throughput.
+    embed_concurrency: int = 8
 
 
 class ChatMemoryCacheConfig(BaseModel):
@@ -227,14 +268,40 @@ class ChatMemoryConfig(BaseModel):
 class VectorStoreConfig(BaseModel):
     """Configuration for the pgvector/pgvectorscale vector store."""
 
-    # MUST match the active embedding model's output dimension. Changing it
-    # requires re-creating the schema and re-ingesting every document.
-    dimension: int = 768
+    # MUST match the active embedding model's output dimension (Qwen3-Embedding-0.6B
+    # via TEI produces 1024). Changing it requires re-creating the schema and
+    # re-ingesting every document.
+    dimension: int = 1024
 
 
 # Embedding providers that never leave the local/VM trust boundary. Cloud
 # generation (pii.enabled) is only safe to combine with one of these.
-LOCAL_EMBEDDING_PROVIDERS = {"ollama"}
+LOCAL_EMBEDDING_PROVIDERS = {"tei"}
+
+
+# Boundaries a confidential corpus may be processed in. An allow-list, not a
+# deny-list: anything not named here (including an endpoint that declares no
+# boundary at all) is refused. Mirrors the evals service.
+DEFAULT_ALLOWED_JUDGE_BOUNDARIES: frozenset[ExecutionBoundary] = frozenset(
+    {ExecutionBoundary.CUSTOMER_MANAGED, ExecutionBoundary.AWS_MANAGED}
+)
+
+
+class DataPolicyConfig(BaseModel):
+    """Where this deployment's corpus content is allowed to be processed.
+
+    Deliberately independent of `pii.enabled`: commercially confidential content
+    need not contain a single PII entity. Declared here so the `data_policy`
+    block has one documented schema across both services; only the eval service
+    enforces the judge gate (rag-server runs no judge), the same arrangement the
+    retired `pii.allow_cloud_judge` had.
+    """
+
+    corpus_confidential: bool = True
+    allowed_judge_boundaries: set[ExecutionBoundary] = Field(
+        default_factory=lambda: set(DEFAULT_ALLOWED_JUDGE_BOUNDARIES)
+    )
+    eval_dataset_is_public: bool = False
 
 
 class PiiValidationConfig(BaseModel):
@@ -322,10 +389,6 @@ class PiiConfig(BaseModel):
     """
 
     enabled: bool = False
-    # Read by the eval service only (services/evals): opts out of its refusal to
-    # run a cloud judge against a corpus declared sensitive. Declared here so the
-    # `pii` block has a single documented schema.
-    allow_cloud_judge: bool = False
     entities: list[str] = Field(
         default_factory=lambda: [
             "PERSON",
@@ -423,6 +486,7 @@ class ModelsConfig(BaseModel):
     chat_memory: ChatMemoryConfig = Field(default_factory=ChatMemoryConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
     pii: PiiConfig = Field(default_factory=PiiConfig)
+    data_policy: DataPolicyConfig = Field(default_factory=DataPolicyConfig)
     _source_path: Path | None = None
 
     def validate_privacy_posture(self) -> None:
@@ -611,6 +675,10 @@ class ModelsConfig(BaseModel):
         # Copy PII settings unchanged
         if "pii" in data:
             resolved["pii"] = data["pii"]
+
+        # Copy data-policy settings unchanged
+        if "data_policy" in data:
+            resolved["data_policy"] = data["data_policy"]
 
         return resolved
 

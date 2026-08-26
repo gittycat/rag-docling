@@ -9,6 +9,7 @@ export interface MetricThreshold {
 }
 
 const LOWER_IS_BETTER = new Set([
+	'uncited_claim_rate',
 	'abstention_false_positive_rate',
 	'abstention_false_negative_rate',
 	'latency_p50_ms',

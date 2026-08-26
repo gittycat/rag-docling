@@ -1,7 +1,7 @@
 """Service for gathering RAG system metrics and configuration.
 
 Provides methods to:
-- Query model information from Ollama/HuggingFace
+- Query model information from TEI/HuggingFace
 - Gather retrieval configuration
 - Get system overview metrics
 
@@ -24,9 +24,10 @@ from schemas.metrics import (
     RetrievalConfig,
     SystemMetrics,
 )
-from core.config import get_optional_env
-from app.settings import has_anthropic_key
-from infrastructure.config.models_config import effective_reranker_top_n
+from infrastructure.config.models_config import (
+    ExecutionBoundary,
+    effective_reranker_top_n,
+)
 from pipelines.inference import get_inference_config
 from pipelines.ingestion import get_ingestion_config
 
@@ -34,49 +35,10 @@ logger = logging.getLogger(__name__)
 
 # Model reference URLs
 MODEL_REFERENCES = {
-    # Ollama models
-    "gemma3:4b": {
-        "url": "https://ollama.com/library/gemma3",
-        "description": "Google Gemma 3 4B - Lightweight, efficient LLM for text generation",
-        "parameters": "4B",
-    },
-    "gemma2:9b": {
-        "url": "https://ollama.com/library/gemma2",
-        "description": "Google Gemma 2 9B - Mid-size LLM with strong reasoning",
-        "parameters": "9B",
-    },
-    "llama3.2:3b": {
-        "url": "https://ollama.com/library/llama3.2",
-        "description": "Meta Llama 3.2 3B - Efficient instruction-following model",
-        "parameters": "3B",
-    },
-    "llama3.1:8b": {
-        "url": "https://ollama.com/library/llama3.1",
-        "description": "Meta Llama 3.1 8B - Powerful open-source LLM",
-        "parameters": "8B",
-    },
-    "mistral:7b": {
-        "url": "https://ollama.com/library/mistral",
-        "description": "Mistral 7B - Fast, efficient open-source model",
-        "parameters": "7B",
-    },
-    "nomic-embed-text:latest": {
-        "url": "https://ollama.com/library/nomic-embed-text",
-        "description": "Nomic Embed Text - High-quality text embeddings (768 dims)",
-        "parameters": "137M",
-        "context_window": 8192,
-    },
-    "nomic-embed-text": {
-        "url": "https://ollama.com/library/nomic-embed-text",
-        "description": "Nomic Embed Text - High-quality text embeddings (768 dims)",
-        "parameters": "137M",
-        "context_window": 8192,
-    },
-    "mxbai-embed-large": {
-        "url": "https://ollama.com/library/mxbai-embed-large",
-        "description": "MixedBread Embed Large - State-of-the-art embeddings (1024 dims)",
-        "parameters": "335M",
-        "context_window": 512,
+    "Qwen/Qwen3-Embedding-0.6B": {
+        "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B",
+        "description": "Qwen3 Embedding 0.6B - self-hosted via TEI (1024 dims)",
+        "parameters": "0.6B",
     },
     # HuggingFace reranker models
     "cross-encoder/ms-marco-MiniLM-L-6-v2": {
@@ -107,41 +69,17 @@ MODEL_REFERENCES = {
 }
 
 
-async def get_ollama_model_info(model_name: str) -> dict | None:
-    """Query Ollama API for model details."""
-    ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")
-
+async def get_tei_model_info(base_url: str) -> dict | None:
+    """Query TEI's /info endpoint for the currently loaded model's details."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                f"{ollama_url}/api/show", json={"name": model_name}
-            )
+            response = await client.get(f"{base_url.rstrip('/')}/info")
             if response.status_code == 200:
                 return response.json()
     except Exception as e:
-        logger.warning(f"Failed to get Ollama model info for {model_name}: {e}")
+        logger.warning(f"Failed to get TEI model info at {base_url}: {e}")
 
     return None
-
-
-async def check_ollama_model_loaded(model_name: str) -> bool:
-    """Check if a model is currently loaded in Ollama."""
-    ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")
-
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{ollama_url}/api/ps")
-            if response.status_code == 200:
-                data = response.json()
-                models = data.get("models", [])
-                return any(
-                    m.get("name", "").startswith(model_name.split(":")[0])
-                    for m in models
-                )
-    except Exception as e:
-        logger.warning(f"Failed to check Ollama model status: {e}")
-
-    return False
 
 
 def get_model_reference(model_name: str) -> dict:
@@ -161,6 +99,16 @@ def get_model_reference(model_name: str) -> dict:
     }
 
 
+def _key_status(requires_api_key: bool, api_key: str | None) -> str:
+    # A provider that needs no key is reachable as configured; one that does is
+    # only reachable once the key resolved at config load. No provider is
+    # singled out here — the old code asked has_anthropic_key() no matter which
+    # judge was actually configured.
+    if requires_api_key and not api_key:
+        return "unavailable"
+    return "available"
+
+
 async def get_models_config() -> ModelsConfig:
     """Get complete models configuration with details."""
     from infrastructure.config.models_config import get_models_config as get_config
@@ -172,51 +120,55 @@ async def get_models_config() -> ModelsConfig:
 
     inference_config = get_inference_config()
 
-    # Get LLM info
+    # Get LLM info. Ollama's local /api/show and /api/ps introspection is gone;
+    # vllm and the cloud providers have no equivalent generic status probe here.
     llm_ref = get_model_reference(llm_model)
-    llm_ollama_info = await get_ollama_model_info(llm_model)
-    llm_loaded = await check_ollama_model_loaded(llm_model)
-
     llm_size = ModelSize(
         parameters=llm_ref.get("parameters"),
-        disk_size_mb=(
-            llm_ollama_info.get("size", 0) / 1024 / 1024 if llm_ollama_info else None
-        ),
         context_window=llm_ref.get("context_window"),
     )
 
     llm_info = ModelInfo(
         name=llm_model,
-        provider="Ollama",
+        provider=config.llm.provider.capitalize(),
         model_type="llm",
-        is_local=True,
+        execution_boundary=config.llm.execution_boundary,
         size=llm_size,
         reference_url=llm_ref.get("url"),
         description=llm_ref.get("description"),
-        status="loaded" if llm_loaded else "available",
+        status=_key_status(config.llm.requires_api_key, config.llm.api_key),
     )
 
-    # Get embedding info
+    # Get embedding info. TEI's /info endpoint reports the currently loaded model.
     embed_ref = get_model_reference(embedding_model)
-    embed_ollama_info = await get_ollama_model_info(embedding_model)
+    embed_tei_info = None
+    if config.embedding.provider == "tei" and config.embedding.base_url:
+        embed_tei_info = await get_tei_model_info(config.embedding.base_url)
 
     embed_size = ModelSize(
         parameters=embed_ref.get("parameters"),
-        disk_size_mb=(
-            embed_ollama_info.get("size", 0) / 1024 / 1024 if embed_ollama_info else None
+        context_window=(
+            embed_tei_info.get("max_input_length")
+            if embed_tei_info
+            else embed_ref.get("context_window")
         ),
-        context_window=embed_ref.get("context_window"),
     )
 
     embedding_info = ModelInfo(
         name=embedding_model,
-        provider="Ollama",
+        provider=config.embedding.provider.capitalize(),
         model_type="embedding",
-        is_local=True,
+        execution_boundary=config.embedding.execution_boundary,
         size=embed_size,
         reference_url=embed_ref.get("url"),
         description=embed_ref.get("description"),
-        status="available",
+        # TEI is the one embedding provider with a live probe; for the rest,
+        # "reachable" is only a question of whether the key resolved.
+        status=(
+            ("available" if embed_tei_info is not None else "unavailable")
+            if config.embedding.provider == "tei"
+            else _key_status(config.embedding.requires_api_key, config.embedding.api_key)
+        ),
     )
 
     # Get reranker info (if enabled)
@@ -234,7 +186,10 @@ async def get_models_config() -> ModelsConfig:
             name=reranker_model,
             provider="HuggingFace",
             model_type="reranker",
-            is_local=True,
+            # Not read from config and not inferred from a provider string: the
+            # reranker has no endpoint at all. SentenceTransformerRerank loads the
+            # weights into this process, so it executes wherever rag-server does.
+            execution_boundary=ExecutionBoundary.CUSTOMER_MANAGED,
             size=reranker_size,
             reference_url=reranker_ref.get("url"),
             description=reranker_ref.get("description"),
@@ -250,13 +205,13 @@ async def get_models_config() -> ModelsConfig:
 
     eval_info = ModelInfo(
         name=eval_model,
-        provider="Anthropic",
+        provider=config.eval.provider.capitalize(),
         model_type="eval",
-        is_local=False,
+        execution_boundary=config.eval.execution_boundary,
         size=eval_size,
         reference_url=eval_ref.get("url"),
         description=eval_ref.get("description"),
-        status="available" if has_anthropic_key() else "unavailable",
+        status=_key_status(config.eval.requires_api_key, config.eval.api_key),
     )
 
     return ModelsConfig(
@@ -424,19 +379,22 @@ async def get_system_metrics() -> SystemMetrics:
     # only retriever, and with it on a broken index degrades queries to BM25-only.
     component_status["vector_store"] = await _check_vector_store()
 
-    # Check Ollama
-    ollama_url = get_optional_env("OLLAMA_URL", "http://host.docker.internal:11434")
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{ollama_url}/api/tags")
-            if resp.status_code == 200:
-                component_status["ollama"] = "healthy"
-            else:
-                logger.warning(f"Ollama health check failed: status={resp.status_code}")
-                component_status["ollama"] = "unhealthy"
-    except Exception as e:
-        logger.warning(f"Ollama health check error: {e}")
-        component_status["ollama"] = "unavailable"
+    # Check TEI (only meaningful when the active embedding provider is local)
+    from infrastructure.config.models_config import get_models_config as get_config
+
+    embedding_config = get_config().embedding
+    if embedding_config.provider == "tei" and embedding_config.base_url:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get(f"{embedding_config.base_url.rstrip('/')}/health")
+                if resp.status_code == 200:
+                    component_status["tei"] = "healthy"
+                else:
+                    logger.warning(f"TEI health check failed: status={resp.status_code}")
+                    component_status["tei"] = "unhealthy"
+        except Exception as e:
+            logger.warning(f"TEI health check error: {e}")
+            component_status["tei"] = "unavailable"
 
     health_status = (
         "healthy"

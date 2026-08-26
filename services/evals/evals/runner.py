@@ -29,6 +29,7 @@ from evals.config import (
 )
 from evals.datasets.registry import get_dataset, load_datasets
 from evals.judges.llm_judge import LLMJudge, warn_if_judge_not_independent
+from evals.pricing import UsageTotals
 from evals.cache import ResponseCache, config_fingerprint
 from evals.samples import save_samples
 from evals.metrics import (
@@ -43,6 +44,11 @@ from evals.metrics import (
     CitationPrecision,
     CitationRecall,
     SectionAccuracy,
+    ClaimEntailmentEvaluator,
+    ClaimGroundedness,
+    CitationEntailment,
+    ClaimCitationSupport,
+    UncitedClaimRate,
     UnanswerableAccuracy,
     FalsePositiveRate,
     FalseNegativeRate,
@@ -270,7 +276,14 @@ class EvaluationRunner:
         self._client: RAGClient | None = None
         self._judge: LLMJudge | None = None
         self._metrics: dict[MetricGroup, list] = {}
+        # Shared by the groundedness metrics so one question is analyzed once.
+        self._claim_evaluator: ClaimEntailmentEvaluator | None = None
         self._model_config: dict[str, Any] = {}  # Store model config from /models/info
+        # Judge token usage, accumulated across the run. Judging is three LLM
+        # calls per query and is where an eval run's token volume actually sits,
+        # so it is counted and priced alongside generation instead of being left
+        # out of the cost the run reports.
+        self._judge_usage = UsageTotals()
         self._cache = (
             ResponseCache(self.config.cache.dir) if self.config.cache.enabled else None
         )
@@ -292,9 +305,17 @@ class EvaluationRunner:
     def judge(self) -> LLMJudge:
         """Get or create the LLM judge."""
         if self._judge is None:
+            # Judge token accounting: after every judge completion that actually
+            # hit the endpoint (cache hits cost nothing), LLMJudge reports
+            # (prompt_tokens, completion_tokens) to this sink. It is what makes
+            # judging visible to CostPerQuery — without it a run priced the
+            # generation model's tokens and billed judging, the larger half of an
+            # eval's token volume, at zero.
+            self._judge_usage.model = self.config.judge.model
             self._judge = LLMJudge(
                 self.config.judge,
                 cache=self._cache if self.config.cache.judge else None,
+                usage_sink=self._judge_usage.record,
             )
         return self._judge
 
@@ -329,6 +350,24 @@ class EvaluationRunner:
                 CitationPrecision(),
                 CitationRecall(),
                 SectionAccuracy(),
+            ]
+
+        # Groundedness metrics. One shared evaluator: the three judged metrics
+        # read overlapping slices of the same per-question analysis, and building
+        # one each would triple the judge bill for identical work.
+        if self.config.metrics.groundedness and self.config.judge.enabled:
+            evaluator = ClaimEntailmentEvaluator(
+                judge=self.judge,
+                max_claims=self.config.metrics.max_claims_per_answer,
+                max_citations_per_claim=self.config.metrics.max_citations_per_claim,
+                concurrency=self.config.judge_concurrency,
+            )
+            self._claim_evaluator = evaluator
+            self._metrics[MetricGroup.GROUNDEDNESS] = [
+                ClaimGroundedness(evaluator),
+                CitationEntailment(evaluator),
+                ClaimCitationSupport(evaluator),
+                UncitedClaimRate(max_claims=self.config.metrics.max_claims_per_answer),
             ]
 
         # Abstention metrics
@@ -419,14 +458,15 @@ class EvaluationRunner:
         )
 
         # Warn if citation metrics are enabled but the RAG server won't produce explicit citations
-        if self.config.metrics.citation:
+        if self.config.metrics.citation or self.config.metrics.groundedness:
             try:
                 eval_settings = rag_config.get("eval", {})
                 citation_scope = eval_settings.get("citation_scope", "retrieved")
                 if citation_scope != "explicit":
                     logger.warning(
                         "[EVAL] citation_scope is '%s' — LLM won't produce explicit citations. "
-                        "Set citation_scope='explicit' in config.yml for citation metrics to work.",
+                        "Set citation_scope='explicit' in config.yml for citation and "
+                        "claim-to-citation metrics to work.",
                         citation_scope,
                     )
             except Exception:
@@ -588,7 +628,14 @@ class EvaluationRunner:
                 "seed": self.config.seed,
                 "tier": self.config.tier.value,
                 "judge_model": self.config.judge.model if self.config.judge.enabled else None,
+                "judge_provider": self.config.judge.provider if self.config.judge.enabled else None,
+                "judge_execution_boundary": (
+                    self.config.judge.execution_boundary if self.config.judge.enabled else None
+                ),
                 "judge_independence_warning": judge_warning,
+                "judge_tokens": (
+                    self._judge_usage.as_dict() if self.config.judge.enabled else None
+                ),
                 "cache": (
                     {
                         "judge": self.config.cache.judge,
@@ -850,10 +897,15 @@ class EvaluationRunner:
             # Cost metrics (if model config available)
             if self._model_config:
                 try:
+                    # Rates default to None, not 0.0: a server that does not
+                    # report a price leaves the model unpriced, and unpriced is
+                    # excluded from cost scoring rather than counted as free.
                     cost_metric = CostPerQuery(
                         model=self._model_config.get("llm_model", "unknown"),
-                        cost_per_1m_input_tokens=self._model_config.get("cost_per_1m_input_tokens", 0.0),
-                        cost_per_1m_output_tokens=self._model_config.get("cost_per_1m_output_tokens", 0.0),
+                        cost_per_1m_input_tokens=self._model_config.get("cost_per_1m_input_tokens"),
+                        cost_per_1m_output_tokens=self._model_config.get("cost_per_1m_output_tokens"),
+                        judge_usage=self._judge_usage if self.config.judge.enabled else None,
+                        judge_model=self.config.judge.model if self.config.judge.enabled else None,
                     )
                     result = await cost_metric.compute_batch(questions, responses)
                     scorecard.add_metric(result)
@@ -887,6 +939,14 @@ class EvaluationRunner:
             "citation_precision": "citation",
             "citation_recall": "citation",
             "section_accuracy": "citation",
+            # Groundedness — its own objective, weighted 0.0 by default. Folding
+            # these into `citation` or `faithfulness` would silently redefine what
+            # those objectives measure and make every past run's headline score
+            # incomparable to a new one without anything visibly changing.
+            "claim_groundedness": "groundedness",
+            "citation_entailment": "groundedness",
+            "claim_citation_support": "groundedness",
+            "uncited_claim_rate": "groundedness",
             # Abstention
             "unanswerable_accuracy": "accuracy",
             "abstention_false_positive_rate": "accuracy",
@@ -894,7 +954,11 @@ class EvaluationRunner:
         }
 
         # Metrics where lower is better — invert before averaging
-        _inverted_metrics = {"abstention_false_positive_rate", "abstention_false_negative_rate"}
+        _inverted_metrics = {
+            "abstention_false_positive_rate",
+            "abstention_false_negative_rate",
+            "uncited_claim_rate",
+        }
 
         # Collect average scores per objective
         objective_scores: dict[str, list[float]] = {obj: [] for obj in weights}
@@ -931,14 +995,15 @@ class EvaluationRunner:
             normalized_latency = 1.0 - min(latency_metric.value / latency_threshold, 1.0)
             objectives["latency"] = normalized_latency
 
-        # Cost objective — invert cost: $0 = 1.0, threshold+/query = 0.0
+        # Cost objective — invert cost: $0 = 1.0, threshold+/query = 0.0.
+        # A None value means unpriced, and unpriced is excluded so its weight is
+        # redistributed. It used to score 1.0, which handed a perfect cost score
+        # to exactly the models nobody had priced — self-hosted ones.
         if "cost" in weights:
             cost_metric = scorecard.get_metric("cost_per_query")
-            if cost_metric and cost_metric.value:
+            if cost_metric is not None and cost_metric.value is not None:
                 max_cost_per_query = scoring.max_cost_per_query_usd
                 objectives["cost"] = 1.0 - min(cost_metric.value / max_cost_per_query, 1.0)
-            else:
-                objectives["cost"] = 1.0  # Free/local models
 
         # Compute weighted score
         total_weight = sum(weights.get(obj, 0) for obj in objectives)

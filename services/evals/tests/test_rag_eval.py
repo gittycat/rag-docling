@@ -1008,7 +1008,7 @@ class TestJudgeCalibration:
         class StubJudge:
             def __init__(self, config=None):
                 from evals.config import JudgeConfig
-                self.config = JudgeConfig(model="stub-model")
+                self.config = JudgeConfig(provider="stub", model="stub-model")
 
             async def evaluate_faithfulness(self, answer, context):
                 return JudgeResult(metric_name="faithfulness", score=0.9)
@@ -1221,29 +1221,9 @@ class TestCostCalculation:
         # Expected: (2000 * 2.5 + 1000 * 10) / 1_000_000 = 0.015
         assert cost == pytest.approx(0.015, abs=0.0001)
 
-    def test_ollama_model_free(self):
-        """Ollama models should be free."""
-        from evals.config import get_model_cost
-
-        cost = get_model_cost(
-            model="ollama/gemma3:4b",
-            prompt_tokens=10000,
-            completion_tokens=5000,
-        )
-
-        assert cost == 0.0
-
-    def test_unknown_model_defaults_free(self):
-        """Unknown models should default to free."""
-        from evals.config import get_model_cost
-
-        cost = get_model_cost(
-            model="some-unknown-model",
-            prompt_tokens=10000,
-            completion_tokens=5000,
-        )
-
-        assert cost == 0.0
+    # Self-hosted and unknown models used to be asserted as free here. They are
+    # now "unpriced" (None) and excluded from cost scoring — see
+    # tests/test_pricing.py.
 
     def test_cost_per_query_metric(self):
         """CostPerQuery metric should compute correctly."""

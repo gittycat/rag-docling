@@ -50,7 +50,7 @@
 	let fileInput: HTMLInputElement;
 	let dirInput: HTMLInputElement;
 	let isUploading = $state(false);
-	let ollamaError = $state<string | null>(null);
+	let embeddingError = $state<string | null>(null);
 	let maxUploadSizeMb = $state<number | null>(null);
 
 	// Active batches being polled
@@ -243,9 +243,9 @@
 			activeBatches.add(response.batch_id);
 			pollBatchProgress(response.batch_id);
 		} catch (error) {
-			// Show prominent alert for Ollama connectivity issues
+			// Show prominent alert for embedding-service connectivity issues
 			if (error instanceof Error && error.name === 'ServiceUnavailable') {
-				ollamaError = error.message;
+				embeddingError = error.message;
 			}
 
 			// Mark all non-skipped items as error
@@ -336,16 +336,16 @@
 </script>
 
 <div class="flex flex-col h-full gap-4">
-	{#if ollamaError}
+	{#if embeddingError}
 		<div role="alert" class="alert alert-error shadow-lg">
 			<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 shrink-0 stroke-current" fill="none" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
 			</svg>
 			<div>
-				<h3 class="font-bold">Ollama is not accessible</h3>
-				<p class="text-sm">Ollama is required for generating embeddings. Check that it is running and reachable, then try uploading again.</p>
+				<h3 class="font-bold">The embedding service is not accessible</h3>
+				<p class="text-sm">Documents cannot be embedded without it. Check that the <code>tei</code> service is running and healthy, then try uploading again.</p>
 			</div>
-			<button class="btn btn-sm btn-ghost" onclick={() => ollamaError = null}>Dismiss</button>
+			<button class="btn btn-sm btn-ghost" onclick={() => embeddingError = null}>Dismiss</button>
 		</div>
 	{/if}
 

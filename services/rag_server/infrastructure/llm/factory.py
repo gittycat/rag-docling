@@ -24,11 +24,6 @@ logger = logging.getLogger(__name__)
 # Provider configuration: maps provider to (module_path, class_name, param_mapping)
 # param_mapping: config field -> constructor param name (None = use same name as config field)
 _PROVIDER_CONFIG: dict[LLMProvider, tuple[str, str, dict[str, str | None]]] = {
-    LLMProvider.OLLAMA: (
-        "llama_index.llms.ollama",
-        "Ollama",
-        {"model": None, "base_url": None, "timeout": "request_timeout", "keep_alive": None},
-    ),
     LLMProvider.OPENAI: (
         "llama_index.llms.openai",
         "OpenAI",
@@ -97,12 +92,7 @@ class LLMClientManager:
         logger.info(f"[LLM] Initializing {config.provider.value} provider: {config.model}")
 
         self._client = create_llm_client(config)
-
-        # Provider-specific logging
-        if config.provider == LLMProvider.OLLAMA:
-            logger.info(f"[LLM] Ollama client initialized: keep_alive={config.keep_alive}")
-        else:
-            logger.info(f"[LLM] {config.provider.value.capitalize()} client initialized")
+        logger.info(f"[LLM] {config.provider.value.capitalize()} client initialized")
 
         return self._client
 

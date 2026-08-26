@@ -15,11 +15,12 @@
 
 	let { detail, bracketHealth }: Props = $props();
 
-	const GROUP_ORDER = ['retrieval', 'generation', 'citation', 'abstention'];
+	const GROUP_ORDER = ['retrieval', 'generation', 'citation', 'groundedness', 'abstention'];
 	const GROUP_LABELS: Record<string, string> = {
 		retrieval: 'Retrieval',
 		generation: 'Generation',
 		citation: 'Citation',
+		groundedness: 'Claim grounding',
 		abstention: 'Abstention'
 	};
 
@@ -28,6 +29,7 @@
 		retrieval: STAGE_INFO.hybrid_search.ifWeak,
 		generation: STAGE_INFO.llm.ifWeak,
 		citation: STAGE_INFO.llm.ifWeak,
+		groundedness: STAGE_INFO.llm.ifWeak,
 		abstention: STAGE_INFO.llm.ifWeak
 	};
 

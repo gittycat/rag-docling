@@ -16,21 +16,74 @@ Every deployment needs the four PostgreSQL files. Active OpenAI or Anthropic
 models also need their provider key. Create the missing file as described in
 [Chapter 2](02-getting-running.md#create-secrets-first), then run `just up`.
 
-### “Ollama is not reachable”
+### “TEI is not reachable”
 
-**Cause:** an active model uses Ollama, but the service cannot reach the configured
-URL.
+**Cause:** an active model uses the `tei` provider, but the service cannot reach
+the configured `base_url`'s `/health` endpoint at startup.
 
 ```bash
-curl -sf http://localhost:11434/api/version
+docker compose ps tei
+docker compose exec tei curl -sf http://localhost:80/health
 ```
 
-If this fails, start Ollama. If it succeeds, check the model’s `base_url`; Docker
-Desktop, OrbStack, and Podman may reach the host differently. Then restart:
+If `tei` is not running, start it: `docker compose up -d tei`. If it is running
+but not yet healthy, see the next two entries — a cold container looks
+unreachable for a while before it actually is one. If it is healthy but the app
+still can't reach it, check `models.embedding.qwen3-embed.base_url` in
+`config.yml` — it should be `http://tei:80` (in-compose DNS), not
+`host.docker.internal` or a burst-stack IP left over from `just embed-up`. Then
+restart:
 
 ```bash
 docker compose restart rag-server task-worker
 ```
+
+### `tei` looks hung on first boot
+
+**Cause:** not a hang — a cold `tei_data` volume has to download
+`Qwen/Qwen3-Embedding-0.6B`'s safetensors weights (~1.2GB) from HuggingFace
+before the container can warm up and answer `/health`. Measured end-to-end,
+cold, on a fast connection: **204 seconds** from `docker compose up -d tei` to
+healthy (image pull, then ~170s of weight download, then ~18s of warmup). The
+compose healthcheck's `start_period: 300s` is sized with headroom above that
+measured figure — don't "tidy" it down to something like 120s, that will break
+first boot on a fresh volume.
+
+```bash
+docker compose logs tei
+```
+
+Watch for `Downloading model.safetensors` progressing over time; that is
+forward progress, not a stall. `just init` and `infra/assets/bake.sh` both
+pre-warm `tei_data` so this cost is paid once, not on every `docker compose up`.
+If it is genuinely stuck — no log progress for several minutes — suspect
+network egress (see the next entry) rather than the download itself.
+
+### `Could not start ORT backend ... onnx/model.onnx does not exist`
+
+**Not an error.** `Qwen/Qwen3-Embedding-0.6B` publishes no ONNX weights. TEI
+tries the ONNX runtime first, gets a 404, logs this line, and falls back to its
+Candle backend — the same backend the CUDA image uses — logging `Starting
+Qwen3 model on Cpu` and then `Downloading model.safetensors`. This is normal
+and expected for this model; it happens on every cold `tei_data` volume. Do
+not "fix" it by looking for ONNX weights to pre-provision — there are none to
+find.
+
+### `tei` cannot resolve `huggingface.co`
+
+**Cause:** `tei` was put on the internal-only `private` network without
+`public`. `private` is `internal: true` (no egress) — sufficient once weights
+are cached, but a cold volume needs to reach `huggingface.co` to download them
+in the first place. Compare against `docker-compose.yml`'s `tei` service,
+which is deliberately dual-homed on both `private` and `public` for exactly
+this reason (the same reason the Ollama service it replaced was dual-homed).
+
+```bash
+docker compose logs tei | grep -i "error\|resolve\|network"
+```
+
+If a custom overlay or a copy of the compose file dropped the `public` network
+entry, add it back.
 
 ### “Reranker model not found in local cache”
 
@@ -48,9 +101,9 @@ Restart after the download.
 ### “Embedding dimension mismatch”
 
 **Cause:** the active embedding model does not produce the dimension the schema
-was created with. `document_chunks.embedding` is declared `vector(768)` in
-`services/postgres/init.sql`, and `vector_store.dimension` in `config.yml` must
-state the same number.
+was created with. `document_chunks.embedding` is declared `vector(1024)` in
+`services/postgres/init.sql` (matching `Qwen/Qwen3-Embedding-0.6B` via TEI),
+and `vector_store.dimension` in `config.yml` must state the same number.
 
 ```bash
 just show-config
@@ -92,7 +145,7 @@ The startup error identifies one of two conditions:
 
 | Cause | Fix |
 |---|---|
-| PII with a cloud embedding model | Select an Ollama-backed embedding model |
+| PII with a cloud embedding model | Select a local (`tei`) embedding model |
 | GLiNER enabled but unavailable | Build with `INSTALL_GLINER=true`, install the extra locally, or disable GLiNER |
 
 ## Ingestion
@@ -110,15 +163,17 @@ The worker checks every 60 seconds and returns tasks older than one hour to
 `pending`. A task already at its maximum attempts becomes `error`. Wait for
 automatic recovery, or inspect the worker exception and re-upload after fixing it.
 
-### Upload returns 503 and mentions Ollama
+### Upload returns 503 and mentions TEI
 
-**Cause:** the active local embedding model became unavailable.
+**Cause:** the active local embedding model became unavailable. The upload
+route pre-flight checks `tei`'s `/health` endpoint before accepting files.
 
 ```bash
-curl -sf http://localhost:11434/api/version
+docker compose exec tei curl -sf http://localhost:80/health
+docker compose logs tei
 ```
 
-Restart Ollama and retry the upload.
+Restart `tei` (`docker compose restart tei`) and retry the upload.
 
 ## Query
 
@@ -150,6 +205,16 @@ docker compose logs rag-server | grep "\[VECTOR\]"
 logged error, which is usually an unreachable embedding model. `unavailable`
 means the extension or the index itself is broken; see
 [the vector store section above](#the-vector-store-reports-unavailable).
+
+This failure is easy to miss because it is quiet by design: a query embedding
+failure is caught in `vector_retriever._aretrieve`, which logs and returns
+`[]`, so hybrid search silently degrades to BM25-only and still answers —
+just worse. `component_status.vector_store` also reports `unknown` (not
+`unhealthy`) until a search has actually run in that process, so reading
+`/metrics/system` right after startup won't catch it either. `just
+demo-check` exists for exactly this: it forces a real query first, then
+asserts `vector_store` reports `healthy` — run it before a demo rather than
+trusting a cold `/metrics/system` read.
 
 ### The chat shows a generic connection error
 
@@ -200,6 +265,21 @@ docker compose logs evals
 ```
 
 Rerun after the provider recovers or select another judge.
+
+### “Judge … declares no execution_boundary” or “… which data_policy.allowed_judge_boundaries does not permit”
+
+The corpus is declared confidential and the judge is not allowed to see it. Judge
+prompts carry retrieved chunks and answers verbatim and are never masked, so this
+refusal is deliberate and is not affected by `pii.enabled`.
+
+| Cause | Fix |
+|---|---|
+| The `models.eval` entry for `active.eval` has no `execution_boundary` | Add one — unknown fails closed rather than being assumed safe |
+| The judge's boundary is not in `data_policy.allowed_judge_boundaries` | Point `active.eval` at an allowed judge, or widen the allow-list deliberately |
+| You are evaluating a public dataset and only need the check off for this work | Set `data_policy.eval_dataset_is_public: true` |
+
+Set `eval_dataset_is_public` back to `false` before evaluating your own documents.
+See [Chapter 8](08-privacy-and-pii.md#where-evaluation-data-may-go).
 
 ## Performance and persistence
 

@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 
+from infrastructure.config.models_config import ExecutionBoundary
+
 
 # ============================================================================
 # Model Information Models
@@ -27,11 +29,26 @@ class ModelSize(BaseModel):
 
 
 class ModelInfo(BaseModel):
-    """Detailed information about a model."""
+    """Detailed information about a model.
+
+    `execution_boundary` replaces the former `is_local` boolean: a two-valued
+    flag cannot separate "a host we run" from "the customer's own AWS account"
+    from "a vendor API", and calling Bedrock "not local" is exactly as
+    misleading as calling it local. `None` means the active model definition
+    declares no boundary — unknown, never "local" — and every consumer must
+    treat unknown as outside the trust boundary.
+    """
     name: str = Field(..., description="Model name/identifier")
-    provider: str = Field(..., description="Model provider (e.g., 'Ollama', 'HuggingFace', 'Anthropic')")
+    provider: str = Field(..., description="Model provider (e.g., 'Tei', 'HuggingFace', 'Anthropic')")
     model_type: str = Field(..., description="Type: 'llm', 'embedding', 'reranker', 'eval'")
-    is_local: bool = Field(..., description="Whether model runs locally")
+    execution_boundary: Optional[ExecutionBoundary] = Field(
+        ...,
+        description=(
+            "Where this model actually executes: 'customer_managed', 'aws_managed', "
+            "'third_party', or null when the config declares no boundary (unknown — "
+            "must be treated as outside the trust boundary)"
+        ),
+    )
     size: Optional[ModelSize] = Field(None, description="Model size information")
     reference_url: Optional[str] = Field(None, description="URL to model documentation/card")
     description: Optional[str] = Field(None, description="Brief model description")
@@ -209,5 +226,5 @@ class SystemMetrics(BaseModel):
     health_status: str = Field("healthy", description="Overall system health")
     component_status: dict[str, str] = Field(
         default_factory=dict,
-        description="Status of each component (postgres, bm25, vector_store, ollama)"
+        description="Status of each component (postgres, bm25, vector_store, tei)"
     )

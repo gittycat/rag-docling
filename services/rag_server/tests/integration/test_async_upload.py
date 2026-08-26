@@ -26,7 +26,7 @@ class TestTaskCompletion:
     - rag-server (API)
     - task-worker (task processing via SKIP LOCKED)
     - postgres (database, vectors, progress)
-    - ollama (embeddings)
+    - tei (embeddings)
     """
 
     def test_async_task_completes(

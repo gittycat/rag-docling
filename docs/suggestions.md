@@ -13,7 +13,8 @@ Nothing here is a documentation task. These are changes to the product.
 
 Every actionable entry carries a **Status** line: `Open`, `Partially done`, or
 `✅ Done` with the date and commit. Statuses were last reconciled against the code
-on **2026-08-21** (pgvector migration — section 4 was previously reconciled on
+on **2026-08-26** (judge resolution and the execution-boundary privacy model —
+§4.11; before that **2026-08-21** for the pgvector migration, and section 4 on
 2026-08-03).
 
 ---
@@ -310,8 +311,10 @@ renders it as a caveat block. The shipped defaults (both OpenAI) do trigger it.
 Still open: **ensemble judging with inter-rater agreement**. A warning tells you
 the referee may be biased; it does not measure by how much.
 
-Distinct from the PII judge gate in `2131914` (2026-08-01), which is a
-data-egress check on the same two fields.
+Distinct from the judge data-egress gate, which is a check on the same two
+fields for a different reason. That gate was originally the `pii.allow_cloud_judge`
+check in `2131914` (2026-08-01); it was replaced by the `data_policy` /
+`ExecutionBoundary` model on 2026-08-26 — see **4.11**.
 
 ### 2.5 Calibration covers half the judge prompts
 **What.** `calibrate` checks faithfulness against adherence labels and context
@@ -601,7 +604,10 @@ bad than a phantom retrievable one.
 automatically; a `reconcile-vectors` script and its `just` recipes existed for that.
 
 **✅ SUPERSEDED (2026-08-21).** Embeddings moved into an `embedding vector(768)`
-column on `document_chunks`, indexed with pgvectorscale StreamingDiskANN. Deleting a
+column on `document_chunks` (768 was the dimension at the time — the column is
+`vector(1024)` today, after the Ollama→TEI/Qwen3 embedding migration; the
+`ON DELETE CASCADE` behaviour described below is unaffected by that change),
+indexed with pgvectorscale StreamingDiskANN. Deleting a
 document is now the `ON DELETE CASCADE` that was always on
 `document_chunks.document_id`: one statement removes the row, the chunks and the
 vectors together. The explicit vector-delete step, its ordering tradeoff, the
@@ -774,14 +780,16 @@ the file cannot silently stop importing the code it tests).
 
 ### 4.9 Importing the task worker performs live network I/O
 **What.** Importing `services/rag_server/infrastructure/tasks/task_worker.py`
-triggers a real `httpx.get()` Ollama reachability check at module scope. With no
-Ollama running this doesn't just fail a test — it crashes the whole pytest
-collection with `INTERNALERROR`/`SystemExit`, taking the entire rag-server suite
-with it. `config.yml`'s active embedding is `ollama` at `host.docker.internal:11434`,
-so a CI runner hits this too.
+triggered a real `httpx.get()` embedding-endpoint reachability check at module
+scope. With no endpoint reachable this doesn't just fail a test — it crashes
+the whole pytest collection with `INTERNALERROR`/`SystemExit`, taking the
+entire rag-server suite with it. At the time, `config.yml`'s active embedding
+was `ollama` at `host.docker.internal:11434`, so a CI runner hit this too; the
+active embedding provider is `tei` today, but the import-time hazard this item
+describes was about *where* the check ran, not which provider it targeted.
 **Why it matters.** Import-time side effects that reach the network make a module
 untestable and can take down an unrelated suite. Worked around at the test level
-(mocking `core.config.check_ollama_reachable`); the import-time call itself is
+(mocking the reachability check); the import-time call itself is
 untouched.
 **Fix.** Make the reachability check lazy, at first use rather than at import.
 **Effort.** S.
@@ -794,9 +802,12 @@ module scope into `main()`, so importing the module reaches nothing. The check
 itself stays eager *within* `main()` — a worker that cannot reach its embedding
 provider should fail at boot, not on the first document — the defect was where
 it ran, not that it runs. The test-level workaround
-(`test_task_worker_concurrency.py`'s import-time patching of
-`check_ollama_reachable` and the vector-store client) is deleted and replaced by a
-regression test asserting the import stays inert.
+(`test_task_worker_concurrency.py`'s import-time patching of the reachability
+check and the vector-store client) is deleted and replaced by a regression test
+asserting the import stays inert. (The reachability check itself was later
+renamed `check_embedding_endpoint_reachable` as part of the Ollama→TEI
+migration; the fix described here — making it lazy — is unaffected by that
+rename.)
 
 ### 4.10 `ConfigSnapshot` in the rag-server schemas is dead code
 **What.** `services/rag_server/schemas/metrics.py:159` defines a 15-field pydantic
@@ -819,10 +830,63 @@ adding declared-but-unfilled fields is the 2.1 defect in a new place. The
 module docstring now points at `evals/schemas/results.py` as the only snapshot
 type.
 
-> **Section 4 is complete as of 2026-08-03.** Both suites are green with no
-> skips attributable to this section: rag-server **147 passed, 37 skipped, 1
-> xfailed**; evals **190 passed, 20 skipped** (the 11 previously-skipped citation
-> tests moved into the rag-server count).
+### 4.11 `active.eval` was dead configuration, and the judge privacy gate checked the wrong thing
+**What.** Two defects on the same code path, found together.
+
+*Dead judge config.* `JudgeConfig` defaulted to `provider="anthropic"`,
+`model="claude-sonnet-4-20250514"`. Both entry points — `evals/cli.py` and
+`api/job_manager.py` — constructed `JudgeConfig(enabled=...)` and passed neither
+field, so the defaults always won. `_load_default_config()` in `llm_judge.py` read
+`active.eval` correctly but only ran when `config is None`, which never happened.
+Every real eval run called Anthropic, at a model retired 2026-06-15, whatever
+`config.yml` said.
+
+*The privacy gate was uninformative.* Judge egress was gated by `pii.enabled` plus
+a `LOCAL_JUDGE_PROVIDERS` set, with a `pii.allow_cloud_judge` opt-out. The set was
+empty, so every judge classified as cloud and the opt-out was the only way to run
+anything. Worse, "local" was being inferred from the provider string, which cannot
+distinguish a self-hosted OpenAI-compatible endpoint from `api.openai.com`, and the
+whole check hung off `pii.enabled` — but confidential content need not contain any
+PII.
+
+**Why it matters.** The first defect makes every run's recorded judge a fiction and
+bills an account nobody chose. The second is worse: the two combined meant a
+validation layer could have reported a "local" judge while the runtime called
+Anthropic — a privacy claim in the documentation that the code did not implement.
+**Effort.** M.
+**Where.** `services/evals/evals/config.py`,
+`services/evals/evals/judges/llm_judge.py`, `services/evals/evals/cli.py`,
+`services/evals/api/job_manager.py`, both services'
+`infrastructure/config/models_config.py`, `config.yml`.
+**Status.** ✅ Done — 2026-08-26.
+
+**✅ FIXED (2026-08-26).** `resolve_judge_config()` is now the single source of
+judge identity: it reads `active.eval`, validates it, and returns a fully resolved
+`JudgeConfig` carrying provider, model, `base_url`, temperature, timeout, retries
+and `execution_boundary`. `JudgeConfig` has no provider/model defaults and
+`LLMJudge` refuses a config it was not handed, so there is no path left that can
+substitute a different model. The resolved values are recorded in run metadata
+(`judge_provider`, `judge_model`, `judge_execution_boundary`).
+
+The gate was replaced rather than repaired. `LOCAL_JUDGE_PROVIDERS` and
+`pii.allow_cloud_judge` are gone; a three-value `ExecutionBoundary`
+(`customer_managed` / `aws_managed` / `third_party`) is declared per model
+definition in `config.yml` as a property of the resolved endpoint, and
+`data_policy` holds an allow-list defaulting to `{customer_managed, aws_managed}`.
+A missing boundary fails closed. Enforcement runs at config load and again at judge
+resolution, so the object the runtime calls is the object that was checked.
+Rationale in `docs/internal/design-decisions.md`; covered by
+`services/evals/tests/test_privacy_posture.py` and
+`services/evals/tests/test_judge_config_resolution.py`.
+
+Note that **4.11 does not close 3.6** — the duplicated, hardcoded cost tables are
+untouched by this change.
+
+> **Section 4 was complete as of 2026-08-03** for entries 4.1–4.10. Both suites
+> were green with no skips attributable to those entries: rag-server **147 passed,
+> 37 skipped, 1 xfailed**; evals **190 passed, 20 skipped** (the 11
+> previously-skipped citation tests moved into the rag-server count). **4.11** was
+> found later and resolved on 2026-08-26.
 
 ---
 
@@ -866,13 +930,19 @@ plausible — one LLM call per chunk — but plausibility is not measurement.
 qualitative statement.
 **Status.** Partially done — `CLAUDE.md` now says contextual retrieval's per-chunk
 LLM calls "dominate ingestion time (unmeasured)" and points here, so the fabricated
-85% is gone. The measurement has not been taken.
+85% is gone. `ingest_document()` (`services/rag_server/pipelines/ingestion.py`) now
+returns a `timings` dict with `parse_s` / `contextual_s` / `embed_s` for every
+document ingested, alongside the Ollama→TEI embedding migration's parse/embed/write
+instrumentation — so a real baseline can now actually be captured from those
+numbers. It has not been captured yet; this item stays open until it is.
 
 ### 5.4 `docs/BENCHMARKS.md` — **substantiated, and narrow**
 **Finding.** A real run on a 3-file, 6-chunk corpus, honest about its own limits. It
 tested neither hybrid nor contextual retrieval and reported no measurable difference
 at that corpus size. It cannot support any claim about either feature.
-**Status.** No action required — informational.
+**Status.** No action required as originally scoped — informational. Separately,
+the parse/embed/write instrumentation added in **5.3** means a proper baseline run
+(more than 3 files) is now possible without new code; nobody has run one yet.
 
 ---
 
@@ -883,7 +953,7 @@ at that corpus size. It cannot support any claim about either feature.
 | **No backups for any volume.** Postgres data (which since 2026-08-21 includes the embedding vectors), eval runs, and the Forgejo CI history are all unbacked-up named volumes. | Total data loss on volume removal. `docker compose down -v` is one flag away from destroying everything. | M | Open |
 | **No resource limits on any container** in any compose file. | One runaway service can starve the host. | S | Open |
 | **No request or correlation IDs** anywhere in logging. | Tracing a single request across webapp → rag-server → task-worker is impossible; debugging relies on timestamp correlation. | M | Open |
-| **`EMBEDDING_MODEL` is never set** by any compose file, so `/models/info` always reports `unknown`. | The API misreports the active embedding model, and any consumer relying on it — including run records — gets nothing. | S | Open |
+| ~~**`EMBEDDING_MODEL` is never set** by any compose file, so `GET /models/info`'s `embedding_model` field always reports `unknown`.~~ | The API misreports the active embedding model, and any consumer relying on it — including run records — gets nothing. | S | ✅ **Resolved**, as part of the Ollama→TEI migration. `services/rag_server/api/routes/health.py`'s `get_models_info()` now reads `models_config.embedding.model` (i.e. `config.yml`, the same source of truth `GET /metrics/models` already used) instead of `os.getenv("EMBEDDING_MODEL", "unknown")`. `/models/info` now reports `Qwen/Qwen3-Embedding-0.6B`. |
 | **`RAG_SERVER_AUTH_TOKEN` (non-file variant)** is read as a fallback and set by no compose file. | Dead code path. | S | Open |
 
 ---
@@ -891,8 +961,8 @@ at that corpus size. It cannot support any claim about either feature.
 ## 7. AWS demo deployment
 
 Limitations of the AWS demo deployment (CloudFormation stack, golden AMI, single
-EC2 instance running every service including Ollama). Recorded as accepted
-trade-offs of a demo deployment, not as defects to fix.
+EC2 instance running every service including the self-hosted TEI embedder).
+Recorded as accepted trade-offs of a demo deployment, not as defects to fix.
 
 ### 7.1 `config.yml` is a read-write bind mount
 **What.** `config.yml` is bind-mounted read-write into the container, and the app

@@ -7,11 +7,13 @@ This covers getting the stack running locally, the `just` recipes that drive day
 - **Python 3.13+** with [uv](https://docs.astral.sh/uv/) as the package manager and runner.
 - **Node.js 22+** with npm, for the webapp.
 - **Docker** (Docker Desktop, OrbStack, or Podman) — the whole stack runs as Compose services.
-- **Ollama**, running on the host, if any active model in `config.yml` uses the `ollama` provider (the default checked-in config does use local Ollama models for inference and embedding). Pull whatever models `config.yml`'s `active:` block points at, e.g.:
-  ```bash
-  ollama pull gemma3:4b
-  ollama pull nomic-embed-text
-  ```
+
+Nothing needs to run on the host beyond Docker. Embedding inference is the `tei`
+compose service (`Qwen/Qwen3-Embedding-0.6B`), and a self-hosted vLLM model, if
+you configure one, is likewise a compose service. Run `just init` once to warm
+the reranker cache and pull the Qwen3 weights into the `tei_data` volume — on a
+cold volume that download is ~1.2GB and takes a few minutes, and doing it up
+front means the first `just up` isn't waiting on it.
 
 ## First-time setup
 
@@ -47,7 +49,7 @@ just init MODEL="some/other-model"
 just up      # preflight check, then docker compose up -d
 ```
 
-`just up` depends on `preflight`, which checks that the Docker daemon is reachable and — only if an active model in `config.yml` uses the `ollama` provider — that Ollama is reachable on `localhost:11434`. This fails fast with a clear message rather than letting the stack start against an unreachable model provider.
+`just up` depends on `preflight`, which now only checks that the Docker daemon is reachable. There is nothing host-side left to probe: `tei` is a compose service and `rag-server`/`task-worker` wait on its healthcheck via `depends_on: service_healthy`, so an unready embedder blocks startup rather than surfacing as a runtime failure.
 
 To confirm it's working:
 
@@ -70,7 +72,7 @@ just down    # stop the stack
 | Recipe | What it runs | Depends on | Use it for |
 |---|---|---|---|
 | `build` | `docker compose build` | — | Rebuild all images |
-| `preflight` | Checks Docker daemon + conditionally Ollama reachability | — | Sanity check before `up`/`deploy` |
+| `preflight` | Checks the Docker daemon is reachable | — | Sanity check before `up`/`deploy` |
 | `up` | `docker compose up -d` | `preflight` | Start the local stack |
 | `down` | `docker compose down` | — | Stop the local stack |
 | `logs` | `docker compose logs -f` | — | Tail all service logs |
@@ -123,5 +125,5 @@ Both recipes call `print_config_banner()`, which renders from the `ModelsConfig`
 - **Reranker slow on first query:** it downloads its model weights (tens of MB) into the bind-mounted Hugging Face cache on first use unless pre-fetched with `just init`.
 - **`task-worker` looks stuck:** check `docker compose logs task-worker` — it auto-restarts, and stuck tasks are reset after an hour by the worker's own claim-timeout logic.
 - **Eval-related commands fail with a missing-file error:** you're likely running something by hand against a stale path — use the `just eval*` recipes, which target the current `services/evals` layout.
-- **Ollama unreachable at `up`/`deploy`:** `preflight` should catch this before the stack starts, but if you bypass it, uploads will surface a dedicated "Ollama unreachable" error in the webapp; chat queries surface only a generic connection-interrupted error for the same underlying cause.
+- **`tei` unreachable:** `depends_on: service_healthy` should stop the stack starting without it, but if you bypass that, uploads surface a dedicated "embedding service is not accessible" alert in the webapp. Queries are the dangerous case: a failed query embedding is caught in `vector_retriever` and returns `[]`, so search silently degrades to BM25-only and still answers, just worse. Run `just demo-check` to catch that — it forces a real query and then asserts `vector_store` is healthy.
 - **Config change not taking effect:** `config.yml` is bind-mounted read-write into `rag-server`/`task-worker` and read-only into `evals`; most values are picked up via mtime-based auto-reload, but check `configuration-reference.md` for the handful of values that require a restart.

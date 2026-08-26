@@ -80,7 +80,7 @@ The vector leg is **not** a LlamaIndex `VectorStoreIndex`. It is
 mirror of `PgSearchBM25Retriever`, with the same module shape, the same
 health-tracking globals and the same node construction.
 
-Embeddings live on `document_chunks.embedding`, a `vector(768)` column indexed
+Embeddings live on `document_chunks.embedding`, a `vector(1024)` column indexed
 with pgvectorscale's StreamingDiskANN (`USING diskann (embedding
 vector_cosine_ops)`) — see `database.md`. The same table, in the same database,
 that the BM25 index covers.
@@ -88,11 +88,21 @@ that the BM25 index covers.
 The query is embedded explicitly by the retriever via
 `await Settings.embed_model.aget_query_embedding(query_str)`. The async variant is
 required, not stylistic: the synchronous call blocks the event loop for the whole
-Ollama round-trip, which serialises the `asyncio.gather()` in
+TEI round-trip, which serialises the `asyncio.gather()` in
 `HybridRRFRetriever._aretrieve` and stops the BM25 leg running concurrently. The
-embedding model is
-whatever `active.embedding` resolves to in `config.yml` (default Ollama-served
-`nomic-embed-text`). The resulting vector is bound as a pgvector text literal
+embedding model is whatever `active.embedding` resolves to in `config.yml`
+(default `qwen3-embed` — `Qwen/Qwen3-Embedding-0.6B`, served by the in-compose
+`tei` service).
+
+Note that the query and document paths are deliberately **asymmetric**. Qwen3
+embedding models are instruction-aware: queries carry a task prefix, documents
+do not. That is configured declaratively on the `qwen3-embed` entry —
+`query_instruction` is set, `text_instruction` is empty — and the
+`TextEmbeddingsInference` client applies each only on its own path. Applying the
+prefix to documents as well would degrade retrieval silently, which is why it is
+expressed as config rather than as a call-site string concatenation here.
+
+The resulting vector is bound as a pgvector text literal
 (`"[0.1,0.2,…]"`) and cast server-side, because no pgvector codec is registered
 on the asyncpg engine.
 

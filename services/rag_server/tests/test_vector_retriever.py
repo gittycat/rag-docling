@@ -118,7 +118,7 @@ async def test_failed_query_embedding_returns_empty_instead_of_raising():
 
     from infrastructure.search.vector_retriever import PgVectorRetriever, get_vector_health
 
-    Settings.embed_model = _embed_model(side_effect=ConnectionError("ollama unreachable"))
+    Settings.embed_model = _embed_model(side_effect=ConnectionError("tei unreachable"))
     try:
         results = await PgVectorRetriever(similarity_top_k=5)._aretrieve(
             QueryBundle(query_str="what is this about?")
@@ -129,7 +129,7 @@ async def test_failed_query_embedding_returns_empty_instead_of_raising():
     assert results == []  # caller sees "no dense matches", not an error
     health = get_vector_health()
     assert health["status"] == "unhealthy"
-    assert "ollama unreachable" in health["last_error"]
+    assert "tei unreachable" in health["last_error"]
 
 
 @pytest.mark.asyncio

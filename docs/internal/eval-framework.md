@@ -64,13 +64,18 @@ originally measured latency, not the hit time, so latency metrics stay honest.
 | `citation_precision` | citation | cited ∩ gold / citations count | 0–1, higher better | No |
 | `citation_recall` | citation | cited ∩ gold / gold count | 0–1, higher better | No |
 | `section_accuracy` | citation | fraction of citations whose doc+chunk id exactly matches a gold passage | 0–1, higher better | No |
+| `claim_groundedness` | groundedness | fraction of the answer's claims the retrieved context supports, judged one claim at a time | 0–1, higher better | Yes |
+| `citation_entailment` | groundedness | fraction of (claim → cited passage) links where the passage entails the claim citing it | 0–1, higher better | Yes |
+| `claim_citation_support` | groundedness | fraction of cited claims backed by at least one of their own citations | 0–1, higher better | Yes |
+| `uncited_claim_rate` | groundedness | fraction of claims carrying no citation marker | 0–1, lower better | No |
 | `unanswerable_accuracy` | abstention | (true positive + true negative) / total, over an abstain-vs-should-abstain confusion matrix | 0–1, higher better | No |
 | `abstention_false_positive_rate` | abstention | rate of incorrect abstention on answerable questions | 0–1, lower better | No |
 | `abstention_false_negative_rate` | abstention | rate of incorrectly answering (hallucinating) on unanswerable questions — the hallucination-risk metric | 0–1, lower better | No |
 | `latency_p50` / `latency_p95` | performance | median / 95th-percentile latency across the batch | ms, lower better | No |
-| `cost_per_query` | performance | token counts × per-model rate, averaged over batch | USD, lower better | No |
+| `cost_per_query` | performance | (generation + judge) token counts × per-model rate, averaged over queries | USD, lower better | No |
 
-Only the three generation metrics require an LLM judge. Retrieval, citation,
+Only the three generation metrics and three of the four groundedness metrics
+require an LLM judge. Retrieval, citation,
 abstention, and performance metrics are computed by direct matching or arithmetic
 — matching falls back from exact chunk-ID match to Jaccard token-overlap with a
 0.3 threshold when IDs don't line up cleanly.
@@ -80,6 +85,65 @@ same exact-ID-first, Jaccard-overlap-fallback logic — there is one shared matc
 implementation behind both metric groups. Citation matching adds a document-level
 path for gold passages that carry no text (produced by `gold_doc_ids`), which
 would otherwise be unmatchable and score a spurious 0.
+
+## Claim-level grounding (the `groundedness` group)
+
+The citation group scores a citation against the **gold passage set**: a citation
+is "correct" when the chunk it points at is one of the passages the dataset marked
+relevant. That is a retrieval question wearing a citation's clothes. It is
+satisfied by an answer that cites a gold passage after a sentence the passage does
+not support, and it is unsatisfiable on any dataset without passage annotations.
+
+`faithfulness` is the other half of the blind spot: one judge call over the whole
+answer against the whole context. It can say an answer drifted; it cannot say
+which sentence drifted, and it never looks at citations — an answer whose every
+citation points at the wrong chunk still scores 1.0 as long as the union of the
+context supports the prose.
+
+The `groundedness` group asks what neither one asks: **for each claim, does the
+passage it cites entail it?**
+
+**Claims.** `evals/claims.py` segments the answer into sentence-level claims and
+parses the inline `[1]`, `[1,2]`, `[1-3]` markers attached to each one, using the
+same marker grammar as `rag_server`'s `extract_numeric_citations` (which flattens
+the whole answer into one de-duplicated index list and loses the association this
+group needs). Segmentation is deterministic and LLM-free: an LLM decomposition
+step would be another judged call per question, non-deterministic, and would put a
+second model's segmentation between the answer and its score. Soft line wraps are
+rejoined, abbreviations (`Fig.`, `e.g.`) do not end a sentence, markers trailing a
+terminator are credited to the sentence before them, and headings, list scaffolding
+and sub-four-word fragments are not claims.
+
+**Cost.** One judge call per claim plus one per (claim, citation) link, against
+three per question for the whole generation group. `max_claims_per_answer` (5) and
+`max_citations_per_claim` (2) bound it; truncation is reported per question in
+`details` rather than hidden. The three judged metrics share one
+`ClaimEntailmentEvaluator`, memoized per question, so the analysis is done once
+instead of once per metric. The group is **off by default** — `--groundedness` on
+the CLI, `groundedness: true` on `POST /eval/runs`, or the "Claim grounding"
+checkbox in the dashboard's run panel.
+
+**Reading the four together.** `citation_entailment` averages links,
+`claim_citation_support` counts claims: they separate when a claim carries several
+citations and only one is apt, which is the shotgun-citation signal. Both are
+blind to what the answer never cited at all, which is `uncited_claim_rate`'s job —
+an answer that cites one sentence perfectly and leaves nine uncited scores 1.0 on
+both entailment metrics.
+
+**Undefined cases.** An abstention makes no claims, so all four are `None` rather
+than 0.0 — scoring a refusal would punish exactly what the abstention metrics
+reward. With `eval.citation_scope: retrieved` (the shipped default) the model is
+never asked for inline markers, so the two citation-link metrics are `None` and
+`uncited_claim_rate` is 1.0; set `citation_scope: explicit` for them to mean
+anything. A citation naming a source index that was never retrieved is counted in
+`details.unresolved_citations` rather than scored, since there is no passage to
+judge against. A failed judge call drops that pair, never scores it 0.0.
+
+**Weighted score.** `groundedness` is its own objective, weighted `0.0` in
+`config.yml`, so the metrics are reported without moving the headline number.
+Folding them into `citation` or `faithfulness` would silently redefine what those
+objectives measure and make every past run's headline incomparable to a new one.
+Raising the weight is an operator decision and is itself a scoring change.
 
 ### `None` is not `0.0`
 
@@ -93,6 +157,8 @@ Cases that produce it:
 | Case | Previously | Why the old value was wrong |
 |---|---|---|
 | Citation metrics, no gold passages | `1.0` | A golden-set run displayed perfect citation scores that measured nothing |
+| Groundedness metrics on an abstention | n/a (new) | A refusal makes no claims; scoring it would punish what the abstention metrics reward |
+| Claim-to-citation metrics with no inline citations | n/a (new) | Under `citation_scope: retrieved` there are no citation links to check, which is not the same as every link being wrong |
 | Retrieval metrics, no gold passages | `0.0` | A dataset without retrieval annotations looked like a retrieval regression |
 | `abstention_false_positive_rate` on an unanswerable question | `0.0` | Counted as "did not falsely abstain", pulling the rate down by however many unanswerable questions happened to be present |
 | `abstention_false_negative_rate` on an answerable question | `0.0` | Same, mirrored |
@@ -101,6 +167,32 @@ Cases that produce it:
 `BaseMetric.compute_batch` excludes `None` results from the average and counts
 them under `details.not_applicable_count`, so `sample_size` reflects what was
 actually measured.
+
+### Judge tokens are part of the cost
+
+`cost_per_query` prices two components against their own model's rates:
+generation, from the per-question `token_usage` the RAG server reports, and
+judging, from a run-level total. Judging is three or more LLM calls per question
+against generation's one, so it is usually the larger half of an eval run's token
+volume — reporting generation alone as "the cost" understates a run several-fold.
+
+The judge total arrives through a sink: `EvaluationRunner` passes
+`UsageTotals.record` to `LLMJudge(usage_sink=...)`, and the judge reports
+`(prompt_tokens, completion_tokens)` after every call that reached the endpoint.
+Three properties are deliberate:
+
+- **Cache hits report nothing.** A replayed verdict costs nothing, and charging
+  for it would inflate exactly the runs the judge cache exists to make cheap.
+- **Unparseable replies still report.** Usage is recorded before parsing: a retry
+  consumed its tokens whether or not the answer could be read, and counting only
+  parseable answers would under-report the runs that cost the most.
+- **A call with no usage block is still counted**, under
+  `calls_without_usage`. That is what separates "the sink never fired" from "the
+  provider reported nothing" — both otherwise present as a $0 judge bill.
+
+Either component being unpriced makes the whole metric `None`: an unmeasured
+component cannot be silently treated as free. `details.judge` carries the judge's
+model, token totals, call count and its own cost so the two remain separable.
 
 ### Per-question scores
 
@@ -149,10 +241,31 @@ any production metric.
 
 **Model resolution**: the judge is a separate LLM instance from the main RAG
 generation model, resolved from `config.yml`'s `active.eval` setting (any
-supported provider — Ollama or a cloud provider). Temperature is forced to `0.0`
-and retries to `3` regardless of what a bare judge-config dataclass default would
-say, because the actual code path always loads its defaults from the live
-`models_config.eval` setting, not from the dataclass's own field defaults.
+supported provider — currently OpenAI or Anthropic). `resolve_judge_config()` in
+`evals/config.py` is the single source of judge identity: it reads
+`models_config.eval`, re-validates it against `data_policy`, and returns a
+`JudgeConfig` carrying provider, model, `base_url`, temperature (`0.0`), timeout,
+retries (`3`) and `execution_boundary`. `JudgeConfig` has no provider or model
+defaults, and `LLMJudge` refuses a config it was not handed — there is no fallback
+path that can quietly substitute a different model. Both entry points (the CLI and
+the eval API's job manager) call the same resolver, and the resolved
+provider/model/boundary are written into run metadata as `judge_provider`,
+`judge_model` and `judge_execution_boundary`, so a stored run says which judge
+actually scored it.
+
+This was not always true: `JudgeConfig` used to default to Anthropic at
+`claude-sonnet-4-20250514` and both entry points constructed it without a provider
+or model, so `active.eval` was dead configuration and every run called Anthropic
+whatever the config said. See `docs/suggestions.md` §4.11.
+
+**Privacy gate**: `resolve_judge_config()` calls `enforce_judge_boundary()` on the
+config it is about to return, so a judge whose `execution_boundary` is outside
+`data_policy.allowed_judge_boundaries` — or missing entirely — stops the run
+rather than being discovered after the corpus has already been sent. Judge prompts
+embed retrieved chunks and answers verbatim and are never masked, which is why
+this gate is independent of `pii.enabled`. See
+[pii-masking.md](pii-masking.md#the-judge-gate-is-not-a-pii-control) and
+[design-decisions.md](design-decisions.md#execution-boundary-instead-of-a-localcloud-boolean).
 
 **Retry and parsing**: a malformed response (no parseable `SCORE:` line, or an
 unparseable value) raises a parse error *inside* the retry loop, so a malformed
@@ -257,8 +370,9 @@ because it would trade the current *calibrated* judge (calibration measured
 against RAGBench's own TRACe labels, see above) for an uncalibrated one whose
 prompts the team doesn't control, plus a telemetry posture (DeepEval phones home
 on import) that conflicts with a privacy-first product on exactly the one code
-path — the judge — that PII masking doesn't cover. See `design-decisions.md` for
-the full three-part rationale and what would justify revisiting it.
+path — the judge — that PII masking doesn't cover, and that `data_policy` now
+guards explicitly. See `design-decisions.md` for the full three-part rationale and
+what would justify revisiting it.
 
 ## Known gaps
 

@@ -47,7 +47,7 @@ from evals.cache import (
     CacheConfig,
     clear_cache as clear_response_cache,
 )
-from evals.config import EvalConfig, DatasetName, EvalTier, DATASET_TIER_SUPPORT, JudgeConfig, MetricConfig
+from evals.config import EvalConfig, DatasetName, EvalTier, DATASET_TIER_SUPPORT, MetricConfig, resolve_judge_config
 from evals.datasets.registry import list_datasets, get_dataset, clear_cache, CACHE_DIR
 from evals.export import export_for_review, export_run_report, export_scorecard
 from evals.judges.llm_judge import warn_if_judge_not_independent
@@ -111,6 +111,15 @@ def main():
         "--no-judge",
         action="store_true",
         help="Disable LLM-as-judge metrics (faster but less comprehensive)",
+    )
+    eval_parser.add_argument(
+        "--groundedness",
+        action="store_true",
+        help=(
+            "Score claims individually and check each citation against the claim "
+            "citing it. Costs one judge call per claim plus one per claim-citation "
+            "link, on top of the three per question the other judged metrics use."
+        ),
     )
     eval_parser.add_argument(
         "--output",
@@ -313,6 +322,8 @@ def cmd_eval(args):
             config.cache.judge = False
         if args.cache_queries:
             config.cache.query = True
+        if args.groundedness:
+            config.metrics.groundedness = True
     else:
         # Parse datasets
         dataset_names = [
@@ -341,7 +352,8 @@ def cmd_eval(args):
                 seed=args.seed,
                 rag_server_url=args.rag_url,
                 runs_dir=Path(args.output),
-                judge=JudgeConfig(enabled=not args.no_judge),
+                judge=resolve_judge_config(enabled=not args.no_judge),
+                metrics=MetricConfig(groundedness=args.groundedness),
                 tier=tier,
                 cache=CacheConfig(
                     judge=not args.no_judge_cache,
@@ -372,6 +384,11 @@ def cmd_eval(args):
     console.print(f"Samples per dataset: {config.samples_per_dataset}")
     console.print(f"RAG server: {config.rag_server_url}")
     console.print(f"Judge enabled: {config.judge.enabled}")
+    if config.metrics.groundedness:
+        console.print(
+            f"Groundedness: on (up to {config.metrics.max_claims_per_answer} claims/answer, "
+            f"{config.metrics.max_citations_per_claim} citations/claim judged)"
+        )
     if config.judge.enabled:
         judge_warning = warn_if_judge_not_independent()
         if judge_warning:

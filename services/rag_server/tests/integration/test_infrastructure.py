@@ -60,19 +60,18 @@ class TestServiceConnectivity:
                 f"Extension '{ext}' not found. Installed: {extensions}"
             )
 
-    def test_ollama_models_available(self, integration_env):
-        """Verify required Ollama models are pulled."""
+    def test_tei_model_available(self, integration_env):
+        """Verify the expected TEI embedding model is loaded and serving."""
         import httpx
 
-        ollama_url = integration_env.get("OLLAMA_URL", "http://localhost:11434")
-        resp = httpx.get(f"{ollama_url}/api/tags", timeout=5.0)
+        tei_url = integration_env.get("TEI_URL", "http://localhost:8080")
+        resp = httpx.get(f"{tei_url}/info", timeout=5.0)
         resp.raise_for_status()
-        models = [m.get("name", "") for m in resp.json().get("models", [])]
+        model_id = resp.json().get("model_id", "")
 
-        for required in ["gemma3", "nomic-embed-text"]:
-            assert any(required in m for m in models), (
-                f"Required model '{required}' not found. Available: {models}"
-            )
+        assert "Qwen3-Embedding" in model_id, (
+            f"Unexpected TEI model loaded: {model_id!r}"
+        )
 
 
 @pytest.mark.integration

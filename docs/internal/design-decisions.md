@@ -225,7 +225,7 @@ know what it's protecting against.
 
 ## No separate test-runner service
 
-**Context.** Integration tests need a running stack — Postgres, Ollama,
+**Context.** Integration tests need a running stack — Postgres, TEI,
 rag-server all up together — not just the application code in isolation.
 
 **Problem.** The obvious approach, a dedicated `test-runner` service in
@@ -373,15 +373,16 @@ full stop, and this is enforced at boot rather than left as a configuration
 convention someone could violate by accident. `ModelsConfig.validate_privacy_posture()`
 raises a `ValueError` at startup — refusing to boot, not degrading gracefully
 — if `pii.enabled` is true and the configured embedding provider is not in the
-local-provider set (currently just `ollama`). The evaluation judge is gated
-the same way in the eval service: with `pii.enabled: true`, pointing the judge
-at a non-local provider without `allow_cloud_judge: true` raises the same way,
-because judge prompts interpolate retrieved chunks and generated answers
-verbatim — the eval path is the one place in the whole pipeline where masking
-never applies at all, gated or not. `allow_cloud_judge: true` is the explicit,
-opt-in statement that the eval dataset itself contains no real PII (a
-synthetic golden set, for instance) — it is not a way to mask the eval path,
-it's a way to declare the corpus safe to skip masking on.
+local-provider set (currently just `tei`). The evaluation judge was originally
+gated the same way — with `pii.enabled: true`, a non-local judge provider raised
+unless `allow_cloud_judge: true` was set — because judge prompts interpolate
+retrieved chunks and generated answers verbatim, making the eval path the one
+place in the whole pipeline where masking never applies at all. That half of the
+gate has since moved out of `pii.*` into its own `data_policy` block, for the
+reasons in [Execution boundary instead of a local/cloud
+boolean](#execution-boundary-instead-of-a-localcloud-boolean) below. The
+embedding refusal described here is unchanged and still lives in
+`validate_privacy_posture()`.
 
 Separately, GLiNER support (an optional second, higher-recall entity
 recognizer layered alongside spaCy and the regex recognizers) gets the same
@@ -399,3 +400,75 @@ accident," at the cost of a config combination that looks locally reasonable
 setting alone. The tradeoff is accepted deliberately: a loud, early failure at
 startup is worth more here than a permissive default that fails silently at
 the network boundary instead.
+
+## Execution boundary instead of a local/cloud boolean
+
+**Context.** Judge prompts are the one path in the system that carries corpus
+content out unmasked, so something has to decide whether a given judge endpoint
+may see it. The first attempt was a boolean: a `LOCAL_JUDGE_PROVIDERS` set of
+provider strings, consulted only when `pii.enabled` was true, with a
+`pii.allow_cloud_judge` opt-out.
+
+**Problem.** Three separate things were wrong with it, and each one was load-bearing.
+
+*The set was empty.* `LOCAL_JUDGE_PROVIDERS` shipped with no members, so every
+judge was classified cloud regardless of where it ran. The check therefore had
+exactly one reachable outcome, and the only way to run any eval at all was the
+opt-out — which meant the opt-out was permanently on in practice and the gate
+measured nothing.
+
+*"Local" is not a property of a provider string.* An OpenAI-compatible transport
+can address a vLLM container on the operator's own host or `api.openai.com`; the
+provider name is identical in both cases. Any classification derived from the
+provider field is a guess, and it guesses wrong in the direction that matters —
+the self-hosted case, which is the whole point of having the control.
+
+*Binary forces a false framing.* With only "local" and "cloud" available, Bedrock
+has to be filed under one of them. Calling it cloud refuses a deployment that
+never leaves the customer's AWS account. Calling it local claims the model runs on
+the operator's host, which is not true and would make "local" mean two
+incompatible things at once — the sort of definition that survives review and then
+misleads whoever reads the config two quarters later. There is no honest binary
+answer, because there are genuinely three positions.
+
+*And it was gated on the wrong predicate.* Tying corpus egress to `pii.enabled`
+assumed confidential content contains PII. Commercially sensitive material —
+pricing, contracts, unreleased designs — routinely contains none, and masking is
+not the relevant control for it anyway.
+
+**Resolution.** `ExecutionBoundary` names the three positions that actually exist:
+`customer_managed` (a host or VPC the operator runs), `aws_managed`
+(Bedrock/SageMaker — inside the customer's AWS boundary, but not on their host),
+and `third_party` (a vendor API). It is declared per model definition in
+`config.yml`, as a property of the resolved endpoint, because the config author is
+the only party who knows what a `base_url` points at. Nothing is inferred from
+`provider`.
+
+Policy is an allow-list rather than a deny-list — `data_policy.allowed_judge_boundaries`,
+defaulting to `{customer_managed, aws_managed}` — so a boundary added later is
+refused until someone deliberately permits it, rather than being permitted until
+someone remembers to forbid it. For the same reason, **a missing boundary fails
+closed**: an endpoint that declares nothing is unknown, and unknown is not
+`customer_managed`.
+
+The gate now sits in `data_policy`, independent of `pii.enabled`.
+`corpus_confidential` defaults to `true` — an operator who has said nothing has
+not said "public". The one escape hatch, `eval_dataset_is_public`, is deliberately
+about the *dataset* rather than the corpus: a production corpus can be
+confidential while the eval set is a public HuggingFace benchmark, in which case
+judge egress leaks nothing at all. That is the narrow case
+`pii.allow_cloud_judge` was reaching for, stated precisely.
+
+Enforcement (`enforce_judge_boundary()`) runs twice: at config load, and again in
+`resolve_judge_config()` when the judge is built. Checking twice is not
+redundancy — it is what makes the check meaningful, because the object the
+runtime calls is then provably the object that was validated. The enum and the
+policy model are mirrored verbatim in both services, following the existing
+`LLMProvider` duplication; the two services share no package.
+
+**Lesson.** A trust classification derived from a field that does not determine
+trust will be wrong exactly when it matters, and a boolean over a domain with
+three members forces one of them to be mislabelled. The cost of getting this
+wrong is not a failed request — it is a privacy claim in the documentation that
+the code does not implement. Naming the real positions and defaulting to refusal
+is cheaper than any amount of care applied to the wrong abstraction.

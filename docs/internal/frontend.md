@@ -46,7 +46,7 @@ Fetches the full document list (`GET /api/documents`) and renders it as a sortab
 
 ### `/upload`
 
-Handles duplicate-checking, multipart upload, and progress polling. Renders a per-file progress table with status badges (hashing/uploading/processing/done/error/skipped) and a dedicated alert for the case of Ollama being unreachable during embedding (a 503 from the upload endpoint). Progress is indeterminate until the task-status endpoint reports chunk counts — nothing is simulated. Files above `max_upload_size_mb` (from `GET /api/config`) are rejected before hashing.
+Handles duplicate-checking, multipart upload, and progress polling. Renders a per-file progress table with status badges (hashing/uploading/processing/done/error/skipped) and a dedicated alert for the case of the embedding service being unreachable during embedding (a 503 from the upload endpoint). Progress is indeterminate until the task-status endpoint reports chunk counts — nothing is simulated. Files above `max_upload_size_mb` (from `GET /api/config`) are rejected before hashing.
 
 ### `/settings`
 

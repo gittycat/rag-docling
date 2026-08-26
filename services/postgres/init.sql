@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     metadata JSONB DEFAULT '{}',
     -- Nullable: a chunk row can exist before its embedding is written. NULL
     -- rows are neither indexed nor returned by the vector retriever.
-    embedding vector(768),
+    -- Dimension matches Qwen/Qwen3-Embedding-0.6B served via TEI (1024-dim).
+    embedding vector(1024),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(document_id, chunk_index)
 );

@@ -11,7 +11,7 @@ def test_importing_task_worker_has_no_side_effects():
 
     Regression guard for docs/suggestions.md #4.9: initialize_settings() used to
     run at module scope, which took down the whole pytest collection wherever
-    Ollama was not running.
+    TEI was not running.
     """
     with patch("core.config.initialize_settings") as init_llama, \
          patch("app.settings.init_settings") as init_secrets:

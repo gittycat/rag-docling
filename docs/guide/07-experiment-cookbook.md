@@ -59,11 +59,12 @@ a one-time model load.
 
 ## Recipe 2 — Local vs cloud generation model
 
-Change:
+Uncomment and point the `qwen-vllm` entry in `config.yml` at a vLLM endpoint you
+run yourself, then change:
 
 ```yaml
 active:
-  inference: granite4-8b  # was gpt5-mini
+  inference: qwen-vllm  # was gpt5-mini
 ```
 
 | Item | Choice |
@@ -81,8 +82,8 @@ The default judge and cloud generator are both OpenAI models. An LLM judge may
 favour its own family. For an important decision, repeat the comparison with an
 Anthropic judge and review a sample of answers manually.
 
-Local latency depends on your hardware. The cost metric records Ollama API cost as
-zero but does not include hardware.
+Local latency depends on your hardware. The cost metric records self-hosted
+vLLM API cost as zero but does not include hardware.
 
 ## Recipe 3 — Chunk size
 
@@ -179,15 +180,23 @@ returned token usage.
 
 ## Recipe 6 — Embedding model swap
 
-Change:
+The checked-in baseline (`qwen3-embed` — self-hosted TEI serving
+`Qwen/Qwen3-Embedding-0.6B` at 1024 dimensions) itself replaced an
+Ollama-served `nomic-embed-text` baseline (768 dimensions). This recipe is both
+how that kind of change should be validated and the template for the next one:
+add a second `models.embedding` entry in `config.yml`, then change:
 
 ```yaml
 active:
-  embedding: qwen3-embed-06b  # was nomic-embed
+  embedding: your-new-embedding-alias  # was qwen3-embed
 ```
 
 Restart and fully re-ingest. Do this even if both models use the same vector
-dimension; the startup check cannot detect same-dimension incompatibility.
+dimension; the startup check cannot detect same-dimension incompatibility —
+and if the dimension *does* differ, `vector_store.dimension` and the
+`document_chunks.embedding` column type must change too (see
+[2. Getting running](02-getting-running.md)), which forces a `docker compose
+down -v` and a full re-ingest regardless.
 
 | Item | Choice |
 |---|---|
@@ -195,12 +204,26 @@ dimension; the startup check cannot detect same-dimension incompatibility.
 | Primary metric | `recall_at_5` |
 | Guardrails | `mrr`, `ndcg_at_10`, ingestion time |
 
-Hybrid search can hide vector-search differences when BM25 finds the answer. For a
-diagnostic run, compare embedding models with hybrid search disabled, then confirm
-the chosen model with production settings restored.
+**Run the diagnostic with hybrid search disabled**
+(`retrieval.enable_hybrid_search: false` — see Recipe 8). Hybrid search's BM25
+leg can mask vector-search differences whenever the keyword match alone
+already finds the answer, which is exactly the class of case an embedding
+swap is meant to move. Confirm the chosen model with production (hybrid-on)
+settings restored afterward.
 
-PII masking requires a local embedding provider. Selecting a cloud embedder while
-`pii.enabled` is true fails at startup.
+PII masking requires a local embedding provider — `LOCAL_EMBEDDING_PROVIDERS`
+currently allows `tei` only. Selecting a cloud embedder while `pii.enabled` is
+true fails at startup.
+
+`qwen3-embed`'s `query_instruction` (Qwen3's documented asymmetric query
+prefix, applied only to queries via the `tei` provider's `query_instruction` /
+`text_instruction` config in `config.yml`) is a candidate for the same kind of
+test: whether it measurably improves retrieval over an unprefixed baseline is
+not established. An informal A/B run during the TEI migration was
+inconclusive — the hand-built ranking set was too easy to discriminate between
+the two. A real `end_to_end` run against this recipe's guardrails, with the
+prefix toggled via `text_instruction/query_instruction` in `config.yml`, is
+what would actually measure it.
 
 ## Recipe 7 — Reranker model swap
 

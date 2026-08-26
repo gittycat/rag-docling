@@ -49,6 +49,7 @@ def trigger_run(req: TriggerRunRequest):
             samples=req.samples,
             seed=req.seed,
             judge_enabled=req.judge_enabled,
+            groundedness=req.groundedness,
             rag_server_url=rag_url,
         )
     except RuntimeError as e:

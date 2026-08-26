@@ -87,7 +87,10 @@ export interface ModelInfo {
 	name: string;
 	provider: string;
 	model_type: string;
-	is_local: boolean;
+	// null means the boundary is undeclared — treat as outside the trust
+	// boundary, never as local. Replaced the old is_local boolean, which
+	// could not express aws_managed.
+	execution_boundary: 'customer_managed' | 'aws_managed' | 'third_party' | null;
 	size?: ModelSize;
 	reference_url?: string;
 	description?: string;
@@ -302,12 +305,15 @@ export async function fetchSystemMetrics(): Promise<SystemMetrics> {
 export interface ModelsInfo {
 	llm_model: string;
 	llm_provider: string;
-	llm_hosting: string;
+	llm_execution_boundary: 'customer_managed' | 'aws_managed' | 'third_party' | null;
 	embedding_model: string;
 	reranker_model: string | null;
 	reranker_enabled: boolean;
-	cost_per_1m_input_tokens: number;
-	cost_per_1m_output_tokens: number;
+	// null = unpriced: no rates published for this model. Not zero — never render
+	// it as free.
+	cost_per_1m_input_tokens: number | null;
+	cost_per_1m_output_tokens: number | null;
+	cost_rate_source?: string;
 }
 
 export interface AppConfig {
