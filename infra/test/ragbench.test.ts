@@ -7,16 +7,22 @@ import { RagbenchDemoStack } from '../lib/demo-stack';
 
 // Must be a real environment account: loadConfig now refuses to synthesize when
 // the resolved account disagrees with the one ENVIRONMENTS pins for envName.
-const ACCOUNT = '364769971558'; // demo
+// `dev` is here so the tests cover a suffixed environment as well as demo,
+// which keeps the unqualified names it was first deployed under.
+const ENVS = {
+  demo: { account: '364769971558', domainName: 'demo.example.com' },
+  dev: { account: '011356579819', domainName: 'dev.example.com' },
+};
 const REGION = 'ap-southeast-2';
 
-function synth() {
+function synth(envName: keyof typeof ENVS = 'demo') {
+  const { account: ACCOUNT, domainName } = ENVS[envName];
   const app = new cdk.App({
     context: {
-      envName: 'demo',
+      envName,
       account: ACCOUNT,
       region: REGION,
-      domainName: 'demo.example.com',
+      domainName,
       // Supplied so the VPC does not attempt a live AZ lookup during tests.
       [`availability-zones:account=${ACCOUNT}:region=${REGION}`]: [
         `${REGION}a`,
@@ -194,6 +200,49 @@ describe('RagbenchBaseStack', () => {
       .filter((s: any) => !s.Properties.GenerateSecretString?.PasswordLength)
       .map((s: any) => s.Properties.Name);
     expect(unset.sort()).toEqual(['ragbench/demo/ANTHROPIC_API_KEY', 'ragbench/demo/OPENAI_API_KEY']);
+  });
+
+  test('the two Postgres role names get the bare-identifier alphabet, not the password one', () => {
+    const { base } = synth();
+    const byName = Object.fromEntries(
+      Object.values(base.findResources('AWS::SecretsManager::Secret')).map((s: any) => [
+        s.Properties.Name,
+        s.Properties.GenerateSecretString,
+      ]),
+    );
+    // A generated role name that can contain uppercase or a leading digit is a
+    // name psql only accepts quoted — 00-roles.sh and the compose healthcheck
+    // both interpolate it bare.
+    for (const name of ['POSTGRES_SUPERUSER', 'RAG_SERVER_DB_USER']) {
+      expect(byName[`ragbench/demo/${name}`]).toMatchObject({
+        ExcludeUppercase: true,
+        ExcludeNumbers: true,
+        ExcludePunctuation: true,
+        PasswordLength: 12,
+      });
+    }
+    expect(byName['ragbench/demo/POSTGRES_SUPERPASSWORD'].PasswordLength).toBe(40);
+  });
+
+  test('ECR repository names are env-qualified everywhere except demo', () => {
+    const names = (t: Template) =>
+      Object.values(t.findResources('AWS::ECR::Repository'))
+        .map((r: any) => r.Properties.RepositoryName)
+        .sort();
+    // dev and staging share the sdlc account, so an unqualified name would make
+    // the second one fail to create.
+    expect(names(synth('demo').base)).toEqual([
+      'ragbench/evals',
+      'ragbench/postgres',
+      'ragbench/rag-server',
+      'ragbench/webapp',
+    ]);
+    expect(names(synth('dev').base)).toEqual([
+      'ragbench/dev/evals',
+      'ragbench/dev/postgres',
+      'ragbench/dev/rag-server',
+      'ragbench/dev/webapp',
+    ]);
   });
 
   test('ECR repositories keep only the last five images', () => {

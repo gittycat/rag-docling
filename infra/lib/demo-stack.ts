@@ -18,7 +18,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import { RagbenchConfig, ssmPrefix } from './config';
+import { RagbenchConfig, repoNamespace, ssmPrefix } from './config';
 
 export interface RagbenchDemoStackProps extends cdk.StackProps {
   readonly config: RagbenchConfig;
@@ -36,7 +36,7 @@ export class RagbenchDemoStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: RagbenchDemoStackProps) {
     super(scope, id, props);
     const cfg = props.config;
-    const registry = `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${cfg.project}`;
+    const registry = `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${repoNamespace(cfg)}`;
 
     // ------------------------------------------------------------------ roles
     const instanceRole = new iam.Role(this, 'InstanceRole', {

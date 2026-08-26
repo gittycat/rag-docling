@@ -169,11 +169,19 @@ export class RagbenchBaseStack extends cdk.Stack {
 }
 
 /**
+ * Secrets whose value is a Postgres role name rather than a password. Listed
+ * explicitly: a suffix test misses POSTGRES_SUPERUSER, which ends in `RUSER`,
+ * not `_USER`, and the miss is silent — the name is still generated, just from
+ * the password alphabet.
+ */
+const ROLE_NAME_SECRETS: readonly string[] = ['POSTGRES_SUPERUSER', 'RAG_SERVER_DB_USER'];
+
+/**
  * Usernames and passwords need different alphabets: a Postgres role name has to be
  * a bare identifier, and 00-roles.sh interpolates it into DDL.
  */
 function generatorFor(name: string): secretsmanager.SecretStringGenerator {
-  if (name.endsWith('_USER')) {
+  if (ROLE_NAME_SECRETS.includes(name)) {
     // Lowercase letters only, so the value is always a valid bare Postgres
     // identifier and never needs quoting. Kept as a plain string, not JSON —
     // user data writes `--query SecretString` straight to a file.

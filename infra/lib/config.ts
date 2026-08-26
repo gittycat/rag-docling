@@ -164,7 +164,18 @@ export function secretId(cfg: RagbenchConfig, name: string): string {
   return `${cfg.project}/${cfg.envName}/${name}`;
 }
 
-/** ECR repository name, e.g. `ragbench/rag-server`. */
+/**
+ * ECR namespace: `ragbench` for demo, `ragbench/<envName>` everywhere else.
+ * Same rule and same reason as `stackName` — demo keeps the unqualified names
+ * it was first pushed under (the repositories are RETAIN and the golden AMI
+ * already pulls those URIs), and every other environment is qualified, which is
+ * what lets dev and staging own separate repositories in the one sdlc account.
+ */
+export function repoNamespace(cfg: RagbenchConfig): string {
+  return cfg.envName === 'demo' ? cfg.project : `${cfg.project}/${cfg.envName}`;
+}
+
+/** ECR repository name, e.g. `ragbench/rag-server` or `ragbench/dev/rag-server`. */
 export function repoName(cfg: RagbenchConfig, image: string): string {
-  return `${cfg.project}/${image}`;
+  return `${repoNamespace(cfg)}/${image}`;
 }

@@ -193,6 +193,14 @@ ecr-push TAG="":
 
     AWS_REGION="${AWS_REGION:-ap-southeast-2}"
 
+    # Every physical name is env-qualified, so a recipe that guesses would
+    # touch the wrong environment's registry, parameters or stack.
+    ENV_NAME="${AWS_ENV:-}"
+    if [ -z "$ENV_NAME" ]; then
+        echo "ERROR: no environment selected. Run 'setenv <dev|staging|demo|prod>'." >&2
+        exit 1
+    fi
+
     # Derived from the active credentials, never from the environment: an
     # AWS_ACCOUNT_ID that disagrees with AWS_PROFILE would push into one
     # account's registry using another account's credentials.
@@ -205,7 +213,11 @@ ecr-push TAG="":
     # namespace you push into. `docker login` takes the host only — passing it a
     # path silently authenticates the wrong thing.
     REGISTRY_HOST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-    REGISTRY="${REGISTRY_HOST}/ragbench"
+    # Mirrors repoNamespace() in infra/lib/config.ts: demo kept the unqualified
+    # names it was first pushed under, every other environment is qualified.
+    NAMESPACE="ragbench"
+    [ "$ENV_NAME" = "demo" ] || NAMESPACE="ragbench/${ENV_NAME}"
+    REGISTRY="${REGISTRY_HOST}/${NAMESPACE}"
 
     TAG="{{TAG}}"
     if [ -z "$TAG" ]; then
@@ -222,7 +234,7 @@ ecr-push TAG="":
     missing=""
     for name in $IMAGES; do
         aws ecr describe-repositories --region "$AWS_REGION" \
-            --repository-names "ragbench/${name}" > /dev/null 2>&1 || missing="${missing} ragbench/${name}"
+            --repository-names "${NAMESPACE}/${name}" > /dev/null 2>&1 || missing="${missing} ${NAMESPACE}/${name}"
     done
     if [ -n "$missing" ]; then
         echo "ERROR: missing ECR repositories:${missing}" >&2
@@ -258,7 +270,7 @@ ecr-push TAG="":
     echo "Pushed to ${REGISTRY} as :${TAG} and :latest"
     for name in $IMAGES; do
         digest=$(aws ecr describe-images --region "$AWS_REGION" \
-            --repository-name "ragbench/${name}" --image-ids imageTag="$TAG" \
+            --repository-name "${NAMESPACE}/${name}" --image-ids imageTag="$TAG" \
             --query 'imageDetails[0].imageDigest' --output text)
         printf '  %-12s %s\n' "$name" "$digest"
     done
@@ -271,10 +283,17 @@ aws-bake:
     #!/usr/bin/env bash
     set -euo pipefail
     AWS_REGION="${AWS_REGION:-ap-southeast-2}"
+    # Every physical name is env-qualified, so a recipe that guesses would
+    # touch the wrong environment's registry, parameters or stack.
+    ENV_NAME="${AWS_ENV:-}"
+    if [ -z "$ENV_NAME" ]; then
+        echo "ERROR: no environment selected. Run 'setenv <dev|staging|demo|prod>'." >&2
+        exit 1
+    fi
     START=$(date +%s)
 
     PIPELINE_ARN=$(aws ssm get-parameter --region "$AWS_REGION" \
-        --name /ragbench/demo/image-pipeline-arn --query 'Parameter.Value' --output text)
+        --name "/ragbench/${ENV_NAME}/image-pipeline-arn" --query 'Parameter.Value' --output text)
 
     IMAGE_BUILD_VERSION_ARN=$(aws imagebuilder start-image-pipeline-execution \
         --region "$AWS_REGION" --image-pipeline-arn "$PIPELINE_ARN" \
@@ -305,13 +324,13 @@ aws-bake:
     # owned it, every `cdk deploy` would reset it and the demo would boot a
     # stale AMI. RagbenchDemoStack reads it at deploy time.
     aws ssm put-parameter --region "$AWS_REGION" \
-        --name /ragbench/demo/golden-ami-id --type String --overwrite \
-        --description "Golden AMI baked by the ragbench-demo image pipeline" \
+        --name "/ragbench/${ENV_NAME}/golden-ami-id" --type String --overwrite \
+        --description "Golden AMI baked by the ragbench-${ENV_NAME} image pipeline" \
         --value "$AMI_ID" > /dev/null
 
     ELAPSED=$(( $(date +%s) - START ))
     echo "AMI: ${AMI_ID}"
-    echo "Wrote /ragbench/demo/golden-ami-id = ${AMI_ID}"
+    echo "Wrote /ragbench/${ENV_NAME}/golden-ami-id = ${AMI_ID}"
     echo "Elapsed: ${ELAPSED}s"
 
 # Deploy the demo CDK stack and print its URL
@@ -319,9 +338,22 @@ aws-bake:
 aws-up:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Every physical name is env-qualified, so a recipe that guesses would
+    # touch the wrong environment's registry, parameters or stack.
+    ENV_NAME="${AWS_ENV:-}"
+    if [ -z "$ENV_NAME" ]; then
+        echo "ERROR: no environment selected. Run 'setenv <dev|staging|demo|prod>'." >&2
+        exit 1
+    fi
+
+    # Construct id stays bare in every environment; the deployed stack name does
+    # not — stackName() in infra/lib/config.ts suffixes everything but demo.
+    STACK=RagbenchDemoStack
+    [ "$ENV_NAME" = "demo" ] || STACK="RagbenchDemoStack-${ENV_NAME}"
+
     cd infra && npx cdk deploy RagbenchDemoStack --require-approval never
     cd - > /dev/null
-    URL=$(aws cloudformation describe-stacks --stack-name RagbenchDemoStack \
+    URL=$(aws cloudformation describe-stacks --stack-name "$STACK" \
         --query "Stacks[0].Outputs[?OutputKey=='DemoUrl'].OutputValue" --output text)
     echo "Demo URL: ${URL}"
 

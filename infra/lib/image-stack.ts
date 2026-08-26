@@ -17,7 +17,7 @@ import * as imagebuilder from 'aws-cdk-lib/aws-imagebuilder';
 import * as s3assets from 'aws-cdk-lib/aws-s3-assets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
-import { RagbenchConfig, ssmPrefix } from './config';
+import { RagbenchConfig, repoNamespace, ssmPrefix } from './config';
 import { buildBundle } from './bundle';
 
 /** Pinned so a re-bake is reproducible; bump deliberately. */
@@ -132,7 +132,7 @@ export class RagbenchImageStack extends cdk.Stack {
           AppDir: '/opt/ragbench',
           BundleUri: bundle.s3ObjectUrl,
           Region: this.region,
-          Registry: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${cfg.project}`,
+          Registry: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${repoNamespace(cfg)}`,
           Version: cfg.imageTag,
           SecretPrefix: `${cfg.project}/${cfg.envName}`,
           ComposeVersion: COMPOSE_PLUGIN_VERSION,
