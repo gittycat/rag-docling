@@ -40,8 +40,15 @@ function assetsDir(): string {
   return path.join(repoRoot(), 'infra', 'assets');
 }
 
-/** Builds the bundle and returns its path. Idempotent — safe to call per synth. */
-export function buildBundle(outDir: string): string {
+/**
+ * Builds the bundle and returns its path. Idempotent — safe to call per synth.
+ *
+ * `secretNames` is written into the bundle rather than repeated in
+ * fetch-secrets.sh: an eighth entry added to SECRET_NAMES would otherwise be
+ * created and granted but never written to secrets/, and the failure would
+ * surface as a compose bind-mount error in user data on an already-baked AMI.
+ */
+export function buildBundle(outDir: string, secretNames: readonly string[]): string {
   const root = repoRoot();
   const dest = path.resolve(outDir, 'ragbench-bundle');
 
@@ -68,6 +75,11 @@ export function buildBundle(outDir: string): string {
 
   // Shipped alongside so bake and boot run the same scripts that are committed.
   fs.cpSync(assetsDir(), path.join(dest, 'scripts'), { recursive: true });
+
+  if (secretNames.length === 0) {
+    throw new Error('buildBundle: secretNames is empty — the instance would boot with no secrets');
+  }
+  fs.writeFileSync(path.join(dest, 'scripts', 'secret-names'), `${secretNames.join('\n')}\n`);
 
   return dest;
 }

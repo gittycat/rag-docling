@@ -1,6 +1,10 @@
 import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { loadConfig, stackName } from '../lib/config';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { SECRET_NAMES, loadConfig, stackName } from '../lib/config';
+import { buildBundle } from '../lib/bundle';
 import { RagbenchBaseStack } from '../lib/base-stack';
 import { RagbenchImageStack } from '../lib/image-stack';
 import { RagbenchDemoStack } from '../lib/demo-stack';
@@ -316,6 +320,17 @@ describe('environment guard', () => {
     ).toThrow(/AWS_PROFILE=prod-admin/);
   });
 
+  it('rejects an environment synthesized against the wrong region', () => {
+    expect(() =>
+      loadConfig(appWith({ envName: 'demo', account: '364769971558', region: 'us-east-1' })),
+    ).toThrow(/pinned to region ap-southeast-2.*resolve to us-east-1/s);
+  });
+
+  it('pins the region rather than taking it from the profile', () => {
+    const cfg = loadConfig(appWith({ envName: 'prod', account: '730406060579' }));
+    expect(cfg.region).toBe('ap-southeast-2');
+  });
+
   it('accepts dev and staging in the one shared sdlc account', () => {
     for (const envName of ['dev', 'staging']) {
       const cfg = loadConfig(appWith({ envName, account: '011356579819' }));
@@ -361,5 +376,58 @@ describe('environment guard', () => {
       .toBe('10.10.0.0/17');
     expect(loadConfig(appWith({ envName: 'staging', account: '011356579819' })).vpcCidr)
       .toBe('10.10.128.0/17');
+  });
+});
+
+describe('the bake bundle and the version derived from it', () => {
+  it('ships the secret list rather than letting fetch-secrets.sh repeat it', () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ragbench-bundle-test-'));
+    try {
+      const dest = buildBundle(outDir, SECRET_NAMES);
+      const listed = fs
+        .readFileSync(path.join(dest, 'scripts', 'secret-names'), 'utf8')
+        .split('\n')
+        .filter(Boolean);
+      // The list that creates the secrets and the list that fetches them are now
+      // the same list; a name added to one cannot go missing from the other.
+      expect(listed).toEqual([...SECRET_NAMES]);
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to build a bundle with no secrets in it', () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ragbench-bundle-test-'));
+    try {
+      expect(() => buildBundle(outDir, [])).toThrow(/secretNames is empty/);
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it('gives the component and the recipe one derived version, not two hand-pinned ones', () => {
+    const { image } = synth();
+    const componentVersion = Object.values(image.findResources('AWS::ImageBuilder::Component')).map(
+      (r: any) => r.Properties.Version,
+    );
+    const recipeVersion = Object.values(image.findResources('AWS::ImageBuilder::ImageRecipe')).map(
+      (r: any) => r.Properties.Version,
+    );
+    expect(componentVersion).toHaveLength(1);
+    // A recipe still referencing the previous component version is the failure
+    // this shares a version to avoid.
+    expect(recipeVersion).toEqual(componentVersion);
+    expect(componentVersion[0]).toMatch(/^1\.1\.\d+$/);
+  });
+
+  it('derives the same version from the same content, and a different one from different content', () => {
+    const first = Object.values(synth().image.findResources('AWS::ImageBuilder::Component'))[0] as any;
+    const again = Object.values(synth().image.findResources('AWS::ImageBuilder::Component'))[0] as any;
+    expect(again.Properties.Version).toBe(first.Properties.Version);
+
+    // envName reaches the document through SecretPrefix and the registry, so two
+    // environments cannot collide on a version either.
+    const other = Object.values(synth('dev').image.findResources('AWS::ImageBuilder::Component'))[0] as any;
+    expect(other.Properties.Version).not.toBe(first.Properties.Version);
   });
 });

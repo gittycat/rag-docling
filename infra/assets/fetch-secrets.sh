@@ -15,11 +15,22 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/ragbench}"
 cd "$APP_DIR"
 
+# Generated into the bundle from SECRET_NAMES in infra/lib/config.ts, which is
+# also what creates the secrets and grants the instance role read on them. A
+# second copy of the list here would drift, and the drift would only show up as
+# a compose bind-mount failure at boot, on an AMI that is already baked.
+NAMES_FILE="scripts/secret-names"
+if [[ ! -s "$NAMES_FILE" ]]; then
+  echo "Missing or empty ${APP_DIR}/${NAMES_FILE} — the bundle is incomplete" >&2
+  exit 1
+fi
+# Read up front: the aws calls below inherit stdin and would eat the list.
+mapfile -t SECRET_NAMES < "$NAMES_FILE"
+
 install -d -m 700 secrets
 
-for name in OPENAI_API_KEY ANTHROPIC_API_KEY POSTGRES_SUPERUSER \
-            POSTGRES_SUPERPASSWORD RAG_SERVER_DB_USER \
-            RAG_SERVER_DB_PASSWORD RAG_SERVER_AUTH_TOKEN; do
+for name in "${SECRET_NAMES[@]}"; do
+  [[ -n "$name" ]] || continue
   aws secretsmanager get-secret-value \
     --region "$AWS_REGION" \
     --secret-id "${SECRET_PREFIX}/${name}" \

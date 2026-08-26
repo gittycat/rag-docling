@@ -8,6 +8,7 @@
  *
  * Every Image Builder construct is L1 — there is no L2 for this service.
  */
+import * as crypto from 'crypto';
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
@@ -17,11 +18,28 @@ import * as imagebuilder from 'aws-cdk-lib/aws-imagebuilder';
 import * as s3assets from 'aws-cdk-lib/aws-s3-assets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
-import { RagbenchConfig, repoNamespace, ssmPrefix } from './config';
+import { RagbenchConfig, SECRET_NAMES, repoNamespace, ssmPrefix } from './config';
 import { buildBundle } from './bundle';
 
 /** Pinned so a re-bake is reproducible; bump deliberately. */
 const COMPOSE_PLUGIN_VERSION = 'v2.40.3';
+
+/**
+ * major.minor of the Image Builder component and recipe versions; the patch is
+ * derived from content (see `contentPatch`). Bumped off the hand-pinned 1.0.x
+ * line so no derived patch can collide with a version already in the account.
+ */
+const VERSION_SERIES = '1.1';
+
+/**
+ * A patch number that is a pure function of everything the component document
+ * resolves to. 24 bits of sha256 — Image Builder wants an integer, and the only
+ * property that matters is that distinct content gets a distinct number.
+ */
+function contentPatch(...inputs: string[]): number {
+  const digest = crypto.createHash('sha256').update(inputs.join('\u0000')).digest('hex');
+  return parseInt(digest.slice(0, 6), 16);
+}
 
 export interface RagbenchImageStackProps extends cdk.StackProps {
   readonly config: RagbenchConfig;
@@ -43,7 +61,7 @@ export class RagbenchImageStack extends cdk.Stack {
 
     // ------------------------------------------------------------- app bundle
     const bundle = new s3assets.Asset(this, 'Bundle', {
-      path: buildBundle(cdk.Stage.of(this)?.outdir ?? cdk.App.of(this)!.outdir),
+      path: buildBundle(cdk.Stage.of(this)?.outdir ?? cdk.App.of(this)!.outdir, SECRET_NAMES),
     });
 
     // -------------------------------------------------------- builder identity
@@ -74,77 +92,99 @@ export class RagbenchImageStack extends cdk.Stack {
     });
 
     // --------------------------------------------------------------- component
+    const componentDoc = [
+      'name: RagbenchBake',
+      'description: Bake the RAGBench demo stack into an AMI',
+      'schemaVersion: 1.0',
+      'phases:',
+      '  - name: build',
+      '    steps:',
+      '      - name: Unpack',
+      '        action: ExecuteBash',
+      '        timeoutSeconds: 600',
+      '        inputs:',
+      '          commands:',
+      '            - set -euo pipefail',
+      '            - dnf install -y unzip',
+      '            - install -d ${AppDir}',
+      '            - aws s3 cp ${BundleUri} /tmp/ragbench-bundle.zip',
+      '            - unzip -oq /tmp/ragbench-bundle.zip -d ${AppDir}',
+      '            - rm -f /tmp/ragbench-bundle.zip',
+      '            - chmod +x ${AppDir}/scripts/*.sh',
+      '      - name: Bake',
+      '        action: ExecuteBash',
+      '        timeoutSeconds: 3600',
+      '        inputs:',
+      '          commands:',
+      '            - set -euo pipefail',
+      '            - export AWS_REGION=${Region}',
+      '            - export APP_DIR=${AppDir}',
+      '            - export REGISTRY=${Registry}',
+      '            - export VERSION=${Version}',
+      '            - export SECRET_PREFIX=${SecretPrefix}',
+      '            - export COMPOSE_VERSION=${ComposeVersion}',
+      '            - ${AppDir}/scripts/bake.sh',
+      '  - name: validate',
+      '    steps:',
+      '      - name: CheckBakedArtifacts',
+      '        action: ExecuteBash',
+      '        timeoutSeconds: 300',
+      '        inputs:',
+      '          commands:',
+      '            - set -euo pipefail',
+      // A bake that silently produced nothing is worse than a failed bake:
+      // it yields an AMI that boots and then fails the first query.
+      '            - test "$(docker images -q | wc -l)" -ge 5',
+      '            - test -d ${AppDir}/.cache/huggingface/hub/models--cross-encoder--ms-marco-MiniLM-L-6-v2',
+      '            - test -d ${AppDir}/.cache/huggingface/hub/models--docling-project--docling-models',
+      '            - test ! -e ${AppDir}/secrets',
+      '            - docker volume inspect ragbench_postgres_data ragbench_ollama_data',
+    ].join('\n');
+
+    const registry = `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${repoNamespace(cfg)}`;
+    const appDir = '/opt/ragbench';
+    const secretPrefix = `${cfg.project}/${cfg.envName}`;
+
+    // Components and recipes are immutable: any change to Data replaces the
+    // resource, and creating one with a name+version that already exists fails.
+    // Hand-bumping got that wrong in both directions — Data embeds the bundle's
+    // content-hashed S3 URI, so it also changes on any edit to bake.sh, boot.sh,
+    // fetch-secrets.sh, config.yml, the compose files or the corpus, none of
+    // which look like "the document below". Derived instead, so the version
+    // moves exactly when the thing it identifies does.
+    const version = `${VERSION_SERIES}.${contentPatch(
+      componentDoc,
+      bundle.assetHash,
+      registry,
+      appDir,
+      secretPrefix,
+      this.region,
+      cfg.imageTag,
+      COMPOSE_PLUGIN_VERSION,
+      String(cfg.rootVolumeGiB),
+    )}`;
+
     const component = new imagebuilder.CfnComponent(this, 'BakeComponent', {
       name: `${cfg.project}-${cfg.envName}-bake`,
       platform: 'Linux',
-      version: '1.0.3', // bump on any change to the document below OR to the bundle it unpacks
+      version,
       description: 'Installs Docker, pulls images and model caches, ingests the demo corpus',
-      data: cdk.Fn.sub(
-        [
-          'name: RagbenchBake',
-          'description: Bake the RAGBench demo stack into an AMI',
-          'schemaVersion: 1.0',
-          'phases:',
-          '  - name: build',
-          '    steps:',
-          '      - name: Unpack',
-          '        action: ExecuteBash',
-          '        timeoutSeconds: 600',
-          '        inputs:',
-          '          commands:',
-          '            - set -euo pipefail',
-          '            - dnf install -y unzip',
-          '            - install -d ${AppDir}',
-          '            - aws s3 cp ${BundleUri} /tmp/ragbench-bundle.zip',
-          '            - unzip -oq /tmp/ragbench-bundle.zip -d ${AppDir}',
-          '            - rm -f /tmp/ragbench-bundle.zip',
-          '            - chmod +x ${AppDir}/scripts/*.sh',
-          '      - name: Bake',
-          '        action: ExecuteBash',
-          '        timeoutSeconds: 3600',
-          '        inputs:',
-          '          commands:',
-          '            - set -euo pipefail',
-          '            - export AWS_REGION=${Region}',
-          '            - export APP_DIR=${AppDir}',
-          '            - export REGISTRY=${Registry}',
-          '            - export VERSION=${Version}',
-          '            - export SECRET_PREFIX=${SecretPrefix}',
-          '            - export COMPOSE_VERSION=${ComposeVersion}',
-          '            - ${AppDir}/scripts/bake.sh',
-          '  - name: validate',
-          '    steps:',
-          '      - name: CheckBakedArtifacts',
-          '        action: ExecuteBash',
-          '        timeoutSeconds: 300',
-          '        inputs:',
-          '          commands:',
-          '            - set -euo pipefail',
-          // A bake that silently produced nothing is worse than a failed bake:
-          // it yields an AMI that boots and then fails the first query.
-          '            - test "$(docker images -q | wc -l)" -ge 5',
-          '            - test -d ${AppDir}/.cache/huggingface/hub/models--cross-encoder--ms-marco-MiniLM-L-6-v2',
-          '            - test -d ${AppDir}/.cache/huggingface/hub/models--docling-project--docling-models',
-          '            - test ! -e ${AppDir}/secrets',
-          '            - docker volume inspect ragbench_postgres_data ragbench_ollama_data',
-        ].join('\n'),
-        {
-          AppDir: '/opt/ragbench',
-          BundleUri: bundle.s3ObjectUrl,
-          Region: this.region,
-          Registry: `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${repoNamespace(cfg)}`,
-          Version: cfg.imageTag,
-          SecretPrefix: `${cfg.project}/${cfg.envName}`,
-          ComposeVersion: COMPOSE_PLUGIN_VERSION,
-        },
-      ),
+      data: cdk.Fn.sub(componentDoc, {
+        AppDir: appDir,
+        BundleUri: bundle.s3ObjectUrl,
+        Region: this.region,
+        Registry: registry,
+        Version: cfg.imageTag,
+        SecretPrefix: secretPrefix,
+        ComposeVersion: COMPOSE_PLUGIN_VERSION,
+      }),
     });
 
     // ------------------------------------------------------------------ recipe
     const recipe = new imagebuilder.CfnImageRecipe(this, 'Recipe', {
       name: `${cfg.project}-${cfg.envName}-recipe`,
-      // Recipes are immutable too: a new component version needs a new recipe version.
-      version: '1.0.3',
+      // A new component version replaces the recipe too, so it shares the version.
+      version,
       parentImage: `arn:${this.partition}:imagebuilder:${this.region}:aws:image/amazon-linux-2023-arm64/x.x.x`,
       components: [{ componentArn: component.attrArn }],
       blockDeviceMappings: [

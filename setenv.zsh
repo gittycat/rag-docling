@@ -45,6 +45,12 @@ typeset -gA _SETENV_PROFILES=(
 # Hash iteration order is undefined in zsh, so keep a stable one for messages.
 typeset -ga _SETENV_ORDER=(dev staging demo prod)
 
+# Every environment is pinned to one region — see the REGION comment in
+# infra/lib/config.ts, which now refuses to synthesize against any other. Set
+# here so the AWS CLI, the justfile recipes and CDK all agree without depending
+# on what each profile happens to have in ~/.aws/config.
+typeset -g _SETENV_REGION='ap-southeast-2'
+
 # Executing rather than sourcing is the one mistake this file cannot recover
 # from, so say so plainly instead of appearing to succeed.
 if [[ "${ZSH_EVAL_CONTEXT:-}" != *file* ]]; then
@@ -91,7 +97,7 @@ setenv() {
 
   if [[ -z "$target" ]]; then
     if [[ -n "${AWS_ENV:-}" ]]; then
-      print -r -- "${AWS_ENV} (AWS_PROFILE=${AWS_PROFILE:-unset})"
+      print -r -- "${AWS_ENV} (AWS_PROFILE=${AWS_PROFILE:-unset}, AWS_REGION=${AWS_REGION:-unset})"
     else
       print -r -- "no environment selected — setenv <${(j:|:)_SETENV_ORDER}|none>"
     fi
@@ -99,7 +105,7 @@ setenv() {
   fi
 
   if [[ "$target" == (none|unset|off|clear) ]]; then
-    unset AWS_ENV AWS_PROFILE
+    unset AWS_ENV AWS_PROFILE AWS_REGION AWS_DEFAULT_REGION
     _setenv_prompt ''
     _setenv_paint ''
     print -r -- "cleared — AWS calls will now fail until you select an environment"
@@ -115,6 +121,9 @@ setenv() {
 
   export AWS_ENV="$target"
   export AWS_PROFILE="$profile"
+  # AWS_DEFAULT_REGION too: botocore-based tooling reads that one, not AWS_REGION.
+  export AWS_REGION="$_SETENV_REGION"
+  export AWS_DEFAULT_REGION="$_SETENV_REGION"
   _setenv_prompt "$target"
   _setenv_paint "$target"
 

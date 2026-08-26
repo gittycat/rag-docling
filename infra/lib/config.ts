@@ -17,6 +17,7 @@ export interface RagbenchConfig {
   readonly envName: string;
   /** Always the account ENVIRONMENTS pins for `envName` — never inferred. */
   readonly account: string;
+  /** Likewise pinned: see the comment on REGION. */
   readonly region: string;
   /** Delegated subdomain: a new public hosted zone is created for this name. */
   readonly domainName: string;
@@ -54,22 +55,32 @@ export const IMAGE_NAMES = ['webapp', 'rag-server', 'postgres', 'evals'] as cons
  * Never reuse a range: peering and Transit Gateway both refuse overlaps.
  */
 /**
- * Which account each environment lives in, and the profile that reaches it.
+ * The one region everything lives in. Pinned per environment rather than left to
+ * the profile because region is not a free choice here: `just ecr-push` and
+ * `just aws-bake` hardcode it, cdk.context.json caches AZs for it alone, and a
+ * profile configured elsewhere would otherwise push images and write the
+ * golden-AMI parameter in one region while the stacks are built in another.
+ */
+const REGION = 'ap-southeast-2';
+
+/**
+ * Which account and region each environment lives in, and the profile that reaches it.
  * Deliberately many-to-one: dev and staging share the sdlc account, so the
  * account id alone cannot identify an environment. This is what `loadConfig`
  * checks the live credentials against.
  */
 interface EnvSpec {
   readonly account: string;
+  readonly region: string;
   readonly profile: string;
   readonly domainName: string;
 }
 
 const ENVIRONMENTS: Record<string, EnvSpec> = {
-  dev: { account: '011356579819', profile: 'sdlc-admin', domainName: 'dev.kiluna.com' },
-  staging: { account: '011356579819', profile: 'sdlc-admin', domainName: 'staging.kiluna.com' },
-  demo: { account: '364769971558', profile: 'demo-admin', domainName: 'demo.kiluna.com' },
-  prod: { account: '730406060579', profile: 'prod-admin', domainName: 'prod.kiluna.com' },
+  dev: { account: '011356579819', region: REGION, profile: 'sdlc-admin', domainName: 'dev.kiluna.com' },
+  staging: { account: '011356579819', region: REGION, profile: 'sdlc-admin', domainName: 'staging.kiluna.com' },
+  demo: { account: '364769971558', region: REGION, profile: 'demo-admin', domainName: 'demo.kiluna.com' },
+  prod: { account: '730406060579', region: REGION, profile: 'prod-admin', domainName: 'prod.kiluna.com' },
 };
 
 const ENV_CIDRS: Record<string, string> = {
@@ -117,6 +128,18 @@ export function loadConfig(scope: Construct): RagbenchConfig {
     );
   }
 
+  // Same failure mode as the account check, and just as silent: a profile whose
+  // configured region is not the environment's builds a second, duplicate set of
+  // VPC/ALB/Cognito resources somewhere the images and SSM parameters are not.
+  const resolvedRegion = ctx('region') ?? process.env.CDK_DEFAULT_REGION;
+  if (resolvedRegion && resolvedRegion !== spec.region) {
+    throw new Error(
+      `envName '${envName}' is pinned to region ${spec.region}, but the active ` +
+        `credentials resolve to ${resolvedRegion}.\n` +
+        `Set the region on the profile: aws configure set region ${spec.region} --profile ${spec.profile}`,
+    );
+  }
+
   const vpcCidr = ctx('vpcCidr') ?? ENV_CIDRS[envName];
   if (!vpcCidr) {
     throw new Error(
@@ -129,7 +152,7 @@ export function loadConfig(scope: Construct): RagbenchConfig {
     project: ctx('project', 'ragbench')!,
     envName,
     account: spec.account,
-    region: ctx('region', process.env.CDK_DEFAULT_REGION ?? 'ap-southeast-2')!,
+    region: spec.region,
     domainName: ctx('domainName', spec.domainName)!,
     vpcCidr,
     instanceType: ctx('instanceType', 'm7g.xlarge')!,
