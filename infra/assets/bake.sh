@@ -3,8 +3,9 @@
 # Runs once, inside EC2 Image Builder, to produce the golden AMI.
 #
 # Everything slow happens here so `cdk deploy RagbenchDemoStack` is a boot, not an
-# install: docker images, the HuggingFace cache, the Ollama model and an
-# already-ingested corpus are all written to the root volume before the snapshot.
+# install: docker images, the HuggingFace cache, the TEI (Qwen3-Embedding-0.6B)
+# weights and an already-ingested corpus are all written to the root volume
+# before the snapshot.
 #
 # Required environment: REGISTRY, AWS_REGION, SECRET_PREFIX, COMPOSE_VERSION
 set -euo pipefail
@@ -36,12 +37,6 @@ install -d -o 1000 -g 1000 \
   data/indexed_documents data/eval_runs data/calibration \
   services/evals/evals/data
 chmod +x services/postgres/*.sh scripts/*.sh
-
-# config.yml pins each Ollama model's base_url to host.docker.internal, which is
-# how it reaches the host on a laptop. On the instance Ollama is a compose
-# service, so rewrite it once — here, so the corpus is ingested against the same
-# endpoint the demo will use.
-sed -i 's|http://host\.docker\.internal:11434|http://ollama:11434|g' config.yml
 
 # ---------------------------------------------------------------------- secrets
 # Written here only so postgres can create its roles during this bake; deleted
@@ -97,10 +92,13 @@ for repo in (
     snapshot_download(repo)
 PY
 
-log "pulling the ollama embedding model"
-compose up -d ollama
-timeout 120 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.aws.yml -f docker-compose.bake.yml exec -T ollama ollama list >/dev/null 2>&1; do sleep 3; done'
-compose exec -T ollama ollama pull nomic-embed-text
+log "pulling the TEI embedding image and warming Qwen3 weights into the baked volume"
+compose up -d tei
+# 420s, not 180s: a cold tei_data volume downloads ~1.2GB of safetensors before
+# TEI even starts warming up. Measured at 204s to healthy on a fast connection,
+# and Image Builder instances are not always fast — this is the one place that
+# download is guaranteed to be cold, so the budget is deliberately generous.
+timeout 420 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.aws.yml -f docker-compose.bake.yml exec -T tei curl -sf http://localhost:80/health >/dev/null 2>&1; do sleep 5; done'
 
 # ----------------------------------------------------------- bake the corpus
 log "starting the full stack"
@@ -117,7 +115,7 @@ log "batch ${batch_id}"
 
 # Ingestion is asynchronous — task-worker picks the batch up via SKIP LOCKED — so
 # poll rather than assume. This deliberately checks ingestion, not generation:
-# it proves the Ollama embeddings and both model caches work without depending on
+# it proves the TEI embeddings and both model caches work without depending on
 # a real OpenAI key being present at bake time.
 log "waiting for ingestion to finish"
 for _ in $(seq 1 90); do

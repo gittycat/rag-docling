@@ -53,7 +53,7 @@ export class RagbenchBaseStack extends cdk.Stack {
       subnetConfiguration: [
         // Public IPs are required, not incidental: with natGateways: 0 this is the
         // only egress path, and both the demo instance and the Image Builder
-        // build instance need to reach ECR, HuggingFace and the Ollama registry.
+        // build instance need to reach ECR, HuggingFace and ghcr.io.
         // Inbound exposure is controlled by security groups, not by subnet type.
         { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24, mapPublicIpOnLaunch: true },
       ],

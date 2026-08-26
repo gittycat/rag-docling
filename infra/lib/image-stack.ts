@@ -138,7 +138,7 @@ export class RagbenchImageStack extends cdk.Stack {
       '            - test -d ${AppDir}/.cache/huggingface/hub/models--cross-encoder--ms-marco-MiniLM-L-6-v2',
       '            - test -d ${AppDir}/.cache/huggingface/hub/models--docling-project--docling-models',
       '            - test ! -e ${AppDir}/secrets',
-      '            - docker volume inspect ragbench_postgres_data ragbench_ollama_data',
+      '            - docker volume inspect ragbench_postgres_data ragbench_tei_data',
     ].join('\n');
 
     const registry = `${this.account}.dkr.ecr.${this.region}.amazonaws.com/${repoNamespace(cfg)}`;
@@ -206,7 +206,7 @@ export class RagbenchImageStack extends cdk.Stack {
 
     // --------------------------------------------------- build-time networking
     // The build instance needs outbound internet (ECR, GitHub, HuggingFace,
-    // Ollama registry) and nothing inbound. The VPC has no NAT, so it builds in
+    // ghcr.io for the TEI image) and nothing inbound. The VPC has no NAT, so it builds in
     // a public subnet with a public IP.
     const builderSg = new ec2.SecurityGroup(this, 'BuilderSg', {
       vpc: props.vpc,

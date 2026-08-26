@@ -33,6 +33,9 @@ export interface RagbenchDemoStackProps extends cdk.StackProps {
 }
 
 export class RagbenchDemoStack extends cdk.Stack {
+  /** Exposed so RagbenchEmbedStack can scope its TEI ingress to this instance only. */
+  readonly instanceSg: ec2.SecurityGroup;
+
   constructor(scope: Construct, id: string, props: RagbenchDemoStackProps) {
     super(scope, id, props);
     const cfg = props.config;
@@ -69,6 +72,7 @@ export class RagbenchDemoStack extends cdk.Stack {
     // The only inbound rule on the instance. rag-server (8001) and evals (8002)
     // are not published by the AWS overlay at all — evals has no authentication.
     instanceSg.addIngressRule(albSg, ec2.Port.tcp(8000), 'webapp, from the ALB only');
+    this.instanceSg = instanceSg;
 
     // --------------------------------------------------------------- instance
     const userData = ec2.UserData.forLinux();

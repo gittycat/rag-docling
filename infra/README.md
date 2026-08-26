@@ -1,18 +1,31 @@
 # RAGBench AWS infrastructure
 
-Three CDK stacks that host RAGBench on AWS for pre-planned demos, provisioned on
-demand and destroyed afterwards so idle cost is roughly the price of a coffee per
-month.
+Four CDK stacks that host RAGBench on AWS for pre-planned demos and bulk
+re-ingestion runs, provisioned on demand and destroyed afterwards so idle cost is
+roughly the price of a coffee per month.
 
 | Stack | Lifecycle | What it holds |
 |---|---|---|
 | `RagbenchBaseStack` | permanent, `terminationProtection: true` | VPC (no NAT), Route53 zone, ACM cert, Cognito user pool, 4 ECR repos, 7 secrets |
 | `RagbenchImageStack` | permanent | EC2 Image Builder pipeline that bakes the golden AMI |
 | `RagbenchDemoStack` | ephemeral — deploy before a demo, destroy after | one `m7g.xlarge`, ALB + Cognito auth, A record |
+| `RagbenchEmbedStack` | ephemeral, **opt-in only** — deploy for a bulk re-ingest, destroy after | one spot `g6.xlarge` (L4 GPU) running TEI + Qwen3-Embedding-0.6B, for bulk re-ingestion only |
 
 The split is by **lifecycle**, not by function: anything slow to create (ACM
 issuance, DNS delegation) or holding state that must survive a teardown (Cognito
 users, ECR images, secrets) lives in the base stack.
+
+`RagbenchEmbedStack` is additionally gated: it is not added to the CDK app tree
+at all unless `-c embedStack=true` is passed, so a bare `cdk deploy --all` /
+`cdk synth --all` can never bring up the billed GPU instance by accident. It has
+no golden AMI of its own — it boots straight off AWS's public **Deep Learning
+Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04)**, resolved by SSM parameter, and
+its entire install is one `docker run --gpus all` in user data. Its security
+group accepts TCP 8080 from `RagbenchDemoStack`'s instance security group only —
+nothing on it is reachable from the internet. It writes its private IP to SSM
+parameter `/ragbench/<envName>/embed-endpoint` once TEI reports healthy (from
+user data, not from CloudFormation — see the comment in `embed-stack.ts` for
+why), which is how the ingestion tooling finds it.
 
 ## Environments
 
@@ -70,7 +83,7 @@ rejected rather than silently defaulted.
 
 A cold `docker pull` of 4–6 GB of images plus a 1.3 GB model download costs 15+
 minutes on every provision. The Image Builder pipeline bakes the images, the
-HuggingFace cache (reranker + Docling), the Ollama model **and an
+HuggingFace cache (reranker + Docling), the TEI model weights **and an
 already-ingested corpus** into the AMI, so `just aws-up` is a boot, not an
 install. The cost is ~$2.20/month of snapshot storage, which is the largest
 single idle line item and the right trade.
@@ -201,11 +214,12 @@ and `rag-server` (8001) are not published by `docker-compose.aws.yml` at all.
 
 ```
 infra/
-  bin/ragbench.ts       app entrypoint, wires the three stacks
+  bin/ragbench.ts       app entrypoint, wires the stacks (embed stack is opt-in)
   lib/config.ts         every value the stacks agree on; override with -c key=value
   lib/base-stack.ts     persistent resources
   lib/image-stack.ts    Image Builder pipeline (all L1 — there is no L2)
   lib/demo-stack.ts     ephemeral instance + ALB + DNS
+  lib/embed-stack.ts    ephemeral burst GPU embedder, opt-in with -c embedStack=true
   lib/bundle.ts         assembles the repo files the instance needs, as one S3 asset
   assets/bake.sh        runs inside Image Builder to produce the AMI
   assets/boot.sh        EC2 user data

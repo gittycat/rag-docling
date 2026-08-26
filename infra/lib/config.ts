@@ -30,6 +30,14 @@ export interface RagbenchConfig {
   readonly parentImageSsmPath: string;
   /** Git tag / image tag the golden AMI is baked from. */
   readonly imageTag: string;
+  /** RagbenchEmbedStack's instance type. g6.xlarge = one NVIDIA L4, 24GB. */
+  readonly embedInstanceType: string;
+  /**
+   * Public SSM parameter that resolves to the current Deep Learning Base OSS
+   * Nvidia Driver GPU AMI (Ubuntu 24.04) — ships Docker, the NVIDIA driver and
+   * nvidia-container-toolkit, so RagbenchEmbedStack needs no Image Builder bake.
+   */
+  readonly embedGpuAmiSsmParameter: string;
 }
 
 /** Secrets the app reads as files under /run/secrets. Order is not significant. */
@@ -162,6 +170,15 @@ export function loadConfig(scope: Construct): RagbenchConfig {
       '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64',
     )!,
     imageTag: ctx('imageTag', 'latest')!,
+    embedInstanceType: ctx('embedInstanceType', 'g6.xlarge')!,
+    // Verified against the AWS DLAMI docs: g6 (L4) is x86_64, and this is the
+    // OSS-driver Ubuntu 24.04 base flavour — no framework preinstalled, no
+    // second pipeline needed since RagbenchEmbedStack's user data is one
+    // `docker run`.
+    embedGpuAmiSsmParameter: ctx(
+      'embedGpuAmiSsmParameter',
+      '/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id',
+    )!,
   };
 }
 
