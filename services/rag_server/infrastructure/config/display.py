@@ -85,6 +85,28 @@ def _print_full_banner(config) -> None:
         print(f"  RRF K:                      {config.retrieval.rrf_k}")
     print(f"  Contextual Retrieval:       {config.retrieval.enable_contextual_retrieval}")
 
+    # Chunking section. Named per path: the Docling chunker splits on document
+    # structure and has neither of these, so showing them as global would repeat
+    # the defect that made them config in the first place.
+    print("\nChunking (SentenceSplitter path — .txt/.md):")
+    print(f"  Chunk Size:                 {config.chunking.chunk_size}")
+    print(f"  Chunk Overlap:              {config.chunking.chunk_overlap}")
+    print("  Other file types:           docling (structure-based, no size/overlap)")
+
+    # Data policy section. This decides whether an eval judge may see corpus
+    # content at all, so an operator checking their config must be able to see it.
+    print("\nData Policy (judge egress):")
+    print(f"  Corpus Confidential:        {config.data_policy.corpus_confidential}")
+    print(
+        f"  Allowed Judge Boundaries:   "
+        f"{', '.join(sorted(b.value for b in config.data_policy.allowed_judge_boundaries)) or '(none)'}"
+    )
+    print(
+        f"  Public Datasets:            "
+        f"{', '.join(sorted(config.data_policy.public_datasets)) or '(none)'}"
+    )
+    print(f"  Eval Index Is Isolated:     {config.data_policy.eval_index_is_isolated}")
+
     # Eval section (if configured)
     if hasattr(config, 'eval') and config.eval:
         print("\nEvaluation (LLM-as-Judge):")
