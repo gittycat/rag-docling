@@ -632,6 +632,9 @@ class EvaluationRunner:
                 "judge_execution_boundary": (
                     self.config.judge.execution_boundary if self.config.judge.enabled else None
                 ),
+                # What the boundary gate concluded, so a saved run can be audited
+                # for why judge egress was allowed.
+                "judge_gate_basis": self.config.judge_gate_basis,
                 "judge_independence_warning": judge_warning,
                 "judge_tokens": (
                     self._judge_usage.as_dict() if self.config.judge.enabled else None
@@ -784,6 +787,11 @@ class EvaluationRunner:
         retrieval_config = retrieval_config or {}
         hybrid = retrieval_config.get("hybrid_search") or {}
         contextual = retrieval_config.get("contextual_retrieval") or {}
+        vector = hybrid.get("vector") or {}
+        chunkers = vector.get("chunkers") or []
+        # Names, not sizes, when more than one path is in play: a corpus split by
+        # Docling never saw the SentenceSplitter's numbers.
+        chunker = "+".join(c["name"] for c in chunkers if c.get("name")) or None
 
         return ConfigSnapshot(
             llm_model=rag_config.get("llm_model", "unknown"),
@@ -793,6 +801,9 @@ class EvaluationRunner:
             retrieval_top_k=retrieval_config.get("retrieval_top_k"),
             hybrid_search_enabled=hybrid.get("enabled"),
             contextual_retrieval_enabled=contextual.get("enabled"),
+            chunk_size=vector.get("chunk_size"),
+            chunk_overlap=vector.get("chunk_overlap"),
+            chunker=chunker,
             additional={**rag_config, "retrieval": retrieval_config},
         )
 
@@ -805,6 +816,29 @@ class EvaluationRunner:
     ) -> Scorecard:
         """Compute all metrics for the evaluation."""
         scorecard = Scorecard()
+
+        # A skipped or hobbled group leaves nothing behind in `metrics` to explain
+        # its own absence — recorded here so whoever reads the saved run (not just
+        # whoever watched the log scroll by) sees why groundedness/citation columns
+        # are missing or empty, instead of a silent gap that reads as "0 metrics".
+        if not self.config.metrics.groundedness:
+            scorecard.notes.append(
+                "groundedness group disabled (opt-in): claim_groundedness, "
+                "citation_entailment, claim_citation_support and uncited_claim_rate "
+                "were not computed. It costs a judge call per claim plus one per "
+                "claim-citation link on top of the generation group; enable with "
+                "--groundedness (or metrics.groundedness: true) to compute them."
+            )
+        if self.config.metrics.citation or self.config.metrics.groundedness:
+            eval_settings = (self._model_config or {}).get("eval", {})
+            citation_scope = eval_settings.get("citation_scope", "retrieved")
+            if citation_scope != "explicit":
+                scorecard.notes.append(
+                    f"citation_scope is '{citation_scope}' on the RAG server — it "
+                    "never emits inline citation markers, so citation_entailment, "
+                    "claim_citation_support and uncited_claim_rate are undefined for "
+                    "this run. Set eval.citation_scope: explicit in config.yml."
+                )
 
         def _report(phase: str, **extra: Any) -> None:
             if progress_callback:
@@ -1108,6 +1142,7 @@ class EvaluationRunner:
                 group.value: [m.name for m in metrics]
                 for group, metrics in scorecard.by_group.items()
             },
+            "notes": scorecard.notes,
         }
 
     async def close(self):

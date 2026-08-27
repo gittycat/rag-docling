@@ -8,12 +8,12 @@ Dataset: https://huggingface.co/datasets/hotpotqa/hotpot_qa
 """
 
 import logging
-import random
 from typing import Any
 
 from datasets import load_dataset
 
 from evals.datasets.base import BaseDatasetLoader
+from evals.datasets.revisions import HF_REVISIONS
 from evals.schemas import (
     EvalDataset,
     EvalQuestion,
@@ -21,6 +21,8 @@ from evals.schemas import (
     QueryType,
     Difficulty,
 )
+
+HF_REPO_ID = "hotpotqa/hotpot_qa"
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,9 @@ class HotpotQALoader(BaseDatasetLoader):
     def domains(self) -> list[str]:
         return ["general", "wikipedia"]
 
+    def fingerprint(self) -> dict[str, Any]:
+        return {"revision": HF_REVISIONS.get(HF_REPO_ID)}
+
     def load(
         self,
         split: str = "test",
@@ -68,9 +73,6 @@ class HotpotQALoader(BaseDatasetLoader):
         """
         logger.info(f"Loading HotpotQA dataset (split={split}, max_samples={max_samples})")
 
-        if seed is not None:
-            random.seed(seed)
-
         # HotpotQA has 'distractor' and 'fullwiki' configs
         # We use 'distractor' which includes supporting facts
         hf_split = "validation" if split in ("test", "validation", "val") else "train"
@@ -79,12 +81,15 @@ class HotpotQALoader(BaseDatasetLoader):
             "hotpotqa/hotpot_qa",
             "distractor",
             split=hf_split,
+            revision=HF_REVISIONS.get(HF_REPO_ID),
         )
 
-        # Convert all items
+        # Iterate a seeded permutation of the full split (not just a prefix)
+        # so the sample is unbiased and tolerates per-item conversion
+        # failures — see BaseDatasetLoader._sample_order.
         questions: list[EvalQuestion] = []
-        for idx, item in enumerate(dataset):
-            question = self._convert_item(item, idx)
+        for idx in self._sample_order(len(dataset), max_samples, seed):
+            question = self._convert_item(dataset[idx], idx)
             if question:
                 # Apply difficulty filter
                 if difficulty_filter:
@@ -92,13 +97,9 @@ class HotpotQALoader(BaseDatasetLoader):
                         continue
                 questions.append(question)
 
-            # Early exit
+            # Stop once we have enough
             if max_samples and len(questions) >= max_samples:
                 break
-
-        # Final sampling if needed
-        if max_samples and len(questions) > max_samples:
-            questions = random.sample(questions, max_samples)
 
         logger.info(f"Loaded {len(questions)} questions from HotpotQA")
 

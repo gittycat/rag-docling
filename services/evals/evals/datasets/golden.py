@@ -2,7 +2,6 @@
 
 import json
 import logging
-import random
 from pathlib import Path
 from typing import Any
 
@@ -175,9 +174,7 @@ class GoldenDatasetLoader(BaseDatasetLoader):
 
         # Sample if max_samples specified
         if max_samples and len(questions) > max_samples:
-            if seed is not None:
-                random.seed(seed)
-            questions = random.sample(questions, max_samples)
+            questions = self._rng(seed).sample(questions, max_samples)
 
         return EvalDataset(
             name=self.name,

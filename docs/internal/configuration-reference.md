@@ -212,6 +212,29 @@ Three named definitions, resolved into `reranker.model` / `reranker.top_n`
 | `retrieval.enable_contextual_retrieval` | bool | `false` | Anthropic-style contextual chunk prefixing at ingestion time; the only `config.yml` key that is runtime-toggleable via `PATCH /settings`, which rewrites this key in the mounted `config.yml` |
 | `retrieval.contextual_concurrency` | int | 8 | max concurrent LLM calls during contextual prefix generation |
 
+### `chunking.*`
+
+| key | type | default | effect |
+|---|---|---|---|
+| `chunking.chunk_size` | int | 500 | SentenceSplitter chunk size in tokens (`.txt`/`.md` path) |
+| `chunking.chunk_overlap` | int | 50 | SentenceSplitter chunk overlap in tokens |
+
+Declared in rag-server's schema only; the evals service reads chunking from
+`GET /metrics/retrieval` rather than from `config.yml`, because what matters to a
+run is what the server did, not what the file says.
+
+Both keys were previously three unconnected literals — LlamaIndex `Settings`
+(`core/config.py`), the `SentenceSplitter` in `pipelines/ingestion.py`, and the
+values `GET /metrics/retrieval` reported — that agreed only by coincidence, with
+the third recorded into every eval run's `ConfigSnapshot` as if it were measured
+configuration (`docs/suggestions.md` §3.1, resolved).
+
+They apply to the SentenceSplitter path only. Complex documents route to Docling,
+which splits on document structure and has neither parameter. `GET
+/metrics/retrieval` reports a `chunkers` list naming each path with only the
+parameters it has, so the Docling entry reports `chunk_size: null` rather than
+these numbers, which that path never used.
+
 The Pydantic field default for `enable_contextual_retrieval` actually differs
 between the two schema copies (`True` in rag-server's schema, `False` in
 evals'), but `config.yml` always sets it explicitly to `false`, so the
@@ -299,13 +322,35 @@ entity, and nothing on the eval path is masked in any case. Replaced the retired
 |---|---|---|---|
 | `data_policy.corpus_confidential` | bool | `true` | whether corpus content needs protecting at all; `false` disables the judge gate entirely |
 | `data_policy.allowed_judge_boundaries` | list of `execution_boundary` values | `[customer_managed, aws_managed]` | allow-list of boundaries a confidential corpus may be judged in; anything absent — including an endpoint that declares no boundary — is refused |
-| `data_policy.eval_dataset_is_public` | bool | `false` in code, `true` in the checked-in `config.yml` | declares that the eval *dataset* (not the corpus) is public or synthetic, so judge egress leaks nothing; the only escape hatch |
+| `data_policy.public_datasets` | set of dataset names | `{ragbench, qasper, squad_v2, hotpotqa, msmarco}` | datasets whose questions and gold passages hold no confidential content. `golden` is deliberately absent — it is authored from the operator's documents |
+| `data_policy.eval_index_is_isolated` | bool | `false` | declares that an `end_to_end` run queries an index holding nothing but the eval's own uploaded documents. Overridable to `true` (only) by the `EVAL_INDEX_IS_ISOLATED` env var, which logs a warning |
+
+**Removed:** `data_policy.eval_dataset_is_public`. A config carrying it fails to
+load, with a message naming both replacements. It was a single global boolean that
+could not see which dataset a run was using, so setting it once let a `golden` run
+ship the corpus verbatim to a third-party judge.
+
+Publicity is now computed per run by `eval_content_is_public(datasets, tier,
+policy)` in `services/evals/evals/config.py`, and fails closed: unknown datasets
+or an unknown tier are not public, *every* dataset must be in `public_datasets`,
+and `end_to_end` additionally requires `eval_index_is_isolated`.
 
 The schema is declared in both services so `config.yml` validates identically
-either side, but only the eval service enforces it — rag-server runs no judge.
-Enforcement is `enforce_judge_boundary()`, called at config load and again in
-`resolve_judge_config()`, so the judge object the runtime calls is the one that
-was checked. See [pii-masking.md](pii-masking.md#the-judge-gate-is-not-a-pii-control).
+either side, but only the eval service enforces the allow-list — rag-server runs
+no judge. Enforcement is split by what each moment can know:
+
+- **config load** (`validate_privacy_posture()`) checks only the structural half —
+  a judge that declares no `execution_boundary` at all is refused. The datasets
+  and tier are unknowable here.
+- **judge resolution** (`resolve_judge_config()` → `enforce_judge_boundary()`)
+  applies the allow-list, once the run's datasets and tier are in hand. Callers
+  that omit them fail closed.
+
+`EvalConfig` resolves its judge in `__post_init__`, after datasets and tier are
+normalized, so the default path is dataset-aware rather than fail-closed by
+accident. A completed run records what the gate concluded under
+`metadata.judge_gate_basis`. See
+[pii-masking.md](pii-masking.md#the-judge-gate-is-not-a-pii-control).
 
 ### `execution_boundary` values
 

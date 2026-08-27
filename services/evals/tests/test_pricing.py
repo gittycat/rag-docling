@@ -10,6 +10,7 @@ import asyncio
 import json
 
 import pytest
+from conftest import stub_judge
 
 from evals.metrics.performance import CostPerQuery
 from evals.pricing import (
@@ -272,6 +273,7 @@ class TestCostObjectiveExcludesUnpriced:
             )
         )
         config = EvalConfig(
+            judge=stub_judge(),
             scoring=ScoringConfig(
                 weights={"cost": 0.5, "faithfulness": 0.5}, max_cost_per_query_usd=0.10
             ),

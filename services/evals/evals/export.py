@@ -348,8 +348,13 @@ def _export_scorecard_markdown(scorecard: Scorecard, output_path: Path) -> Path:
     lines = [
         "# Evaluation Scorecard",
         f"\nExported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "\n## Metrics by Group\n",
     ]
+
+    if scorecard.notes:
+        lines.append("\n## Notes\n")
+        lines.extend(f"- {note}" for note in scorecard.notes)
+
+    lines.append("\n## Metrics by Group\n")
 
     for group, metrics in scorecard.by_group.items():
         lines.append(f"### {group.value.title()}\n")
@@ -421,6 +426,14 @@ def export_run_report(
             "> **Judge caveat:** " + judge_warning,
             "",
         ])
+
+    if run.scorecard and run.scorecard.notes:
+        # A skipped group leaves no rows in the metrics table to explain itself,
+        # so without this the report reads as "these metrics were not measured"
+        # with no indication of why.
+        lines.append("## Notes\n")
+        lines.extend(f"- {note}" for note in run.scorecard.notes)
+        lines.append("")
 
     if run.weighted_score:
         lines.extend([

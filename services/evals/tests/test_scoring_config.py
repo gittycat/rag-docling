@@ -1,6 +1,7 @@
 """Weighted-score weights and normalization thresholds are configuration, not constants."""
 
 import pytest
+from conftest import stub_judge
 
 from evals.config import (
     DEFAULT_MAX_COST_PER_QUERY_USD,
@@ -28,7 +29,11 @@ def _scorecard(**metrics) -> Scorecard:
 
 
 def _runner(scoring: ScoringConfig, tier=EvalTier.END_TO_END) -> EvaluationRunner:
-    return EvaluationRunner(EvalConfig(scoring=scoring, tier=tier, datasets=["ragbench"]))
+    return EvaluationRunner(
+        EvalConfig(
+            scoring=scoring, tier=tier, datasets=["ragbench"], judge=stub_judge()
+        )
+    )
 
 
 class TestLatencyThreshold:
@@ -96,11 +101,14 @@ class TestUndefinedMetricsAreExcluded:
 
 class TestConfigPlumbing:
     def test_weights_property_delegates_to_scoring(self):
-        config = EvalConfig(scoring=ScoringConfig(weights={"accuracy": 1.0}))
+        config = EvalConfig(scoring=ScoringConfig(weights={"accuracy": 1.0}), judge=stub_judge())
         assert config.weights == {"accuracy": 1.0}
 
     def test_scoring_accepts_a_plain_dict(self):
-        config = EvalConfig(scoring={"weights": {"accuracy": 1.0}, "max_cost_per_query_usd": 0.5})
+        config = EvalConfig(
+            scoring={"weights": {"accuracy": 1.0}, "max_cost_per_query_usd": 0.5},
+            judge=stub_judge(),
+        )
         assert isinstance(config.scoring, ScoringConfig)
         assert config.scoring.max_cost_per_query_usd == 0.5
 
@@ -108,6 +116,7 @@ class TestConfigPlumbing:
         path = tmp_path / "eval.yml"
         original = EvalConfig(
             datasets=["ragbench"],
+            judge=stub_judge(),
             scoring=ScoringConfig(
                 weights={"accuracy": 0.7, "latency": 0.3},
                 latency_threshold_ms_end_to_end=12_345,
@@ -123,7 +132,9 @@ class TestConfigPlumbing:
 
     def test_legacy_top_level_weights_key_still_loads(self, tmp_path):
         path = tmp_path / "legacy.yml"
-        path.write_text("datasets: [ragbench]\nweights: {accuracy: 1.0}\n")
+        # tier is explicit because an end_to_end ragbench run against a
+        # non-isolated index is gated — see test_privacy_posture.py.
+        path.write_text("datasets: [ragbench]\ntier: generation\nweights: {accuracy: 1.0}\n")
 
         loaded = EvalConfig.from_yaml(path)
         assert loaded.weights == {"accuracy": 1.0}

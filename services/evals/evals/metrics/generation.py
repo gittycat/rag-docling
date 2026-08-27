@@ -16,6 +16,27 @@ from evals.schemas import (
 )
 
 
+def _lazy_judge() -> LLMJudge:
+    """Resolve a judge for a metric constructed without one.
+
+    This path knows no dataset and no tier, so the boundary gate fails closed by
+    design. The runner always injects a judge (runner.py), so reaching here means
+    the metric was built outside a run — say the fix in the error, not a
+    permissive default.
+    """
+    try:
+        return LLMJudge(resolve_judge_config())
+    except ValueError as e:
+        raise ValueError(
+            f"{e}\n\nThis metric was constructed without a judge, so the gate could "
+            f"not see which datasets or tier are in play and refused by default. "
+            f"Pass a judge explicitly — Faithfulness(judge=...) — or build the metric "
+            f"through EvalRunner, which injects one resolved against the run's "
+            f"datasets and tier."
+        ) from e
+
+
+
 class Faithfulness(BaseMetric):
     """Faithfulness measures whether the answer is grounded in the retrieved context.
 
@@ -32,7 +53,7 @@ class Faithfulness(BaseMetric):
     def judge(self) -> LLMJudge:
         if self._judge is None:
             # Resolved from active.eval, explicitly — LLMJudge has no default.
-            self._judge = LLMJudge(resolve_judge_config())
+            self._judge = _lazy_judge()
         return self._judge
 
     @property
@@ -102,7 +123,7 @@ class AnswerCorrectness(BaseMetric):
     def judge(self) -> LLMJudge:
         if self._judge is None:
             # Resolved from active.eval, explicitly — LLMJudge has no default.
-            self._judge = LLMJudge(resolve_judge_config())
+            self._judge = _lazy_judge()
         return self._judge
 
     @property
@@ -173,7 +194,7 @@ class AnswerRelevancy(BaseMetric):
     def judge(self) -> LLMJudge:
         if self._judge is None:
             # Resolved from active.eval, explicitly — LLMJudge has no default.
-            self._judge = LLMJudge(resolve_judge_config())
+            self._judge = _lazy_judge()
         return self._judge
 
     @property

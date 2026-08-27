@@ -427,7 +427,14 @@ class UncitedClaimRate(BaseMetric):
     nine uncited scores 1.0 on both of them. Needs no judge — a marker is either
     present or it is not.
 
-    Lower is better. 0.0 means every claim is attributed.
+    Lower is better. 0.0 means every claim is attributed. When *no* claim in the
+    answer carries a marker, this is indistinguishable from `eval.citation_scope`
+    being `'retrieved'`, under which the RAG server never asks the model for
+    inline markers at all — every answer would score a constant 1.0 regardless
+    of what it actually said. `CitationEntailment` and `ClaimCitationSupport`
+    already treat "no cited claims" as undefined rather than data for the same
+    reason; this metric follows suit instead of reporting a number that looks
+    measured and is not.
     """
 
     def __init__(self, max_claims: int = DEFAULT_MAX_CLAIMS):
@@ -465,6 +472,13 @@ class UncitedClaimRate(BaseMetric):
 
         claims = all_claims[: self.max_claims]
         uncited = sum(1 for c in claims if not c.is_cited)
+
+        if uncited == len(claims):
+            return _undefined(
+                self,
+                "No inline citations anywhere in the answer — set eval.citation_scope "
+                "to 'explicit' in config.yml for this metric to be measurable",
+            )
 
         return MetricResult(
             name=self.name,

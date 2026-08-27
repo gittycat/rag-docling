@@ -213,7 +213,8 @@ the judge sees retrieved chunks and answers verbatim whatever `pii.enabled` says
 | `models.*.<name>.execution_boundary` | Declares where that endpoint runs: `customer_managed`, `aws_managed`, or `third_party`. Never inferred from the provider name; an endpoint that declares none is refused |
 | `data_policy.corpus_confidential` | Whether corpus content needs protecting at all (default `true`) |
 | `data_policy.allowed_judge_boundaries` | Allow-list of boundaries a confidential corpus may be judged in (default `customer_managed`, `aws_managed`) |
-| `data_policy.eval_dataset_is_public` | Set `true` only while evaluating public or synthetic datasets; set it `false` before running the `golden` dataset or an end-to-end run over your own corpus |
+| `data_policy.public_datasets` | Datasets whose questions and gold passages carry nothing of yours. A run is public only if *every* dataset it uses is listed; `golden` is deliberately absent |
+| `data_policy.eval_index_is_isolated` | Set `true` only when an `end_to_end` eval queries an index holding nothing but its own uploaded documents. A public dataset is not sufficient in that tier — the eval queries your live index |
 
 See [Chapter 8](08-privacy-and-pii.md) before enabling cloud processing for
 sensitive data.

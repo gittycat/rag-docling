@@ -104,6 +104,10 @@ export interface ActiveEvalJob {
 export interface EvalDashboardMetrics {
 	retrieval_relevance: number | null;
 	faithfulness: number | null;
+	answer_correctness: number | null;
+	// Not measured anywhere yet — always null until a completeness metric exists.
+	// Distinct from answer_correctness: an answer can be correct as far as it
+	// goes yet still leave things out.
 	answer_completeness: number | null;
 	answer_relevance: number | null;
 	latency_p50_seconds: number | null;

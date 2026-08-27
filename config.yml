@@ -162,13 +162,16 @@ models:
 
     # A self-hosted judge behind the network boundary needs no API key; its
     # execution_boundary is what makes it acceptable for a confidential corpus,
-    # not its provider string (Unit D adds the OpenAI-compatible transport):
-    # qwen-vllm-judge:
-    #   provider: vllm
-    #   model: Qwen/Qwen3-32B-AWQ
-    #   base_url: http://vllm:8000/v1
-    #   timeout: 120
-    #   execution_boundary: customer_managed
+    # not its provider string. Start it with `just judge-up` (CUDA host only —
+    # the service is profile-gated so a bare `just up` skips it), then point
+    # active.eval here to evaluate your own documents. Override the model with
+    # JUDGE_MODEL if 32B at 4-bit does not fit the GPU.
+    qwen-vllm-judge:
+      provider: vllm
+      model: Qwen/Qwen3-32B-AWQ
+      base_url: http://vllm:8000/v1
+      timeout: 120
+      execution_boundary: customer_managed
 
   reranker:
     # top_n: number of nodes the reranker returns. Authoritative when set; if
@@ -203,7 +206,13 @@ eval:
   # Citation scope for evaluation:
   # - retrieved: treat all retrieved chunks as citations
   # - explicit: only use explicitly cited chunks (if provided by the server)
-  citation_scope: retrieved
+  #
+  # 'explicit' is the shipped default: under 'retrieved' the LLM is never asked
+  # to emit inline markers, so citation_entailment and claim_citation_support
+  # are always undefined and uncited_claim_rate is a constant 1.0 no matter what
+  # the answer says. Those metrics only mean anything once the model is
+  # actually producing citations to check.
+  citation_scope: explicit
 
   # Citation format for explicit citations
   # - numeric: uses [1], [2] style references mapped to source order
@@ -272,6 +281,18 @@ reranker:
 # ============================================================================
 # Retrieval Settings
 # ============================================================================
+# ============================================================================
+# Chunking - how documents are split before embedding
+# ============================================================================
+# Applies to the SentenceSplitter path (.txt/.md). Complex documents go through
+# Docling, which splits on document structure and has no size/overlap knob —
+# `GET /metrics/retrieval` reports `chunker` so a run records which path it
+# actually took, and reports null sizes for the Docling path rather than these
+# numbers, which that path never used.
+chunking:
+  chunk_size: 500
+  chunk_overlap: 50
+
 retrieval:
   top_k: 10
   enable_hybrid_search: true    # BM25 + Vector search with RRF fusion
@@ -402,12 +423,30 @@ data_policy:
     - customer_managed
     - aws_managed
 
-  # The only escape hatch, and it is about the eval DATASET, not the corpus:
-  # ragbench/qasper/squad_v2/hotpotqa/msmarco are public HuggingFace benchmarks,
-  # so judging them at a third-party endpoint leaks nothing. Set this to false
-  # before running evals against real customer documents (the `golden` dataset
-  # or an END_TO_END run over your own corpus).
-  eval_dataset_is_public: true
+  # The escape hatch, per dataset rather than per deployment. These are public
+  # HuggingFace benchmarks, so a judge that sees their questions and gold
+  # passages learns nothing about your corpus. `golden` is deliberately absent:
+  # it is authored from your own documents, so a golden run is always gated.
+  # The gate reads this list per run — a mixed run is as confidential as its
+  # most confidential dataset.
+  public_datasets:
+    - ragbench
+    - qasper
+    - squad_v2
+    - hotpotqa
+    - msmarco
+
+  # A public dataset is not sufficient in the END_TO_END tier. There the eval
+  # queries the live rag-server index, which returns whatever is in it — your
+  # documents included — so the judge sees corpus content regardless of which
+  # dataset asked the question. Set true ONLY when the index this eval runs
+  # against holds nothing but the eval's own uploaded documents (an ephemeral
+  # benchmark stack, a throwaway database). The shipped `just test-eval` runs
+  # against the persistent index, so it is false here and that run is gated.
+  #
+  # The evals service also honours EVAL_INDEX_IS_ISOLATED=true as an override,
+  # for ephemeral compose stacks that cannot edit this file. It logs loudly.
+  eval_index_is_isolated: false
 
 # ============================================================================
 # PII Masking - opt-in cloud generation tier only (Task 2.3)

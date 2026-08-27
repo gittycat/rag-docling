@@ -458,7 +458,22 @@ experiment cannot be run by configuration alone — the only recipe in the guide
 that limitation.
 **Effort.** S — add a `chunking` section to `config.yml`.
 **Where.** `services/rag_server/core/config.py`.
-**Status.** Open — still hardcoded at `core/config.py:105`.
+**Status.** ✅ Done — 2026-08-27.
+
+**✅ FIXED (2026-08-27).** `ChunkingConfig` (`chunk_size`, `chunk_overlap`) in
+`infrastructure/config/models_config.py`, a `chunking:` block in `config.yml`, and
+`get_chunking_config()` beside `get_ingestion_config()`. All three former literals
+now read it: LlamaIndex `Settings` (`core/config.py`), the `SentenceSplitter` in
+`pipelines/ingestion.py` (the bare `chunk_overlap=50` included), and
+`GET /metrics/retrieval`.
+
+The endpoint additionally reports a `chunkers` list naming each path and only the
+parameters it has — the Docling chunker splits on document structure and reports
+`chunk_size: null` rather than the SentenceSplitter's numbers, which it never used.
+`ConfigSnapshot` carries `chunk_size`, `chunk_overlap` and `chunker`, all
+`| None`, so a run against an older server records "not captured" instead of a
+default that happens to match. This closed the last live instance of the 2.1
+defect class.
 
 ### 3.2 ★ Three provider API keys have no supported path
 **What.** The settings classes read `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, and
@@ -1052,10 +1067,12 @@ If picking a handful, these give the most value per unit of effort.
    (BM25 failures are now reported at `component_status.bm25` instead of only in
    logs) and **4.8** (eleven citation-extraction tests run again).
 
+9. ~~**3.1** — chunk size and overlap in `config.yml`.~~ ✅ 2026-08-27. The
+   documented chunk-size recipe now runs by configuration alone, and the eval
+   snapshot records the values the pipeline actually used.
+
 **Still the top of the queue:**
 
-9. **3.1** — chunk size and overlap in `config.yml`. S, and it is the one documented
-   tuning recipe that cannot be run without a rebuild.
 10. **Surface significance in the dashboard.** The API returns it; the analytics UI
     still shows point deltas only, which is where most users will read a comparison.
 11. **2.4** — ensemble judging. The same-provider warning landed; pairing judge and

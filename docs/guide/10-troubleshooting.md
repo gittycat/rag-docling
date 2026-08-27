@@ -276,10 +276,14 @@ refusal is deliberate and is not affected by `pii.enabled`.
 |---|---|
 | The `models.eval` entry for `active.eval` has no `execution_boundary` | Add one — unknown fails closed rather than being assumed safe |
 | The judge's boundary is not in `data_policy.allowed_judge_boundaries` | Point `active.eval` at an allowed judge, or widen the allow-list deliberately |
-| You are evaluating a public dataset and only need the check off for this work | Set `data_policy.eval_dataset_is_public: true` |
+| You are running `end_to_end` against a throwaway index that holds only the eval's own documents | Set `data_policy.eval_index_is_isolated: true` (or `EVAL_INDEX_IS_ISOLATED=true` for an ephemeral stack) |
+| No document in the corpus is actually confidential | Set `data_policy.corpus_confidential: false` |
+| You want judged metrics on your own documents | `just judge-up` starts the in-boundary judge, then point `active.eval` at it |
 
-Set `eval_dataset_is_public` back to `false` before evaluating your own documents.
-See [Chapter 8](08-privacy-and-pii.md#where-evaluation-data-may-go).
+The gate reads the datasets and tier of *this run*, so `--datasets squad_v2 --tier
+generation` can be allowed while `--datasets golden` is refused with the same
+config. `just test-eval` is refused by default because `end_to_end` queries your
+live index. See [Chapter 8](08-privacy-and-pii.md#where-evaluation-data-may-go).
 
 ## Performance and persistence
 

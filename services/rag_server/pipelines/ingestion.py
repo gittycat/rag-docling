@@ -58,6 +58,22 @@ def get_ingestion_config() -> Dict[str, bool]:
     }
 
 
+def get_chunking_config() -> Dict[str, int]:
+    """Get chunk size and overlap from models config"""
+    config = get_models_config()
+    return {
+        'chunk_size': config.chunking.chunk_size,
+        'chunk_overlap': config.chunking.chunk_overlap,
+    }
+
+
+# Which chunker a file extension routes to. Named rather than inferred at the
+# call site so /metrics/retrieval and chunk_document() cannot disagree about
+# which path a document took — the Docling path has no size or overlap to report.
+def chunker_for_extension(extension: str) -> str:
+    return "sentence_splitter" if extension in SIMPLE_TEXT_EXTENSIONS else "docling"
+
+
 # ============================================================================
 # STEP 1: METADATA EXTRACTION
 # ============================================================================
@@ -167,7 +183,11 @@ def chunk_document_with_docling(file_path: str) -> List[TextNode]:
     return nodes
 
 
-def chunk_document_with_text_splitter(file_path: str, chunk_size: int = 500) -> List[TextNode]:
+def chunk_document_with_text_splitter(
+    file_path: str,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> List[TextNode]:
     """
     Process simple text documents using SentenceSplitter.
 
@@ -194,15 +214,25 @@ def chunk_document_with_text_splitter(file_path: str, chunk_size: int = 500) -> 
         raise ValueError(f"Could not load document: {file_path}")
 
     # Phase 2: Split into chunks
-    logger.info(f"[CHUNKING] Phase 2: Splitting into chunks (chunk_size={chunk_size})...")
-    splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=50)
+    chunking = get_chunking_config()
+    chunk_size = chunking['chunk_size'] if chunk_size is None else chunk_size
+    chunk_overlap = chunking['chunk_overlap'] if chunk_overlap is None else chunk_overlap
+    logger.info(
+        f"[CHUNKING] Phase 2: Splitting into chunks "
+        f"(chunk_size={chunk_size}, chunk_overlap={chunk_overlap})..."
+    )
+    splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     nodes = splitter.get_nodes_from_documents(documents)
     logger.info(f"[CHUNKING] Phase 2 complete - {len(nodes)} chunks created")
 
     return nodes
 
 
-def chunk_document(file_path: str, chunk_size: int = 500) -> List[TextNode]:
+def chunk_document(
+    file_path: str,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> List[TextNode]:
     """
     Main chunking dispatcher - routes to appropriate chunking method based on file type.
 
@@ -223,7 +253,7 @@ def chunk_document(file_path: str, chunk_size: int = 500) -> List[TextNode]:
 
     # Route to appropriate chunker
     if extension in SIMPLE_TEXT_EXTENSIONS:
-        nodes = chunk_document_with_text_splitter(file_path, chunk_size)
+        nodes = chunk_document_with_text_splitter(file_path, chunk_size, chunk_overlap)
     else:
         nodes = chunk_document_with_docling(file_path)
 

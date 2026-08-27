@@ -352,7 +352,9 @@ def cmd_eval(args):
                 seed=args.seed,
                 rag_server_url=args.rag_url,
                 runs_dir=Path(args.output),
-                judge=resolve_judge_config(enabled=not args.no_judge),
+                judge=resolve_judge_config(
+                    enabled=not args.no_judge, datasets=dataset_names, tier=tier
+                ),
                 metrics=MetricConfig(groundedness=args.groundedness),
                 tier=tier,
                 cache=CacheConfig(
@@ -574,6 +576,9 @@ def _run_from_dict(data: dict) -> EvalRun:
     """Rebuild enough of an EvalRun for the Markdown report exporter."""
     cfg = data.get("config", {})
     scorecard = Scorecard()
+    # Notes explain why a group is missing; dropping them on reload would make the
+    # exported report look like the metrics simply were not there.
+    scorecard.notes = list((data.get("scorecard") or {}).get("notes", []))
     for m in (data.get("scorecard") or {}).get("metrics", []):
         scorecard.add_metric(
             MetricResult(
@@ -1059,6 +1064,11 @@ def print_run_summary(run: EvalRun):
             f"Cache: {cache_stats['hits']} hits, {cache_stats['misses']} misses "
             f"(judge={cache_stats['judge']}, query={cache_stats['query']})"
         )
+
+    if run.scorecard and run.scorecard.notes:
+        print("\n" + "-" * 40)
+        for note in run.scorecard.notes:
+            print(f"NOTE: {note}")
 
     if run.scorecard:
         print("\n" + "-" * 40)

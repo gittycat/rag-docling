@@ -168,6 +168,33 @@ eval +ARGS: show-config up
 eval-datasets: up
     docker compose exec evals .venv/bin/python -m evals.cli datasets
 
+# Start the self-hosted judge (CUDA host only; profile-gated so `just up` skips it)
+[group('eval')]
+judge-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # vLLM has no usable darwin/arm64 path. Failing here is the honest outcome:
+    # the alternative is a judge that silently is not there, and an eval that
+    # then falls back to a third-party endpoint the data policy refuses anyway.
+    if [ "$(uname -s)" != "Linux" ]; then
+        echo "ERROR: the vllm judge needs a CUDA host; this is $(uname -s)." >&2
+        echo "  Evaluate public datasets in the generation tier, or see the" >&2
+        echo "  RagbenchJudgeStack note in docs/ROADMAP.md for the burst-GPU option." >&2
+        exit 1
+    fi
+    docker compose --profile judge up -d vllm
+    echo "Judge starting. Point active.eval at the vllm entry in config.yml to use it."
+
+# Stop the self-hosted judge
+[group('eval')]
+judge-down:
+    docker compose --profile judge down vllm
+
+# Run the evals service unit tests locally (CI runs these too; this is the local recipe)
+[group('test')]
+test-evals:
+    cd services/evals && uv run pytest tests/ -v
+
 # Calibrate the LLM judge against RAGBench TRACe ground-truth annotations
 [group('eval')]
 eval-calibrate SAMPLES="20": up

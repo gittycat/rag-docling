@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from evals.config import JudgeConfig, resolve_judge_config
+from evals.config import DatasetName, EvalTier, JudgeConfig, resolve_judge_config
 from evals.judges.llm_judge import LLMJudge
 from infrastructure.config.models_config import (
     DataPolicyConfig,
@@ -29,6 +29,11 @@ from infrastructure.config.models_config import (
 )
 
 REPO_CONFIG = Path(__file__).parent.parent.parent.parent / "config.yml"
+
+# A run whose content is public under the shipped policy: a public benchmark in
+# the tier that injects context instead of querying the live index. These tests
+# are about *which* judge resolves, so they use a run the gate lets through.
+PUBLIC_RUN = {"datasets": [DatasetName.RAGBENCH], "tier": EvalTier.GENERATION}
 
 
 @pytest.fixture
@@ -66,7 +71,7 @@ def test_cli_constructed_job_resolves_active_eval(repo_models_config):
     )()
 
     with _patched(repo_models_config):
-        judge = cli.resolve_judge_config(enabled=not args.no_judge)
+        judge = cli.resolve_judge_config(enabled=not args.no_judge, **PUBLIC_RUN)
 
     assert judge.provider == "openai"
     assert judge.model == "gpt-5.2"
@@ -87,7 +92,7 @@ def test_api_constructed_job_resolves_active_eval(repo_models_config):
             datasets=[job_manager.DatasetName("ragbench")],
             samples_per_dataset=1,
             tier=job_manager.EvalTier("generation"),
-            judge=job_manager.resolve_judge_config(enabled=True),
+            judge=job_manager.resolve_judge_config(enabled=True, **PUBLIC_RUN),
         )
 
     assert config.judge.provider == "openai"
@@ -99,8 +104,8 @@ def test_cli_and_api_resolve_identically(repo_models_config):
     import evals.cli as cli
 
     with _patched(repo_models_config):
-        cli_judge = cli.resolve_judge_config(enabled=True)
-        api_judge = job_manager.resolve_judge_config(enabled=True)
+        cli_judge = cli.resolve_judge_config(enabled=True, **PUBLIC_RUN)
+        api_judge = job_manager.resolve_judge_config(enabled=True, **PUBLIC_RUN)
 
     assert cli_judge == api_judge
 
@@ -117,7 +122,7 @@ def test_eval_config_default_judge_comes_from_active_eval(repo_models_config):
     from evals.config import EvalConfig as RunEvalConfig
 
     with _patched(repo_models_config):
-        config = RunEvalConfig(samples_per_dataset=1)
+        config = RunEvalConfig(samples_per_dataset=1, tier=EvalTier.GENERATION)
 
     assert (config.judge.provider, config.judge.model) == ("openai", "gpt-5.2")
 
@@ -125,7 +130,7 @@ def test_eval_config_default_judge_comes_from_active_eval(repo_models_config):
 # ── (b) privacy validation inspects the object the runtime uses ───────────────
 
 
-def _models_config(boundary, *, eval_dataset_is_public=False, base_url=None, timeout=120):
+def _models_config(boundary, *, public_datasets=None, base_url=None, timeout=120):
     return ModelsConfig(
         llm=LLMConfig(provider="openai", model="gpt-5-mini"),
         embedding=EmbeddingConfig(provider="tei", model="Qwen/Qwen3-Embedding-0.6B"),
@@ -138,7 +143,8 @@ def _models_config(boundary, *, eval_dataset_is_public=False, base_url=None, tim
             execution_boundary=boundary,
         ),
         data_policy=DataPolicyConfig(
-            corpus_confidential=True, eval_dataset_is_public=eval_dataset_is_public
+            corpus_confidential=True,
+            **({} if public_datasets is None else {"public_datasets": public_datasets}),
         ),
     )
 
@@ -148,37 +154,61 @@ def test_resolution_enforces_the_policy_on_the_resolved_judge():
     object the runtime calls is the object that was checked."""
     with _patched(_models_config(ExecutionBoundary.THIRD_PARTY)):
         with pytest.raises(ValueError, match="third_party"):
-            resolve_judge_config()
+            resolve_judge_config(datasets=[DatasetName.GOLDEN], tier=EvalTier.GENERATION)
 
 
 def test_resolved_judge_carries_the_boundary_it_was_validated_against():
     with _patched(_models_config(ExecutionBoundary.CUSTOMER_MANAGED)):
-        judge = resolve_judge_config()
+        judge = resolve_judge_config(**PUBLIC_RUN)
 
     assert judge.execution_boundary == "customer_managed"
 
 
 def test_repo_config_load_and_resolution_agree(repo_models_config):
-    """Both paths read the same eval block; neither may say "fine" while the other
-    says "refused"."""
+    """Both paths read the same eval block, and they now check different halves of
+    the gate: load time refuses a judge that declares no boundary at all, and
+    resolution applies the allow-list once the run's datasets and tier are known.
+    Neither may say "fine" while the other says "refused" for the same run."""
     repo_models_config.validate_privacy_posture()
     with _patched(repo_models_config):
-        judge = resolve_judge_config()
+        judge = resolve_judge_config(**PUBLIC_RUN)
     assert judge.execution_boundary == repo_models_config.eval.execution_boundary.value
+
+
+def test_repo_config_gates_a_confidential_run(repo_models_config):
+    """The shipped config.yml pairs a third-party judge with a confidential corpus.
+    That is fine for a public benchmark and must not be fine for `golden`."""
+    with _patched(repo_models_config):
+        with pytest.raises(ValueError, match="third_party"):
+            resolve_judge_config(datasets=[DatasetName.GOLDEN], tier=EvalTier.GENERATION)
 
 
 # ── (c) a model definition with no boundary fails closed ──────────────────────
 
 
 def test_resolution_fails_closed_on_missing_boundary():
+    """A confidential run against an endpoint of unknown boundary is refused. (A
+    *public* run is not — nothing confidential leaves, so where the judge runs is
+    moot. Config load refuses the boundary-less judge outright either way, so this
+    combination cannot reach production silently.)"""
     with _patched(_models_config(None)):
         with pytest.raises(ValueError, match="declares no execution_boundary"):
+            resolve_judge_config(datasets=[DatasetName.GOLDEN], tier=EvalTier.GENERATION)
+
+
+def test_resolution_fails_closed_when_the_run_is_unknown():
+    """Omitting datasets and tier is not "no restriction" — it is "unknown", and
+    unknown is refused. This is what keeps the lazy metric paths safe."""
+    with _patched(_models_config(ExecutionBoundary.THIRD_PARTY)):
+        with pytest.raises(ValueError, match="third_party"):
             resolve_judge_config()
 
 
-def test_missing_boundary_permitted_only_by_explicit_override():
-    with _patched(_models_config(None, eval_dataset_is_public=True)):
-        judge = resolve_judge_config()
+def test_missing_boundary_permitted_only_by_an_explicit_public_declaration():
+    with _patched(_models_config(None, public_datasets={"golden"})):
+        judge = resolve_judge_config(
+            datasets=[DatasetName.GOLDEN], tier=EvalTier.GENERATION
+        )
     assert judge.execution_boundary is None
 
 

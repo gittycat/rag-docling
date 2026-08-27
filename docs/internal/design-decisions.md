@@ -453,16 +453,45 @@ closed**: an endpoint that declares nothing is unknown, and unknown is not
 
 The gate now sits in `data_policy`, independent of `pii.enabled`.
 `corpus_confidential` defaults to `true` — an operator who has said nothing has
-not said "public". The one escape hatch, `eval_dataset_is_public`, is deliberately
-about the *dataset* rather than the corpus: a production corpus can be
-confidential while the eval set is a public HuggingFace benchmark, in which case
-judge egress leaks nothing at all. That is the narrow case
-`pii.allow_cloud_judge` was reaching for, stated precisely.
+not said "public". The escape hatch is deliberately about the *dataset* rather
+than the corpus: a production corpus can be confidential while the eval set is a
+public HuggingFace benchmark, in which case judge egress leaks nothing at all.
+That is the narrow case `pii.allow_cloud_judge` was reaching for, stated
+precisely.
 
-Enforcement (`enforce_judge_boundary()`) runs twice: at config load, and again in
-`resolve_judge_config()` when the judge is built. Checking twice is not
-redundancy — it is what makes the check meaningful, because the object the
-runtime calls is then provably the object that was validated. The enum and the
+**That escape hatch was first built as one global boolean, and that was a defect,
+not a simplification.** `eval_dataset_is_public: true` was a claim about the
+deployment, evaluated at a moment that could not see which dataset a run was
+using — so the same `true` that made a RAGBench run safe also let a `golden` run,
+authored from the operator's own documents, ship them verbatim to a third-party
+judge. The flag's *name* said "dataset" while its *scope* said "deployment", and
+the gap between those two was the whole vulnerability.
+
+The replacement makes publicity a property of the run: `public_datasets` is the
+set of datasets that carry nothing of the operator's, and a run is public only if
+every dataset it uses is in that set. `golden` is deliberately absent, and adding
+it is a claim about a specific corpus that only its operator can make.
+
+A second axis came out of the same reasoning. Dataset publicity is not sufficient
+in the `end_to_end` tier, because there the eval queries the live rag-server
+index and the judge sees whatever comes back — the operator's chunks included —
+regardless of which dataset asked the question. `eval_index_is_isolated` is the
+narrow, separately-stated claim that covers it: this index holds nothing but the
+eval's own uploaded documents. Keeping it separate from `public_datasets` matters,
+because the two are different facts and conflating them is how the first version
+went wrong.
+
+Enforcement is split rather than duplicated, and the split is the design.
+`validate_privacy_posture()` at config load checks only what config load can
+know — that the judge declares a boundary at all. `enforce_judge_boundary()` at
+judge resolution applies the allow-list, once the run's datasets and tier exist.
+The earlier arrangement ran the identical check twice; that was defensible when
+the inputs were identical, and became wrong the moment the decision needed
+per-run inputs, since a load-time check would have had to fail closed on every
+run or wave every run through. Callers that omit the datasets or tier fail
+closed, which is what keeps the lazily-constructed metric paths honest, and a
+completed run records the conclusion under `metadata.judge_gate_basis` so it can
+be audited after the fact. The enum and the
 policy model are mirrored verbatim in both services, following the existing
 `LLMProvider` duplication; the two services share no package.
 

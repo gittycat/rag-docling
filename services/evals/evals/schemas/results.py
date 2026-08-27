@@ -51,12 +51,17 @@ class Scorecard:
         by_group: Metrics organized by group
         by_domain: Metrics broken down by domain (if applicable)
         by_query_type: Metrics broken down by query type (if applicable)
+        notes: Config-driven caveats about this scorecard — e.g. a metric group
+            that was skipped entirely, or one that ran but is hobbled by another
+            setting. A skipped group leaves no metrics behind to explain itself,
+            so the fact has to live here instead of only in the run log.
     """
 
     metrics: list[MetricResult] = field(default_factory=list)
     by_group: dict[MetricGroup, list[MetricResult]] = field(default_factory=dict)
     by_domain: dict[str, list[MetricResult]] = field(default_factory=dict)
     by_query_type: dict[str, list[MetricResult]] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
 
     def get_metric(self, name: str) -> MetricResult | None:
         """Get a specific metric by name."""
@@ -139,6 +144,9 @@ class ConfigSnapshot:
         retrieval_top_k: Number of chunks to retrieve (None if not captured)
         hybrid_search_enabled: Whether hybrid search was used (None if not captured)
         contextual_retrieval_enabled: Whether contextual retrieval was used (None if not captured)
+        chunk_size: SentenceSplitter chunk size (None if not captured)
+        chunk_overlap: SentenceSplitter chunk overlap (None if not captured)
+        chunker: Which chunking path(s) the server routes documents through
         additional: Any additional config parameters
     """
 
@@ -152,6 +160,14 @@ class ConfigSnapshot:
     retrieval_top_k: int | None = None
     hybrid_search_enabled: bool | None = None
     contextual_retrieval_enabled: bool | None = None
+    # Chunking, same discipline. These were literals in the server's own report
+    # until they became real config; a run that predates that carries None here,
+    # which is the truth, rather than 500/50, which was a guess that happened to
+    # match. `chunker` names the path(s) available, because the Docling path has
+    # no size or overlap and a number reported for it would be invented.
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
+    chunker: str | None = None
     additional: dict[str, Any] = field(default_factory=dict)
 
 

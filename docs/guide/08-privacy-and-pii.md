@@ -86,30 +86,58 @@ data_policy:
   allowed_judge_boundaries:          # allow-list; anything absent is refused
     - customer_managed
     - aws_managed
-  eval_dataset_is_public: false      # the only escape hatch
+  public_datasets:                   # datasets that carry nothing of yours
+    - ragbench
+    - qasper
+    - squad_v2
+    - hotpotqa
+    - msmarco
+  eval_index_is_isolated: false      # true only for a throwaway eval index
 ```
 
-The eval service refuses to start a run when the corpus is confidential and the
-resolved judge's boundary is not on the allow-list — including when it declares no
-boundary at all.
+The eval service refuses to start a run when the corpus is confidential, this
+run's content is not public, and the resolved judge's boundary is not on the
+allow-list — including when it declares no boundary at all.
 
-`eval_dataset_is_public` is about the evaluation **dataset**, not the corpus. The
-public HuggingFace benchmarks (`ragbench`, `qasper`, `squad_v2`, `hotpotqa`,
-`msmarco`) contain nothing of yours, so judging them at a third-party endpoint
-leaks nothing. The checked-in `config.yml` ships `eval_dataset_is_public: true`
-for exactly that reason, which is what lets the default third-party judge run out
-of the box.
+**Publicity is decided per run, from the datasets and the tier — not once for the
+whole deployment.** A run is public only when *every* dataset it uses is in
+`public_datasets`, and, in the `end_to_end` tier, only when
+`eval_index_is_isolated` is also true.
 
-**Set `eval_dataset_is_public: false` before evaluating your own documents** —
-that is, before running the `golden` dataset or any end-to-end run over your own
-corpus.
+`public_datasets` lists the datasets whose questions and gold passages contain
+nothing of yours: the public HuggingFace benchmarks. **`golden` is deliberately
+absent** — it is authored from your own documents. Add a dataset to this list only
+if that is genuinely true of it.
 
-Every judge definition shipped in `models.eval` is `third_party`, so with
-`eval_dataset_is_public: false` the shipped allow-list refuses the run. Adding
-`third_party` to `allowed_judge_boundaries` is a deliberate statement that your
-corpus may reach a vendor API — a decision to record, not a workaround for the
-check. An in-boundary judge is the better answer; the transport for one is not
-built yet.
+`eval_index_is_isolated` exists because a public dataset is not enough in the
+`end_to_end` tier. There the eval queries your live index and the judge sees
+whatever comes back — your documents included — no matter which dataset asked the
+question. Set it `true` only when the index the eval runs against holds nothing
+but the eval's own uploaded documents. The evals service also honours
+`EVAL_INDEX_IS_ISOLATED=true` for ephemeral stacks that cannot edit `config.yml`;
+it logs a warning when it does.
+
+### What this changes in practice
+
+Every judge shipped in `models.eval` is `third_party`, so with the shipped
+defaults:
+
+| Run | Outcome |
+|---|---|
+| `just eval --tier generation --datasets squad_v2` | allowed — public dataset, no index queried |
+| `just eval --datasets golden` | **refused** — `golden` is your own documents |
+| `just test-eval` (ragbench, `end_to_end`) | **refused** — queries the live index |
+
+That last one is a deliberate change. `just test-eval` used to pass because one
+global flag said the dataset was public; it never noticed that the tier was
+reaching into your corpus. Every refusal names three ways out: point `active.eval`
+at an in-boundary judge (`just judge-up` starts one — see
+[Chapter 3](03-configuration-tour.md)), declare the index isolated if it really
+is, or declare the corpus non-confidential.
+
+Adding `third_party` to `allowed_judge_boundaries` is a fourth way out and a
+deliberate statement that your corpus may reach a vendor API — a decision to
+record, not a workaround for the check.
 
 ## How detection works
 

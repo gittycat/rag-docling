@@ -233,12 +233,32 @@ endpoint, never the provider name:
 
 `DataPolicyConfig` holds the policy: `corpus_confidential` (default `true`),
 `allowed_judge_boundaries` (an allow-list, default
-`{customer_managed, aws_managed}`), and `eval_dataset_is_public` (default `false`
-in code; the checked-in `config.yml` sets it `true`, which is what permits the
-shipped third-party judge).
+`{customer_managed, aws_managed}`), `public_datasets` (default the five public
+HuggingFace benchmarks — `golden` deliberately absent), and
+`eval_index_is_isolated` (default `false`).
 
-`enforce_judge_boundary()` returns early when the corpus is not confidential or the
-eval dataset is declared public. Otherwise a boundary of `None` raises — **missing
-boundary fails closed** — and so does any boundary outside the allow-list. It runs
-twice: once at config load, and again in `resolve_judge_config()` at judge
-resolution, so the object the runtime calls is the object that was checked.
+`enforce_judge_boundary()` takes a keyword-only `eval_content_is_public`, computed
+per run by `eval_content_is_public(datasets, tier, policy)`. It returns early when
+the corpus is not confidential or the run's content is public. Otherwise a boundary
+of `None` raises — **missing boundary fails closed** — and so does any boundary
+outside the allow-list. Every error names three resolutions, because an operator
+who hits this must not have to read the source to get out.
+
+This replaced a single global `eval_dataset_is_public` flag, which was wrong in a
+way worth recording: it could not see which dataset a run was using, so one
+`true` covered a `golden` run over the operator's real documents just as happily
+as a RAGBench run. A config still carrying that key now fails to load rather than
+being silently ignored.
+
+Publicity fails closed on every axis: no datasets or no tier is not public; *all*
+datasets must be listed, so a mixed run is as confidential as its most
+confidential member; and `end_to_end` additionally requires
+`eval_index_is_isolated`, because that tier queries the live index and the judge
+sees whatever it returns regardless of which dataset asked.
+
+The check is split across two moments rather than run twice with the same
+arguments. Config load knows the judge but not the run, so it enforces only the
+structural half — an endpoint that declares no boundary. Judge resolution knows
+both, so it applies the allow-list, and the object the runtime calls is the object
+that was checked. A completed run records the conclusion under
+`metadata.judge_gate_basis` so it can be audited afterwards.

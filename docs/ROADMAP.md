@@ -7,6 +7,7 @@ This document outlines planned features and enhancements for the RAG system, org
 - [Completed Features](#completed-features)
 - [Testing & CI Improvements](#testing--ci-improvements)
 - [Planned Features](#planned-features)
+  - [Burst GPU Judge Stack (RagbenchJudgeStack)](#burst-gpu-judge-stack-ragbenchjudgestack)
   - [Centralized Logging Infrastructure](#centralized-logging-infrastructure)
   - [Model Leaderboard & Recommendations](#model-leaderboard--recommendations)
   - [GraphRAG](#graph-rag)
@@ -30,8 +31,12 @@ This document outlines planned features and enhancements for the RAG system, org
   per model definition in `config.yml`, describing the resolved endpoint rather
   than being inferred from the provider name
 - `data_policy` replaces the retired `pii.allow_cloud_judge` flag with an
-  allow-list (`corpus_confidential`, `allowed_judge_boundaries`,
-  `eval_dataset_is_public`); a missing boundary fails closed
+  allow-list (`corpus_confidential`, `allowed_judge_boundaries`); a missing
+  boundary fails closed
+- Publicity is decided per run, not per deployment: `public_datasets` plus
+  `eval_index_is_isolated` replaced the global `eval_dataset_is_public`, which
+  could not see which dataset a run used and so waved `golden` runs through
+  (Aug 2026)
 - Judge egress is no longer coupled to `pii.enabled` — confidential content need
   not contain PII (see [internal/design-decisions.md](internal/design-decisions.md))
 - `active.eval` is now the single source of judge identity; it was previously dead
@@ -204,6 +209,33 @@ Improvements to the integration test suite and CI pipeline. The current 25 integ
 ---
 
 ## Planned Features
+
+### Burst GPU Judge Stack (RagbenchJudgeStack)
+
+**Description:** A CDK stack for the self-hosted judge, mirroring
+[`infra/lib/embed-stack.ts`](../infra/lib/embed-stack.ts): an ephemeral GPU
+instance brought up with `just judge-up` and destroyed with `just judge-down`,
+exactly the pattern `just embed-up` / `embed-down` already follows for burst
+embedding. The alternative to the compose service shipped today.
+
+**Why Important:** The compose `vllm` service needs a CUDA host, which the
+development machine is not. A burst stack gives the judge a real GPU without one
+in the dev box, meters the cost per run rather than holding an instance between
+them, and inherits the env-qualified stack conventions already in the `aws`
+recipe group (`justfile`). It is the only path to judged metrics on a
+confidential corpus from a machine that cannot run vLLM locally.
+
+**What it costs:** an EC2 GPU service quota, real AWS spend per run, and a second
+deployment surface that must be kept in step with the compose service — two
+definitions of "the judge" that can drift on model id, quantization, or served
+model name, and a drift there changes scores silently.
+
+**Effort Estimate:** Small–Medium (1–2 sessions) — `embed-stack.ts` is the
+template, and the config rewrite pattern (`just embed-up` patching `base_url`)
+already exists.
+
+**Status:** Not started. The compose service (`just judge-up`) is the shipped
+answer; this is the recorded alternative.
 
 ### Centralized Logging Infrastructure
 

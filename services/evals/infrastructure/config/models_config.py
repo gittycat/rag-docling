@@ -1,13 +1,17 @@
 """Model configuration management using Pydantic for type safety and validation."""
 
+import logging
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from infrastructure.settings import get_api_key_for_provider
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionBoundary(str, Enum):
@@ -314,6 +318,31 @@ DEFAULT_ALLOWED_JUDGE_BOUNDARIES: frozenset[ExecutionBoundary] = frozenset(
 )
 
 
+# Datasets whose questions and gold passages carry no confidential content, so a
+# judge that sees them learns nothing about the operator's corpus. `golden` is
+# deliberately absent: it is authored from the operator's own documents. Whether
+# an end_to_end run is also safe is a separate question — see
+# eval_index_is_isolated, because that tier queries the live index.
+DEFAULT_PUBLIC_DATASETS: frozenset[str] = frozenset(
+    {"ragbench", "qasper", "squad_v2", "hotpotqa", "msmarco"}
+)
+
+# Keys removed from `data_policy`, mapped to the migration message the operator
+# sees. Silently ignoring a key someone relies on for safety is worse than
+# refusing to boot.
+REMOVED_DATA_POLICY_KEYS: dict[str, str] = {
+    "eval_dataset_is_public": (
+        "data_policy.eval_dataset_is_public has been removed. One global boolean could "
+        "not see which dataset a run was using, so setting it true let a `golden` run "
+        "send the corpus verbatim to a third-party judge. Replace it with:\n"
+        "  data_policy.public_datasets       — dataset names whose questions and gold "
+        "passages hold no confidential content\n"
+        "  data_policy.eval_index_is_isolated — true only when an end_to_end run queries "
+        "an index holding nothing but the eval's own uploaded documents"
+    ),
+}
+
+
 class DataPolicyConfig(BaseModel):
     """Where this deployment's corpus content is allowed to be processed.
 
@@ -330,24 +359,42 @@ class DataPolicyConfig(BaseModel):
     allowed_judge_boundaries: set[ExecutionBoundary] = Field(
         default_factory=lambda: set(DEFAULT_ALLOWED_JUDGE_BOUNDARIES)
     )
-    # The per-run escape hatch, and the only one. Distinct from corpus_confidential:
-    # the production corpus can be confidential while the eval *dataset* is a public
-    # HuggingFace benchmark or synthetic data, in which case judge egress leaks
-    # nothing. This is what `pii.allow_cloud_judge` used to approximate.
-    eval_dataset_is_public: bool = False
+    # The escape hatch, per dataset rather than per deployment. Publicity is a
+    # property of the dataset being evaluated, not of the eval run as a whole.
+    public_datasets: set[str] = Field(
+        default_factory=lambda: set(DEFAULT_PUBLIC_DATASETS)
+    )
+    # A public dataset is not enough on its own in the end_to_end tier: there the
+    # runner queries the live rag-server index, which can return operator chunks
+    # whatever dataset supplied the question. True only when the index holds
+    # nothing but the eval's own uploaded documents.
+    eval_index_is_isolated: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key, message in REMOVED_DATA_POLICY_KEYS.items():
+                if key in data:
+                    raise ValueError(message)
+        return data
 
 
 def enforce_judge_boundary(
     boundary: ExecutionBoundary | None,
     policy: DataPolicyConfig,
     judge_label: str,
+    *,
+    eval_content_is_public: bool,
 ) -> None:
     """Refuse a judge endpoint that would take confidential corpus content out of bounds.
 
-    Called both at config load and at judge resolution, so the object the runtime
-    actually calls is the object that was checked.
+    `eval_content_is_public` is computed per run from the datasets and tier
+    (evals.config.eval_content_is_public) and fails closed when either is
+    unknown. Called at judge resolution, so the object the runtime actually calls
+    is the object that was checked.
     """
-    if not policy.corpus_confidential or policy.eval_dataset_is_public:
+    if not policy.corpus_confidential or eval_content_is_public:
         return
 
     allowed = ", ".join(sorted(b.value for b in policy.allowed_judge_boundaries)) or "(none)"
@@ -357,20 +404,33 @@ def enforce_judge_boundary(
             f"Judge '{judge_label}' declares no execution_boundary. An endpoint of "
             f"unknown boundary is treated as outside the trust boundary. Add "
             f"execution_boundary to its models.eval entry in config.yml (one of: "
-            f"{', '.join(b.value for b in ExecutionBoundary)}), or set "
-            f"data_policy.eval_dataset_is_public: true if the eval dataset is public "
-            f"or synthetic."
+            f"{', '.join(b.value for b in ExecutionBoundary)}).\n"
+            f"{_RESOLUTIONS}"
         )
 
     if boundary not in policy.allowed_judge_boundaries:
         raise ValueError(
             f"Judge '{judge_label}' runs at execution boundary '{boundary.value}', which "
             f"data_policy.allowed_judge_boundaries does not permit ({allowed}). Judge "
-            f"prompts carry retrieved chunks and answers verbatim and are never masked. "
-            f"Point active.eval at an in-boundary judge, or set "
-            f"data_policy.eval_dataset_is_public: true if the eval dataset holds no "
-            f"confidential content."
+            f"prompts carry retrieved chunks and answers verbatim and are never masked, "
+            f"and this run's datasets/tier are not declared public.\n"
+            f"{_RESOLUTIONS}"
         )
+
+
+# The honest ways out, named in every gate error. Ordered cheapest-to-verify last:
+# declaring the corpus non-confidential is the claim hardest to take back.
+_RESOLUTIONS = (
+    "Three ways to resolve this:\n"
+    "  1. point active.eval at an in-boundary judge (see the vllm entry in config.yml, "
+    "and `just judge-up`)\n"
+    "  2. set data_policy.eval_index_is_isolated: true, if the index this run queries "
+    "really holds only the eval's own documents\n"
+    "  3. set data_policy.corpus_confidential: false, if no document in the corpus is "
+    "confidential\n"
+    "Adding the dataset to data_policy.public_datasets is a fourth option, but only if "
+    "its questions and gold passages genuinely carry no confidential content."
+)
 
 
 class PiiConfig(BaseModel):
@@ -426,12 +486,26 @@ class ModelsConfig(BaseModel):
     data_policy: DataPolicyConfig = Field(default_factory=DataPolicyConfig)
 
     def validate_privacy_posture(self) -> None:
-        """Refuse to judge a confidential corpus outside the permitted boundaries."""
-        enforce_judge_boundary(
-            self.eval.execution_boundary,
-            self.data_policy,
-            f"{self.eval.provider}/{self.eval.model}",
-        )
+        """Structural half of the judge gate, run at config load.
+
+        Which datasets and tier a run uses is unknowable here, and that is what
+        decides whether judge egress is acceptable — so the allow-list decision
+        lives at judge resolution (evals.config.resolve_judge_config). What is
+        knowable at load is whether the configured judge declares where it runs
+        at all, and an endpoint of unknown boundary is never acceptable.
+        """
+        if not self.data_policy.corpus_confidential:
+            return
+        if self.eval.execution_boundary is None:
+            raise ValueError(
+                f"Judge '{self.eval.provider}/{self.eval.model}' declares no "
+                f"execution_boundary. An endpoint of unknown boundary is treated as "
+                f"outside the trust boundary. Add execution_boundary to its models.eval "
+                f"entry in config.yml (one of: "
+                f"{', '.join(b.value for b in ExecutionBoundary)}), or set "
+                f"data_policy.corpus_confidential: false if no document in the corpus "
+                f"is confidential."
+            )
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> "ModelsConfig":
@@ -469,6 +543,20 @@ class ModelsConfig(BaseModel):
                     api_key = get_api_key_for_provider(provider)
                     if api_key:
                         resolved_data[key]["api_key"] = api_key
+
+        # Ephemeral compose stacks mount config.yml read-only and cannot edit it,
+        # so the isolation claim has an env lever. Deliberately one-way: it can
+        # only assert isolation, never widen the allow-list or turn off
+        # corpus_confidential, and it says so in the log.
+        if os.environ.get("EVAL_INDEX_IS_ISOLATED", "").lower() in ("1", "true", "yes"):
+            resolved_data.setdefault("data_policy", {})
+            resolved_data["data_policy"]["eval_index_is_isolated"] = True
+            logger.warning(
+                "EVAL_INDEX_IS_ISOLATED is set: judge egress will be permitted for "
+                "public datasets in the end_to_end tier. This asserts the index holds "
+                "only the eval's own documents. Unset it for any run against a "
+                "persistent index."
+            )
 
         # Create and validate config
         config = cls(**resolved_data)

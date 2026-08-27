@@ -108,3 +108,62 @@ def test_dimension_match_skips_when_embedding_model_is_unreachable():
     embed_model = _mock_embed_model(side_effect=ConnectionError("tei unreachable"))
 
     _run_check_with(config, embed_model)  # no error, logs a warning instead
+
+
+# ── Chunking reaches the splitter from config, not from a literal ────────────
+
+
+def test_configured_chunk_size_reaches_the_llamaindex_settings():
+    """`Settings.chunk_size = 500` was a literal with no relationship to the
+    SentenceSplitter's own literal or to what /metrics/retrieval reported.
+
+    Settings is stubbed rather than driven for real: the assertion is about which
+    values initialize_settings() writes, not about LlamaIndex's own validation of
+    an embedding or LLM object.
+    """
+    from infrastructure.config.models_config import ChunkingConfig
+
+    config = create_mock_models_config()
+    config.chunking = ChunkingConfig(chunk_size=321, chunk_overlap=21)
+    stub_settings = MagicMock()
+
+    with patch(
+        "infrastructure.config.models_config.get_models_config", return_value=config
+    ), patch("core.config.Settings", stub_settings), patch(
+        "core.config.check_embedding_endpoint_reachable"
+    ), patch("core.config.check_embedding_dimension_match"), patch(
+        "infrastructure.llm.embeddings.get_embedding_function", return_value=MagicMock()
+    ), patch(
+        "infrastructure.llm.factory.get_llm_client", return_value=MagicMock()
+    ):
+        from core.config import initialize_settings
+
+        initialize_settings()
+
+    assert stub_settings.chunk_size == 321
+    assert stub_settings.chunk_overlap == 21
+
+
+def test_configured_chunk_size_reaches_the_sentence_splitter():
+    """The value the pipeline actually splits with must be the configured one —
+    `chunk_overlap=50` used to be typed directly into the SentenceSplitter call."""
+    from infrastructure.config.models_config import ChunkingConfig
+
+    config = create_mock_models_config()
+    config.chunking = ChunkingConfig(chunk_size=321, chunk_overlap=21)
+
+    with patch("pipelines.ingestion.get_models_config", return_value=config):
+        from pipelines.ingestion import get_chunking_config
+
+        assert get_chunking_config() == {"chunk_size": 321, "chunk_overlap": 21}
+
+
+def test_the_chunker_for_an_extension_is_named_not_guessed():
+    """/metrics/retrieval and chunk_document() must agree on which path a file
+    takes; the Docling path has no size or overlap to report."""
+    from pipelines.ingestion import chunker_for_extension
+
+    assert chunker_for_extension(".md") == "sentence_splitter"
+    assert chunker_for_extension(".txt") == "sentence_splitter"
+    assert chunker_for_extension(".pdf") == "docling"
+    assert chunker_for_extension(".docx") == "docling"

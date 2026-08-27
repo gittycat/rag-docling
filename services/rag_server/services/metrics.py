@@ -16,6 +16,7 @@ from schemas.metrics import (
     ModelInfo,
     ModelSize,
     ModelsConfig,
+    ChunkerInfo,
     VectorSearchConfig,
     BM25Config,
     HybridSearchConfig,
@@ -29,7 +30,12 @@ from infrastructure.config.models_config import (
     effective_reranker_top_n,
 )
 from pipelines.inference import get_inference_config
-from pipelines.ingestion import get_ingestion_config
+from pipelines.ingestion import (
+    SIMPLE_TEXT_EXTENSIONS,
+    SUPPORTED_EXTENSIONS,
+    get_chunking_config,
+    get_ingestion_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -226,11 +232,32 @@ def get_retrieval_config() -> RetrievalConfig:
     """Get complete retrieval pipeline configuration."""
     inference_config = get_inference_config()
     ingestion_config = get_ingestion_config()
+    chunking = get_chunking_config()
+
+    # Both chunkers are reported, each with only the parameters it has. The
+    # SentenceSplitter numbers used to be literals here, unrelated to the ones
+    # the pipeline used, and the eval runner recorded them as measured config.
+    chunkers = [
+        ChunkerInfo(
+            name="sentence_splitter",
+            applies_to=sorted(SIMPLE_TEXT_EXTENSIONS),
+            chunk_size=chunking["chunk_size"],
+            chunk_overlap=chunking["chunk_overlap"],
+        ),
+        ChunkerInfo(
+            name="docling",
+            applies_to=sorted(SUPPORTED_EXTENSIONS - SIMPLE_TEXT_EXTENSIONS),
+            # Docling splits on document structure; it has no size or overlap.
+            chunk_size=None,
+            chunk_overlap=None,
+        ),
+    ]
 
     vector_config = VectorSearchConfig(
         enabled=True,
-        chunk_size=500,
-        chunk_overlap=50,
+        chunkers=chunkers,
+        chunk_size=chunking["chunk_size"],
+        chunk_overlap=chunking["chunk_overlap"],
         vector_store="pgvector",
         index_type="diskann",
         table_name="document_chunks",

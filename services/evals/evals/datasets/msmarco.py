@@ -8,12 +8,12 @@ Dataset: https://huggingface.co/datasets/microsoft/ms_marco
 """
 
 import logging
-import random
 from typing import Any
 
 from datasets import load_dataset
 
 from evals.datasets.base import BaseDatasetLoader
+from evals.datasets.revisions import HF_REVISIONS
 from evals.schemas import (
     EvalDataset,
     EvalQuestion,
@@ -21,6 +21,8 @@ from evals.schemas import (
     QueryType,
     Difficulty,
 )
+
+HF_REPO_ID = "microsoft/ms_marco"
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,9 @@ class MSMarcoLoader(BaseDatasetLoader):
     def domains(self) -> list[str]:
         return ["general", "web"]
 
+    def fingerprint(self) -> dict[str, Any]:
+        return {"revision": HF_REVISIONS.get(HF_REPO_ID)}
+
     def load(
         self,
         split: str = "test",
@@ -68,51 +73,53 @@ class MSMarcoLoader(BaseDatasetLoader):
         """
         logger.info(f"Loading MS MARCO dataset (split={split}, max_samples={max_samples})")
 
-        if seed is not None:
-            random.seed(seed)
-
-        # MS MARCO has different configs - we use v2.1 for QA
+        # MS MARCO has different configs - we use v2.1 for QA by default
         hf_split = "validation" if split in ("test", "validation", "val") else "train"
 
         try:
             dataset = load_dataset(
                 "microsoft/ms_marco",
-                "v2.1",
+                version,
                 split=hf_split,
+                revision=HF_REVISIONS.get(HF_REPO_ID),
             )
+            loaded_version = version
         except Exception as e:
-            logger.warning(f"Failed to load MS MARCO v2.1, trying v1.1: {e}")
+            fallback_version = "v1.1"
+            logger.warning(f"Failed to load MS MARCO {version}, trying {fallback_version}: {e}")
             dataset = load_dataset(
                 "microsoft/ms_marco",
-                "v1.1",
+                fallback_version,
                 split=hf_split,
+                revision=HF_REVISIONS.get(HF_REPO_ID),
             )
+            loaded_version = fallback_version
 
-        # Convert items
+        # Iterate a seeded permutation of the full split (not just a prefix)
+        # so the sample is unbiased and tolerates per-item conversion
+        # failures — see BaseDatasetLoader._sample_order.
         questions: list[EvalQuestion] = []
-        for idx, item in enumerate(dataset):
-            question = self._convert_item(item, idx)
+        for idx in self._sample_order(len(dataset), max_samples, seed):
+            question = self._convert_item(dataset[idx], idx)
             if question:
                 questions.append(question)
 
-            # Early exit
+            # Stop once we have enough
             if max_samples and len(questions) >= max_samples:
                 break
-
-        # Final sampling
-        if max_samples and len(questions) > max_samples:
-            questions = random.sample(questions, max_samples)
 
         logger.info(f"Loaded {len(questions)} questions from MS MARCO")
 
         return EvalDataset(
             name=self.name,
-            version=version,
+            version=loaded_version,
             questions=questions,
             description=self.description,
             source_url=self.source_url,
             domains=self.domains,
-            metadata={"version": version},
+            # Report the version actually loaded, not just the one requested —
+            # the v2.1 -> v1.1 fallback above used to leave this claiming v2.1.
+            metadata={"version": loaded_version, "requested_version": version},
         )
 
     def _convert_item(

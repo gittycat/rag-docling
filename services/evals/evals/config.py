@@ -3,8 +3,9 @@
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -20,6 +21,9 @@ from evals.pricing import (  # noqa: F401
     get_model_cost,
     resolve_rates,
 )
+
+if TYPE_CHECKING:
+    from infrastructure.config.models_config import DataPolicyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,27 @@ DATASET_TIER_SUPPORT: dict[str, list[EvalTier]] = {
     DatasetName.HOTPOTQA:  [EvalTier.END_TO_END],
     DatasetName.MSMARCO:   [EvalTier.END_TO_END],
 }
+
+
+def eval_content_is_public(
+    datasets: "Sequence[DatasetName] | None",
+    tier: EvalTier | None,
+    policy: "DataPolicyConfig",
+) -> bool:
+    """Whether this run's content is public enough for an out-of-boundary judge.
+
+    Fails closed: an unknown dataset or tier is not public. Every dataset must be
+    public — a mixed run is as confidential as its most confidential member — and
+    in the end_to_end tier a public dataset is still not enough, because there the
+    runner queries the live index and the judge sees whatever it returns.
+    """
+    if not datasets or tier is None:
+        return False
+    if not all(d.value in policy.public_datasets for d in datasets):
+        return False
+    if tier is EvalTier.END_TO_END and not policy.eval_index_is_isolated:
+        return False
+    return True
 
 
 # Dataset -> Primary evaluation aspect mapping
@@ -169,13 +194,20 @@ class JudgeConfig:
     execution_boundary: str | None = None
 
 
-def resolve_judge_config(enabled: bool = True) -> JudgeConfig:
+def resolve_judge_config(
+    enabled: bool = True,
+    datasets: Sequence[DatasetName] | None = None,
+    tier: EvalTier | None = None,
+) -> JudgeConfig:
     """Resolve the judge from `active.eval` in config.yml.
 
     The single source of judge identity. Raises rather than falling back: a judge
     that cannot be resolved must stop the run, not quietly become someone else's
     API. Re-validates the resolved object against the data policy so the thing
     the runtime calls is the thing that was checked.
+
+    `datasets` and `tier` decide whether this run's content is public; omitting
+    them fails closed, which is why every caller that knows them passes them.
     """
     from infrastructure.config.models_config import (
         enforce_judge_boundary,
@@ -189,6 +221,9 @@ def resolve_judge_config(enabled: bool = True) -> JudgeConfig:
         eval_config.execution_boundary,
         models_config.data_policy,
         f"{eval_config.provider}/{eval_config.model}",
+        eval_content_is_public=eval_content_is_public(
+            datasets, tier, models_config.data_policy
+        ),
     )
 
     return JudgeConfig(
@@ -227,7 +262,9 @@ class EvalConfig:
     )
     samples_per_dataset: int | None = 100
     metrics: MetricConfig = field(default_factory=MetricConfig)
-    judge: JudgeConfig = field(default_factory=resolve_judge_config)
+    # Resolved in __post_init__, once datasets and tier are normalized — the gate
+    # needs both, and a default_factory runs before either exists.
+    judge: JudgeConfig | None = None
     scoring: ScoringConfig = field(default_factory=ScoringConfig.from_models_config)
     rag_server_url: str = "http://localhost:8001"
     runs_dir: Path = field(default_factory=lambda: Path("data/eval_runs"))
@@ -269,6 +306,24 @@ class EvalConfig:
                     f"Dataset '{ds.value}' does not support tier '{self.tier.value}'. "
                     f"Supported tiers: {supported_names}"
                 )
+        # Resolve the judge last: the boundary gate needs the normalized datasets
+        # and tier, so the default path is dataset-aware rather than fail-closed
+        # by accident.
+        if self.judge is None:
+            self.judge = resolve_judge_config(datasets=self.datasets, tier=self.tier)
+
+    @property
+    def judge_gate_basis(self) -> dict[str, Any]:
+        """What the judge gate concluded for this run, for the run record."""
+        from infrastructure.config.models_config import get_models_config
+
+        return {
+            "datasets": [d.value for d in self.datasets],
+            "tier": self.tier.value,
+            "eval_content_is_public": eval_content_is_public(
+                self.datasets, self.tier, get_models_config().data_policy
+            ),
+        }
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> "EvalConfig":

@@ -8,12 +8,12 @@ Dataset: https://huggingface.co/datasets/qasper
 """
 
 import logging
-import random
 from typing import Any
 
 from datasets import load_dataset
 
 from evals.datasets.base import BaseDatasetLoader
+from evals.datasets.revisions import HF_REVISIONS
 from evals.schemas import (
     EvalDataset,
     EvalQuestion,
@@ -21,6 +21,8 @@ from evals.schemas import (
     QueryType,
     Difficulty,
 )
+
+HF_REPO_ID = "allenai/qasper"
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,9 @@ class QasperLoader(BaseDatasetLoader):
     def domains(self) -> list[str]:
         return ["scientific"]
 
+    def fingerprint(self) -> dict[str, Any]:
+        return {"revision": HF_REVISIONS.get(HF_REPO_ID)}
+
     def load(
         self,
         split: str = "test",
@@ -66,9 +71,6 @@ class QasperLoader(BaseDatasetLoader):
         """
         logger.info(f"Loading Qasper dataset (split={split}, max_samples={max_samples})")
 
-        if seed is not None:
-            random.seed(seed)
-
         # Load from HuggingFace
         # Qasper uses 'validation' and 'test' splits
         if split == "test":
@@ -79,24 +81,31 @@ class QasperLoader(BaseDatasetLoader):
             hf_split = "train"
 
         dataset = load_dataset(
-            "allenai/qasper", split=hf_split, revision="refs/convert/parquet"
+            "allenai/qasper", split=hf_split, revision=HF_REVISIONS.get(HF_REPO_ID)
         )
 
+        rng = self._rng(seed)
+
+        # Visit papers in a seeded permutation (not just the first N) so the
+        # papers we actually get questions from are an unbiased subset of
+        # the whole split, not whichever happened to come first.
+        paper_order = list(range(len(dataset)))
+        if max_samples:
+            rng.shuffle(paper_order)
+
         questions: list[EvalQuestion] = []
-        question_idx = 0
-
-        for paper_idx, paper in enumerate(dataset):
-            paper_questions = self._extract_questions_from_paper(paper, paper_idx)
+        for paper_idx in paper_order:
+            paper_questions = self._extract_questions_from_paper(dataset[paper_idx], paper_idx)
             questions.extend(paper_questions)
-            question_idx += len(paper_questions)
 
-            # Early exit if we have enough
+            # Early exit once we have enough (a paper may overshoot since it
+            # contributes all of its questions at once)
             if max_samples and len(questions) >= max_samples:
                 break
 
-        # Sample if we have more than needed
+        # Trim the overshoot from the last paper down to exactly max_samples
         if max_samples and len(questions) > max_samples:
-            questions = random.sample(questions, max_samples)
+            questions = rng.sample(questions, max_samples)
 
         logger.info(f"Loaded {len(questions)} questions from Qasper")
 

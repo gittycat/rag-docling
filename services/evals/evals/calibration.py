@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from evals.config import JudgeConfig, resolve_judge_config
+from evals.config import DatasetName, EvalTier, JudgeConfig, resolve_judge_config
 from evals.judges.llm_judge import LLMJudge
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,14 @@ async def calibrate_judge(
         concurrency: Max concurrent judge calls
         progress_callback: Called with (completed_count) after each item
     """
-    judge = LLMJudge(judge_config or resolve_judge_config())
+    # Calibration scores RAGBench reference responses against RAGBench TRACe
+    # labels — public content, and no index is queried.
+    judge = LLMJudge(
+        judge_config
+        or resolve_judge_config(
+            datasets=[DatasetName.RAGBENCH], tier=EvalTier.GENERATION
+        )
+    )
     sem = asyncio.Semaphore(concurrency)
     completed = 0
     dropped_judge_failures = 0

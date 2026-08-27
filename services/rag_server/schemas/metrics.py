@@ -11,7 +11,7 @@ which is the only thing that builds one.
 """
 
 from datetime import UTC, datetime
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from infrastructure.config.models_config import ExecutionBoundary
@@ -67,11 +67,26 @@ class ModelsConfig(BaseModel):
 # Retrieval Configuration Models
 # ============================================================================
 
+class ChunkerInfo(BaseModel):
+    """One chunking path and the parameters it actually uses.
+
+    Two paths exist and they are not interchangeable: SentenceSplitter takes a
+    size and an overlap, Docling splits on document structure and takes neither.
+    Reporting a size for the Docling path would be inventing a number that path
+    never used — which is the defect this field exists to stop.
+    """
+    name: str = Field(..., description="Chunker identity: sentence_splitter or docling")
+    applies_to: List[str] = Field(..., description="File extensions routed to this chunker")
+    chunk_size: Optional[int] = Field(None, description="Chunk size in tokens; null when the chunker has no such parameter")
+    chunk_overlap: Optional[int] = Field(None, description="Chunk overlap in tokens; null when the chunker has no such parameter")
+
+
 class VectorSearchConfig(BaseModel):
     """Vector search configuration."""
     enabled: bool = Field(True, description="Vector search is always enabled")
-    chunk_size: int = Field(..., description="Chunk size in tokens")
-    chunk_overlap: int = Field(..., description="Chunk overlap in tokens")
+    chunkers: List[ChunkerInfo] = Field(default_factory=list, description="Every chunking path and its parameters")
+    chunk_size: Optional[int] = Field(None, description="Chunk size for the SentenceSplitter path; null when unknown")
+    chunk_overlap: Optional[int] = Field(None, description="Chunk overlap for the SentenceSplitter path; null when unknown")
     vector_store: str = Field("pgvector", description="Vector database used")
     index_type: str = Field("diskann", description="Vector index type (pgvectorscale StreamingDiskANN)")
     table_name: str = Field("document_chunks", description="Table holding chunk embeddings")

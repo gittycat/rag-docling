@@ -136,7 +136,9 @@ class JobManager:
             rag_server_url=rag_server_url,
             runs_dir=self.runs_dir,
             tier=eval_tier,
-            judge=resolve_judge_config(enabled=judge_enabled),
+            judge=resolve_judge_config(
+                enabled=judge_enabled, datasets=dataset_names, tier=eval_tier
+            ),
             metrics=MetricConfig(groundedness=groundedness),
         )
         pending = _PendingJob(

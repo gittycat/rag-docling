@@ -84,6 +84,7 @@ def check_embedding_dimension_match():
 
 def initialize_settings():
     """Initialize global LlamaIndex Settings"""
+    from infrastructure.config.models_config import get_models_config
     from infrastructure.llm.embeddings import get_embedding_function
     from infrastructure.llm.factory import get_llm_client
 
@@ -100,8 +101,9 @@ def initialize_settings():
     Settings.llm = get_llm_client()
     logger.info("[SETTINGS] LLM configured")
 
-    Settings.chunk_size = 500
-    Settings.chunk_overlap = 50
+    chunking = get_models_config().chunking
+    Settings.chunk_size = chunking.chunk_size
+    Settings.chunk_overlap = chunking.chunk_overlap
     logger.info(f"[SETTINGS] Chunk settings: size={Settings.chunk_size}, overlap={Settings.chunk_overlap}")
 
     logger.info("[SETTINGS] Global Settings initialization complete")

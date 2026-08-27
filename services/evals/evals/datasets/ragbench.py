@@ -22,6 +22,7 @@ from typing import Any
 from datasets import load_dataset
 
 from evals.datasets.base import BaseDatasetLoader
+from evals.datasets.revisions import HF_REVISIONS
 from evals.schemas import (
     EvalDataset,
     EvalQuestion,
@@ -109,6 +110,12 @@ class RAGBenchLoader(BaseDatasetLoader):
     def domains(self) -> list[str]:
         return list(set(RAGBENCH_SUBSETS.values()))
 
+    def fingerprint(self, subsets: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "revision": HF_REVISIONS.get(HF_REPO_ID),
+            "subsets": sorted(subsets or DEFAULT_SUBSETS),
+        }
+
     def load(
         self,
         split: str = "test",
@@ -126,11 +133,11 @@ class RAGBenchLoader(BaseDatasetLoader):
         """
         logger.info(f"Loading RAGBench dataset (split={split}, max_samples={max_samples})")
 
-        if seed is not None:
-            random.seed(seed)
+        rng = self._rng(seed)
 
         target_subsets = subsets or DEFAULT_SUBSETS
         questions: list[EvalQuestion] = []
+        failed_subsets: list[str] = []
 
         # Balanced sampling across subsets
         samples_per_subset = None
@@ -143,15 +150,20 @@ class RAGBenchLoader(BaseDatasetLoader):
                     subset_name,
                     split=split,
                     max_samples=samples_per_subset,
+                    rng=rng,
                 )
                 questions.extend(subset_questions)
                 logger.info(f"Loaded {len(subset_questions)} questions from {subset_name}")
             except Exception as e:
+                # Recorded in metadata rather than raised: a run over several
+                # subsets should still surface what it got, but the caller
+                # must be able to see that a subset silently came up short.
                 logger.warning(f"Failed to load subset {subset_name}: {e}")
+                failed_subsets.append(subset_name)
                 continue
 
         if max_samples and len(questions) > max_samples:
-            questions = random.sample(questions, max_samples)
+            questions = rng.sample(questions, max_samples)
 
         logger.info(f"Loaded {len(questions)} total questions from RAGBench")
 
@@ -162,7 +174,7 @@ class RAGBenchLoader(BaseDatasetLoader):
             description=self.description,
             source_url=self.source_url,
             domains=self.domains,
-            metadata={"subsets_loaded": target_subsets},
+            metadata={"subsets_loaded": target_subsets, "subsets_failed": failed_subsets},
         )
 
     def load_raw_items(
@@ -173,8 +185,7 @@ class RAGBenchLoader(BaseDatasetLoader):
         seed: int | None = None,
     ) -> list[dict[str, Any]]:
         """Load raw RAGBench items (with full TRACe annotations) for judge calibration."""
-        if seed is not None:
-            random.seed(seed)
+        rng = self._rng(seed)
 
         target_subsets = subsets or DEFAULT_SUBSETS
         per_subset = None
@@ -182,22 +193,34 @@ class RAGBenchLoader(BaseDatasetLoader):
             per_subset = max(1, max_samples // len(target_subsets))
 
         items: list[dict[str, Any]] = []
+        failed_subsets: list[str] = []
         for subset_name in target_subsets:
             try:
-                dataset = load_dataset(HF_REPO_ID, subset_name, split=split)
+                dataset = load_dataset(
+                    HF_REPO_ID, subset_name, split=split, revision=HF_REVISIONS.get(HF_REPO_ID)
+                )
             except Exception as e:
                 logger.warning(f"Failed to load subset {subset_name}: {e}")
+                failed_subsets.append(subset_name)
                 continue
             indices = range(len(dataset))
             if per_subset and len(dataset) > per_subset:
-                indices = random.sample(range(len(dataset)), per_subset)
+                indices = rng.sample(range(len(dataset)), per_subset)
             for i in indices:
                 item = dict(dataset[i])
                 item["subset"] = subset_name
                 items.append(item)
 
+        if failed_subsets:
+            # load_raw_items returns a plain list (no metadata field to carry
+            # this in), so surface it loudly rather than only in the log —
+            # a calibration run over a partially-missing subset mix is easy
+            # to misread as "clean" otherwise.
+            logger.warning(f"[RAGBENCH] Subsets failed to load and were skipped: {failed_subsets}")
+            print(f"\nWARNING: RAGBench subsets failed to load and were skipped: {failed_subsets}\n")
+
         if max_samples and len(items) > max_samples:
-            items = random.sample(items, max_samples)
+            items = rng.sample(items, max_samples)
         return items
 
     def _load_subset(
@@ -205,12 +228,13 @@ class RAGBenchLoader(BaseDatasetLoader):
         subset_name: str,
         split: str,
         max_samples: int | None,
+        rng: random.Random,
     ) -> list[EvalQuestion]:
         """Load a single RAGBench subset."""
-        dataset = load_dataset(HF_REPO_ID, subset_name, split=split)
+        dataset = load_dataset(HF_REPO_ID, subset_name, split=split, revision=HF_REVISIONS.get(HF_REPO_ID))
 
         if max_samples and len(dataset) > max_samples:
-            indices = random.sample(range(len(dataset)), max_samples)
+            indices = rng.sample(range(len(dataset)), max_samples)
             dataset = dataset.select(indices)
 
         domain = RAGBENCH_SUBSETS.get(subset_name, "general")

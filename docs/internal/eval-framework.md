@@ -159,6 +159,7 @@ Cases that produce it:
 | Citation metrics, no gold passages | `1.0` | A golden-set run displayed perfect citation scores that measured nothing |
 | Groundedness metrics on an abstention | n/a (new) | A refusal makes no claims; scoring it would punish what the abstention metrics reward |
 | Claim-to-citation metrics with no inline citations | n/a (new) | Under `citation_scope: retrieved` there are no citation links to check, which is not the same as every link being wrong |
+| `uncited_claim_rate` when no claim carries a marker | `1.0` | Under `citation_scope: retrieved` the model is never asked for markers, so *every* answer scored a constant 1.0 — a property of the configuration, not of the answer. `explicit` is now the shipped default so the metric is computable at all |
 | Retrieval metrics, no gold passages | `0.0` | A dataset without retrieval annotations looked like a retrieval regression |
 | `abstention_false_positive_rate` on an unanswerable question | `0.0` | Counted as "did not falsely abstain", pulling the rate down by however many unanswerable questions happened to be present |
 | `abstention_false_negative_rate` on an answerable question | `0.0` | Same, mirrored |
@@ -167,6 +168,25 @@ Cases that produce it:
 `BaseMetric.compute_batch` excludes `None` results from the average and counts
 them under `details.not_applicable_count`, so `sample_size` reflects what was
 actually measured.
+
+A group that is switched off leaves no `None` behind to explain itself — it leaves
+nothing at all, which reads as "these metrics do not exist". `Scorecard.notes`
+carries that fact instead: the runner records a note when the `groundedness` group
+is disabled (it is opt-in, and costs a judge call per claim), and another when the
+server's `citation_scope` would make the citation-link metrics undefined. Notes
+are printed by the CLI summary, serialized with the run, restored on reload, and
+rendered in the exported report.
+
+### A metric name is a claim about what was measured
+
+`answer_completeness` on the dashboard was `lookup.get("answer_correctness")` —
+correctness under a name nothing measured. Completeness (did the answer leave
+things out?) and correctness (does it agree with the reference?) are different
+failure modes, and an answer can be correct as far as it goes and still be
+incomplete. The dashboard now reads `answer_completeness` from a metric of that
+name, which is `None` until one exists, and exposes `answer_correctness` under its
+own name. Reporting a real number under the wrong name is worse than reporting
+nothing: `None` is legible as "not measured", while a plausible number is not.
 
 ### Judge tokens are part of the cost
 
@@ -339,12 +359,53 @@ Calibration runs on RAGBench items with TRACe fields, dropping any item where a
 judge call fails outright rather than scoring it, and reports the drop count
 alongside the aggregate metrics so a noisy run is visible.
 
+### The egress gate is per run, not per deployment
+
+`resolve_judge_config()` takes the run's `datasets` and `tier` and refuses a judge
+whose `execution_boundary` is outside `data_policy.allowed_judge_boundaries`
+unless this run's content is public. Publicity is computed by
+`eval_content_is_public()` and fails closed on every axis: unknown datasets or
+tier are not public; *every* dataset must be in `data_policy.public_datasets`, so
+a mixed run is as confidential as its most confidential member; and the
+`end_to_end` tier additionally requires `data_policy.eval_index_is_isolated`,
+because that tier queries the live index and the judge sees whatever comes back
+regardless of which dataset asked.
+
+`EvalConfig` resolves its judge in `__post_init__`, after datasets and tier are
+normalized, so the default path is dataset-aware rather than fail-closed by
+accident. Callers that omit both — a metric constructed outside a run — fail
+closed by design. Config load runs only the structural half of the check (a judge
+must declare a boundary at all); the allow-list needs the run. Each completed run
+records `metadata.judge_gate_basis` so the conclusion can be audited afterwards.
+
+See [pii-masking.md](pii-masking.md#the-judge-gate-is-not-a-pii-control) for the
+policy model and [design-decisions.md](design-decisions.md) for why the earlier
+global `eval_dataset_is_public` flag was a defect rather than a simplification.
+
+### Run the judge out of band when it shares a GPU (A8.1)
+
+`just judge-up` starts a self-hosted vLLM judge (profile-gated, CUDA only), which
+is what makes judged metrics possible on a confidential corpus at all. **If that
+judge shares a GPU with the application, judge evaluation must run after the
+system traces are captured.** A judge competing for the same device inflates the
+latency and cost numbers the whole exercise exists to produce — the measurement
+changes the thing being measured. Nothing in code enforces this while the judge is
+a separate service; it is an operator rule. `docs/ROADMAP.md` records the burst-GPU
+CDK alternative, which sidesteps the contention entirely at the cost of AWS spend.
+
 ## Persistence
 
 There is no database backing for eval runs, results, or judge calls. Everything is
 flat JSON files on disk:
 
-- Each completed run is written as its own timestamped JSON file.
+- Each completed run is written as its own timestamped JSON file, carrying a
+  `ConfigSnapshot`. Alongside the retrieval axes it records `chunk_size`,
+  `chunk_overlap` and `chunker`, all `| None`. These come from
+  `GET /metrics/retrieval` and follow the same discipline as the rest of the
+  snapshot: `None` means "the server did not report it", never a default. The
+  `chunker` field names the path (`sentence_splitter`, `docling`, or both joined)
+  because Docling splits on document structure and has no size or overlap — a
+  number reported for it would be invented.
 - The dataset cache and calibration results are each their own JSON files under
   separate data directories.
 - The API's job manager keeps an in-memory index of past runs, but this index is

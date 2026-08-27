@@ -2,6 +2,19 @@ import pytest
 from pydantic import SecretStr
 
 
+def stub_judge(enabled: bool = False):
+    """A judge for tests that build an EvalConfig for reasons unrelated to judging.
+
+    Passing one skips judge resolution, and with it the data-policy egress gate.
+    That gate is exercised deliberately in test_privacy_posture.py and
+    test_judge_config_resolution.py; every scoring, pricing and snapshot test
+    should not have to declare a gate-passing run to construct a config.
+    """
+    from evals.config import JudgeConfig
+
+    return JudgeConfig(provider="openai", model="gpt-5.2", enabled=enabled)
+
+
 class _TestSettings:
     OPENAI_API_KEY = SecretStr("test-openai-key")
     ANTHROPIC_API_KEY = SecretStr("test-anthropic-key")

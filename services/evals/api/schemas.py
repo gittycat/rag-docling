@@ -57,6 +57,9 @@ class QueuedJob(BaseModel):
 class DashboardMetrics(BaseModel):
     retrieval_relevance: float | None = None
     faithfulness: float | None = None
+    answer_correctness: float | None = None
+    # None until a real completeness metric exists — never aliased to
+    # answer_correctness, which measures a different failure mode.
     answer_completeness: float | None = None
     answer_relevance: float | None = None
     latency_p50_seconds: float | None = None

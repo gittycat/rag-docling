@@ -32,7 +32,11 @@ def compute_dashboard_metrics(scorecard: dict | None, tier: str = "") -> Dashboa
             retrieval_relevance = sum(vals) / len(vals)
 
     faithfulness = lookup.get("faithfulness")
-    answer_completeness = lookup.get("answer_correctness")
+    answer_correctness = lookup.get("answer_correctness")
+    # No completeness metric exists yet — this stays None until one is built rather
+    # than aliasing to answer_correctness, which measures a different failure mode
+    # (an answer can be correct as far as it goes yet leave things out).
+    answer_completeness = lookup.get("answer_completeness")
     answer_relevance = lookup.get("answer_relevancy")
 
     latency_p50 = lookup.get("latency_p50_ms")
@@ -48,6 +52,7 @@ def compute_dashboard_metrics(scorecard: dict | None, tier: str = "") -> Dashboa
     return DashboardMetrics(
         retrieval_relevance=retrieval_relevance,
         faithfulness=faithfulness,
+        answer_correctness=answer_correctness,
         answer_completeness=answer_completeness,
         answer_relevance=answer_relevance,
         latency_p50_seconds=latency_p50 / 1000 if latency_p50 is not None else None,

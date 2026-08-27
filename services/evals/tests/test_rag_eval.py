@@ -11,6 +11,7 @@ Run with: pytest tests/test_rag_eval.py --run-eval
 """
 
 import pytest
+from conftest import stub_judge
 from pathlib import Path
 import sys
 
@@ -480,7 +481,8 @@ class TestEvalTierConfig:
         """EvalConfig should default to END_TO_END tier."""
         from evals.config import EvalConfig, EvalTier
 
-        config = EvalConfig()
+        # judge supplied so this asserts the tier default, not the egress gate
+        config = EvalConfig(judge=stub_judge())
         assert config.tier == EvalTier.END_TO_END
 
     def test_eval_tier_generation_valid_for_ragbench(self):
@@ -515,7 +517,7 @@ class TestEvalTierConfig:
         """cleanup_on_failure should default to True."""
         from evals.config import EvalConfig
 
-        config = EvalConfig()
+        config = EvalConfig(judge=stub_judge())
         assert config.cleanup_on_failure is True
 
     def test_tier_from_string(self):

@@ -143,6 +143,57 @@ services:
       - private
       - public
 
+  # Self-hosted judge. Profile-gated, so a bare `just up` never starts it — use
+  # `just judge-up`. It exists because judge prompts embed retrieved chunks and
+  # generated answers verbatim and are never masked, so evaluating a
+  # confidential corpus at a third-party endpoint is refused by the data-policy
+  # gate (config.yml `data_policy`). An in-boundary judge is what makes those
+  # runs possible at all, rather than merely permitted.
+  #
+  # CUDA only. vLLM has no usable darwin/arm64 path, so on a Mac this service
+  # fails to start rather than quietly running somewhere unintended — that is
+  # the intended behaviour, not a bug to work around.
+  vllm:
+    profiles: ["judge"]
+    image: vllm/vllm-openai:v0.11.0
+    restart: unless-stopped
+    # Qwen3-32B at 4-bit AWQ needs ~24GB of VRAM (a standard figure for the
+    # quantization, not measured here). Override JUDGE_MODEL for a smaller
+    # model on constrained hardware — a judge that does not fit is a judge that
+    # scores nothing.
+    command:
+      - "--model"
+      - "${JUDGE_MODEL:-Qwen/Qwen3-32B-AWQ}"
+      - "--port"
+      - "8000"
+      - "--served-model-name"
+      - "${JUDGE_MODEL:-Qwen/Qwen3-32B-AWQ}"
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      # Same reasoning as tei_data: keep the weights across container recreates.
+      - vllm_data:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      # A cold weights volume pulls tens of GB before the server binds.
+      start_period: 900s
+    networks:
+      # No published ports: the judge is reachable only from inside the compose
+      # network, which is the whole point of it being in-boundary. `public` is
+      # for the cold-start weights pull, same as tei.
+      - private
+      - public
+
   # Task Worker - Async document processing via SKIP LOCKED
   task-worker:
     build:
@@ -235,6 +286,8 @@ volumes:
   docs_repo:
     driver: local
   tei_data:
+    driver: local
+  vllm_data:
     driver: local
 
 secrets:

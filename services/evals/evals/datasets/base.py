@@ -1,5 +1,6 @@
 """Base class for dataset loaders."""
 
+import random
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -76,6 +77,24 @@ class BaseDatasetLoader(ABC):
             "domains": self.domains,
         }
 
+    def fingerprint(self) -> dict[str, Any]:
+        """Cache-key inputs beyond (name, split, max_samples, seed).
+
+        Subclasses that pin an upstream revision or accept extra load()
+        parameters that change the resulting data (e.g. RAGBench's `subsets`)
+        should override this, so a cache built against one upstream snapshot
+        is never mistaken for a cache built against another.
+        """
+        return {}
+
+    def _rng(self, seed: int | None) -> random.Random:
+        """A private RNG for this load — never `random.seed()`/`random.sample()`
+        on the module-level `random` instance, which is process-wide shared
+        state. Two datasets loaded back to back (or a dataset load nested
+        inside a caller that also uses `random`) must not perturb each other.
+        """
+        return random.Random(seed)
+
     def _infer_query_type(self, question: str, metadata: dict) -> QueryType:
         """Infer query type from question text and metadata.
 
@@ -100,6 +119,21 @@ class BaseDatasetLoader(ABC):
 
         # Default to factoid
         return QueryType.FACTOID
+
+    def _sample_order(self, n: int, max_samples: int | None, seed: int | None) -> range | list[int]:
+        """Index order to iterate a split of size `n` in.
+
+        When sampling, this is a seeded permutation of the *entire* split
+        rather than a prefix — the caller stops once it has converted
+        `max_samples` items, which draws an unbiased sample and tolerates
+        per-item conversion failures (skipped items just aren't counted)
+        without ever falling back to "whatever came first".
+        """
+        if max_samples is None:
+            return range(n)
+        order = list(range(n))
+        self._rng(seed).shuffle(order)
+        return order
 
     def _create_question_id(self, dataset_name: str, index: int, orig_id: str | None = None) -> str:
         """Create a unique question ID."""

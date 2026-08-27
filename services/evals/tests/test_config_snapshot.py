@@ -6,20 +6,34 @@ settings and any comparison between runs was comparing constants.
 """
 
 import pytest
+from conftest import stub_judge
+
+from evals.config import EvalConfig
 
 
 @pytest.fixture
 def runner():
     from evals.runner import EvaluationRunner
 
-    return EvaluationRunner()
+    return EvaluationRunner(EvalConfig(judge=stub_judge()))
 
 
 # Shape of the /metrics/retrieval response, trimmed to the fields the snapshot reads
 RETRIEVAL_RESPONSE = {
     "retrieval_top_k": 25,
     "final_top_n": 12,
-    "hybrid_search": {"enabled": True, "rrf_k": 60},
+    "hybrid_search": {
+        "enabled": True,
+        "rrf_k": 60,
+        "vector": {
+            "chunk_size": 321,
+            "chunk_overlap": 21,
+            "chunkers": [
+                {"name": "sentence_splitter", "chunk_size": 321, "chunk_overlap": 21},
+                {"name": "docling", "chunk_size": None, "chunk_overlap": None},
+            ],
+        },
+    },
     "contextual_retrieval": {"enabled": True},
     "reranker": {"enabled": True, "model": "cross-encoder/ms-marco-MiniLM-L-6-v2", "top_n": 12},
 }
@@ -39,6 +53,26 @@ class TestConfigSnapshot:
         assert snapshot.retrieval_top_k == 25
         assert snapshot.hybrid_search_enabled is True
         assert snapshot.contextual_retrieval_enabled is True
+
+    def test_chunking_comes_from_the_server_not_a_literal(self, runner):
+        """The values were hardcoded 500/50 in the server's own report, so every
+        saved run claimed a chunk size it had not measured."""
+        snapshot = runner._create_config_snapshot(MODELS_RESPONSE, RETRIEVAL_RESPONSE)
+
+        assert snapshot.chunk_size == 321
+        assert snapshot.chunk_overlap == 21
+        assert snapshot.chunker == "sentence_splitter+docling"
+
+    def test_chunking_is_unknown_when_the_server_does_not_report_it(self, runner):
+        """An older server that predates the chunkers field records None, which is
+        the truth, rather than 500/50, which would be a guess that happens to match."""
+        response = {**RETRIEVAL_RESPONSE, "hybrid_search": {"enabled": True, "rrf_k": 60}}
+
+        snapshot = runner._create_config_snapshot(MODELS_RESPONSE, response)
+
+        assert snapshot.chunk_size is None
+        assert snapshot.chunk_overlap is None
+        assert snapshot.chunker is None
 
     def test_model_settings_still_come_from_models_info(self, runner):
         snapshot = runner._create_config_snapshot(MODELS_RESPONSE, RETRIEVAL_RESPONSE)

@@ -20,6 +20,7 @@ import json
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from infrastructure.config.models_config import (
+    ChunkingConfig,
     ExecutionBoundary,
     ModelsConfig,
     LLMConfig,
@@ -394,6 +395,39 @@ def test_retrieval_endpoint_returns_hybrid_config(mock_env_vars):
     assert data["hybrid_search"]["enabled"] is True
     assert data["hybrid_search"]["rrf_k"] == 60
     assert data["hybrid_search"]["fusion_method"] == "reciprocal_rank_fusion"
+
+
+# ── Chunking is configuration, not three coincidentally-equal literals ───────
+
+
+def test_retrieval_endpoint_reports_configured_chunk_size(
+    mock_models_config_fixture, mock_env_vars
+):
+    """The defect: 500/50 were hardcoded here, in the SentenceSplitter, and in
+    LlamaIndex Settings, agreeing only by coincidence. The eval runner read this
+    endpoint and recorded the literal as measured configuration."""
+    mock_models_config_fixture.chunking = ChunkingConfig(chunk_size=321, chunk_overlap=21)
+
+    data = client.get("/metrics/retrieval").json()
+
+    vector = data["hybrid_search"]["vector"]
+    assert vector["chunk_size"] == 321
+    assert vector["chunk_overlap"] == 21
+
+
+def test_the_docling_path_reports_no_size_rather_than_the_splitters(mock_env_vars):
+    """Docling splits on document structure and has no size or overlap. Reporting
+    the SentenceSplitter's numbers for it would invent a value that path never
+    used — the exact defect being fixed."""
+    data = client.get("/metrics/retrieval").json()
+    chunkers = {c["name"]: c for c in data["hybrid_search"]["vector"]["chunkers"]}
+
+    assert set(chunkers) == {"sentence_splitter", "docling"}
+    assert chunkers["docling"]["chunk_size"] is None
+    assert chunkers["docling"]["chunk_overlap"] is None
+    assert chunkers["sentence_splitter"]["chunk_size"] is not None
+    assert ".pdf" in chunkers["docling"]["applies_to"]
+    assert ".md" in chunkers["sentence_splitter"]["applies_to"]
 
 
 def test_retrieval_endpoint_returns_bm25_config(mock_env_vars):

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.settings import get_api_key_for_provider
 
@@ -239,6 +239,24 @@ class RetrievalConfig(BaseModel):
     embed_concurrency: int = 8
 
 
+class ChunkingConfig(BaseModel):
+    """How documents are split before embedding.
+
+    One source for what were three unconnected literals — LlamaIndex `Settings`,
+    the SentenceSplitter in pipelines/ingestion.py, and what
+    `GET /metrics/retrieval` reported to the eval runner. They agreed only by
+    coincidence, and the eval snapshot recorded the third as if it were measured
+    configuration.
+
+    Applies to the SentenceSplitter path only. The Docling chunker splits on
+    document structure and has no size or overlap knob; see
+    `chunker_for_extension()`.
+    """
+
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+
+
 class ChatMemoryCacheConfig(BaseModel):
     """Bounds on one in-memory cache of ChatMemoryBuffer objects."""
 
@@ -287,6 +305,24 @@ DEFAULT_ALLOWED_JUDGE_BOUNDARIES: frozenset[ExecutionBoundary] = frozenset(
 )
 
 
+# Mirrors services/evals/infrastructure/config/models_config.py.
+DEFAULT_PUBLIC_DATASETS: frozenset[str] = frozenset(
+    {"ragbench", "qasper", "squad_v2", "hotpotqa", "msmarco"}
+)
+
+REMOVED_DATA_POLICY_KEYS: dict[str, str] = {
+    "eval_dataset_is_public": (
+        "data_policy.eval_dataset_is_public has been removed. One global boolean could "
+        "not see which dataset a run was using, so setting it true let a `golden` run "
+        "send the corpus verbatim to a third-party judge. Replace it with:\n"
+        "  data_policy.public_datasets       — dataset names whose questions and gold "
+        "passages hold no confidential content\n"
+        "  data_policy.eval_index_is_isolated — true only when an end_to_end run queries "
+        "an index holding nothing but the eval's own uploaded documents"
+    ),
+}
+
+
 class DataPolicyConfig(BaseModel):
     """Where this deployment's corpus content is allowed to be processed.
 
@@ -294,14 +330,27 @@ class DataPolicyConfig(BaseModel):
     need not contain a single PII entity. Declared here so the `data_policy`
     block has one documented schema across both services; only the eval service
     enforces the judge gate (rag-server runs no judge), the same arrangement the
-    retired `pii.allow_cloud_judge` had.
+    retired `pii.allow_cloud_judge` had. rag-server still rejects the removed key,
+    so a stale config.yml fails on whichever service boots first.
     """
 
     corpus_confidential: bool = True
     allowed_judge_boundaries: set[ExecutionBoundary] = Field(
         default_factory=lambda: set(DEFAULT_ALLOWED_JUDGE_BOUNDARIES)
     )
-    eval_dataset_is_public: bool = False
+    public_datasets: set[str] = Field(
+        default_factory=lambda: set(DEFAULT_PUBLIC_DATASETS)
+    )
+    eval_index_is_isolated: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key, message in REMOVED_DATA_POLICY_KEYS.items():
+                if key in data:
+                    raise ValueError(message)
+        return data
 
 
 class PiiValidationConfig(BaseModel):
@@ -481,6 +530,7 @@ class ModelsConfig(BaseModel):
     eval: EvalConfig
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     chat_memory: ChatMemoryConfig = Field(default_factory=ChatMemoryConfig)

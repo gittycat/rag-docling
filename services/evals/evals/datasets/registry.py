@@ -68,17 +68,32 @@ def _register_default_loaders() -> None:
 _register_default_loaders()
 
 
-# Bump when the cached dataset schema changes (invalidates old cache files)
-_CACHE_SCHEMA_VERSION = 2
+# Bump when the cached dataset schema changes (invalidates old cache files).
+# v3 folds the loader fingerprint into the key and stores it in the file.
+_CACHE_SCHEMA_VERSION = 3
 
 
-def _cache_key(name: str, split: str, max_samples: int | None, seed: int | None) -> str:
+def _cache_key(
+    name: str,
+    split: str,
+    max_samples: int | None,
+    seed: int | None,
+    fingerprint: dict[str, Any] | None = None,
+) -> str:
+    # The fingerprint carries whatever else decides which rows come back — the
+    # pinned upstream revision above all. Without it, two different upstream
+    # snapshots share a cache key and the second run silently reads the first
+    # run's data.
     raw = f"v{_CACHE_SCHEMA_VERSION}|{name}|{split}|{max_samples}|{seed}"
+    raw += "|" + json.dumps(fingerprint or {}, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def _dataset_to_dict(ds: EvalDataset) -> dict[str, Any]:
+def _dataset_to_dict(ds: EvalDataset, fingerprint: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
+        # Stored as well as hashed, so a cache file can be re-validated rather
+        # than trusted because its filename matched.
+        "fingerprint": fingerprint or {},
         "name": ds.name,
         "version": ds.version,
         "description": ds.description,
@@ -163,25 +178,43 @@ def _dataset_from_dict(d: dict[str, Any]) -> EvalDataset:
     )
 
 
-def _read_cache(key: str) -> EvalDataset | None:
+def _read_cache(key: str, fingerprint: dict[str, Any] | None = None) -> EvalDataset | None:
     path = CACHE_DIR / f"{key}.json"
     if not path.exists():
         return None
     try:
         with open(path) as f:
-            return _dataset_from_dict(json.load(f))
+            payload = json.load(f)
+    except Exception as e:
+        logger.warning(f"[REGISTRY] Corrupt cache file {path}, ignoring: {e}")
+        path.unlink(missing_ok=True)
+        return None
+
+    stored = payload.get("fingerprint", {})
+    if stored != (fingerprint or {}):
+        # Belt and braces: the key already hashes the fingerprint, so this only
+        # fires on a hash collision or a file written by an older build. Treat
+        # it as a miss rather than serving data from a different snapshot.
+        logger.warning(
+            f"[REGISTRY] Cache file {path} was built against a different loader "
+            f"fingerprint ({stored} != {fingerprint}); ignoring it."
+        )
+        return None
+
+    try:
+        return _dataset_from_dict(payload)
     except Exception as e:
         logger.warning(f"[REGISTRY] Corrupt cache file {path}, ignoring: {e}")
         path.unlink(missing_ok=True)
         return None
 
 
-def _write_cache(key: str, ds: EvalDataset) -> None:
+def _write_cache(key: str, ds: EvalDataset, fingerprint: dict[str, Any] | None = None) -> None:
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         path = CACHE_DIR / f"{key}.json"
         with open(path, "w") as f:
-            json.dump(_dataset_to_dict(ds), f, separators=(",", ":"))
+            json.dump(_dataset_to_dict(ds, fingerprint), f, separators=(",", ":"))
         logger.info(f"[REGISTRY] Cached dataset to {path}")
     except Exception as e:
         logger.warning(f"[REGISTRY] Failed to write cache: {e}")
@@ -209,19 +242,20 @@ def get_dataset(
     if isinstance(name, str):
         name = DatasetName(name)
 
-    key = _cache_key(name.value, split, max_samples, seed)
+    loader = get_loader(name)
+    fingerprint = loader.fingerprint()
+    key = _cache_key(name.value, split, max_samples, seed, fingerprint)
 
     if use_cache:
-        cached = _read_cache(key)
+        cached = _read_cache(key, fingerprint)
         if cached is not None:
             logger.info(f"[REGISTRY] Cache hit for {name.value} ({key})")
             return cached
 
-    loader = get_loader(name)
     ds = loader.load(split=split, max_samples=max_samples, seed=seed)
 
     if use_cache:
-        _write_cache(key, ds)
+        _write_cache(key, ds, fingerprint)
 
     return ds
 
@@ -237,8 +271,14 @@ def load_datasets(
     max_samples: int | None = None,
     seed: int | None = None,
     use_cache: bool = True,
+    skip_failures: bool = False,
 ) -> list[EvalDataset]:
-    """Load multiple datasets, skipping any that fail to load."""
+    """Load multiple datasets. Raises on the first failure unless skip_failures.
+
+    Skipping used to be the default, which meant a run could quietly cover fewer
+    datasets than were asked for and still report a scorecard — the comparison
+    then rests on a different mix than its label claims.
+    """
     results = []
     for name in names:
         try:
@@ -246,6 +286,12 @@ def load_datasets(
                 name, split=split, max_samples=max_samples, seed=seed, use_cache=use_cache,
             ))
         except Exception as e:
+            if not skip_failures:
+                raise RuntimeError(
+                    f"Dataset '{name}' failed to load: {e}. Pass skip_failures=True to "
+                    f"continue without it, accepting that the run covers less than "
+                    f"was requested."
+                ) from e
             logger.warning(f"[REGISTRY] Skipping dataset '{name}': {e}")
             print(f"\nWARNING: Skipping dataset '{name}': {e}\n")
     return results

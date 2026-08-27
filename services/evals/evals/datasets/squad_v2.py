@@ -7,12 +7,12 @@ Dataset: https://huggingface.co/datasets/rajpurkar/squad_v2
 """
 
 import logging
-import random
 from typing import Any
 
 from datasets import load_dataset
 
 from evals.datasets.base import BaseDatasetLoader
+from evals.datasets.revisions import HF_REVISIONS
 from evals.schemas import (
     EvalDataset,
     EvalQuestion,
@@ -20,6 +20,8 @@ from evals.schemas import (
     QueryType,
     Difficulty,
 )
+
+HF_REPO_ID = "rajpurkar/squad_v2"
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,9 @@ class SquadV2Loader(BaseDatasetLoader):
     def domains(self) -> list[str]:
         return ["general", "wikipedia"]
 
+    def fingerprint(self) -> dict[str, Any]:
+        return {"revision": HF_REVISIONS.get(HF_REPO_ID)}
+
     def load(
         self,
         split: str = "test",
@@ -67,13 +72,10 @@ class SquadV2Loader(BaseDatasetLoader):
         """
         logger.info(f"Loading SQuAD v2 dataset (split={split}, max_samples={max_samples})")
 
-        if seed is not None:
-            random.seed(seed)
-
         # SQuAD v2 only has train and validation splits (no test with labels)
         hf_split = "validation" if split in ("test", "validation", "val") else "train"
 
-        dataset = load_dataset("rajpurkar/squad_v2", split=hf_split)
+        dataset = load_dataset("rajpurkar/squad_v2", split=hf_split, revision=HF_REVISIONS.get(HF_REPO_ID))
 
         # Convert all items
         all_questions: list[EvalQuestion] = []
@@ -88,7 +90,7 @@ class SquadV2Loader(BaseDatasetLoader):
                 all_questions, unanswerable_ratio, max_samples, seed
             )
         elif max_samples and len(all_questions) > max_samples:
-            all_questions = random.sample(all_questions, max_samples)
+            all_questions = self._rng(seed).sample(all_questions, max_samples)
 
         logger.info(
             f"Loaded {len(all_questions)} questions from SQuAD v2 "
@@ -194,8 +196,7 @@ class SquadV2Loader(BaseDatasetLoader):
         seed: int | None,
     ) -> list[EvalQuestion]:
         """Balance the ratio of unanswerable questions."""
-        if seed is not None:
-            random.seed(seed)
+        rng = self._rng(seed)
 
         answerable = [q for q in questions if not q.is_unanswerable]
         unanswerable = [q for q in questions if q.is_unanswerable]
@@ -209,14 +210,14 @@ class SquadV2Loader(BaseDatasetLoader):
         target_answerable = total - target_unanswerable
 
         # Sample to achieve target ratio
-        sampled_unanswerable = random.sample(
+        sampled_unanswerable = rng.sample(
             unanswerable, min(target_unanswerable, len(unanswerable))
         )
-        sampled_answerable = random.sample(
+        sampled_answerable = rng.sample(
             answerable, min(target_answerable, len(answerable))
         )
 
         result = sampled_answerable + sampled_unanswerable
-        random.shuffle(result)
+        rng.shuffle(result)
 
         return result
