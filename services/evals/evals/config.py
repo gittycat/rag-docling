@@ -23,7 +23,7 @@ from evals.pricing import (  # noqa: F401
 )
 
 if TYPE_CHECKING:
-    from infrastructure.config.models_config import DataPolicyConfig
+    from infrastructure.config.models_config import ContentPrivacy, DataPolicyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -57,25 +57,91 @@ DATASET_TIER_SUPPORT: dict[str, list[EvalTier]] = {
 }
 
 
-def eval_content_is_public(
+def classify_eval_content(
     datasets: "Sequence[DatasetName] | None",
     tier: EvalTier | None,
     policy: "DataPolicyConfig",
-) -> bool:
+) -> "ContentPrivacy":
     """Whether this run's content is public enough for an out-of-boundary judge.
 
     Fails closed: an unknown dataset or tier is not public. Every dataset must be
     public — a mixed run is as confidential as its most confidential member — and
     in the end_to_end tier a public dataset is still not enough, because there the
     runner queries the live index and the judge sees whatever it returns.
+
+    Returns the condition that failed, not just a boolean, so the gate error names
+    the one thing the operator has to change. Only the *first* failing condition is
+    reported: fixing it re-runs this check, and reporting a downstream condition the
+    operator cannot yet evaluate is noise.
     """
+    from infrastructure.config.models_config import (
+        IN_BOUNDARY_JUDGE_REMEDY,
+        NON_CONFIDENTIAL_CORPUS_REMEDY,
+        ContentPrivacy,
+    )
+
     if not datasets or tier is None:
-        return False
-    if not all(d.value in policy.public_datasets for d in datasets):
-        return False
+        # Not an operator mistake — a caller resolved a judge without saying what
+        # the run evaluates, and the gate refuses to guess.
+        return ContentPrivacy(
+            is_public=False,
+            reason=(
+                "the run's datasets and tier were not passed to the judge gate, and an "
+                "unidentified run fails closed"
+            ),
+            remedies=(
+                "pass datasets= and tier= to evals.config.resolve_judge_config() "
+                "(a code path, not a config setting)",
+            ),
+        )
+
+    non_public = sorted({d.value for d in datasets if d.value not in policy.public_datasets})
+    if non_public:
+        return ContentPrivacy(
+            is_public=False,
+            reason=(
+                f"dataset(s) {', '.join(non_public)} are not in "
+                f"data_policy.public_datasets, so their questions and gold passages "
+                f"may carry your own content"
+            ),
+            remedies=(
+                IN_BOUNDARY_JUDGE_REMEDY,
+                f"add {', '.join(non_public)} to data_policy.public_datasets, but only "
+                f"if their questions and gold passages genuinely carry nothing of yours "
+                f"(`golden` is authored from your documents, so it never qualifies)",
+                NON_CONFIDENTIAL_CORPUS_REMEDY,
+            ),
+        )
+
     if tier is EvalTier.END_TO_END and not policy.eval_index_is_isolated:
-        return False
-    return True
+        return ContentPrivacy(
+            is_public=False,
+            reason=(
+                "the end_to_end tier queries the live rag-server index, which returns "
+                "whatever is in it regardless of which dataset asked, and "
+                "data_policy.eval_index_is_isolated is false — the dataset being public "
+                "is not enough here"
+            ),
+            remedies=(
+                IN_BOUNDARY_JUDGE_REMEDY,
+                "set data_policy.eval_index_is_isolated: true, if the index this run "
+                "queries really holds only the eval's own documents — or set "
+                "EVAL_INDEX_IS_ISOLATED=true to assert it for a single run "
+                "(`docker compose exec -e EVAL_INDEX_IS_ISOLATED=true evals ...`)",
+                NON_CONFIDENTIAL_CORPUS_REMEDY,
+            ),
+        )
+
+    return ContentPrivacy(is_public=True)
+
+
+def eval_content_is_public(
+    datasets: "Sequence[DatasetName] | None",
+    tier: EvalTier | None,
+    policy: "DataPolicyConfig",
+) -> bool:
+    """Boolean view of classify_eval_content, for callers that only record the verdict."""
+    return classify_eval_content(datasets, tier, policy).is_public
 
 
 # Dataset -> Primary evaluation aspect mapping
@@ -221,7 +287,7 @@ def resolve_judge_config(
         eval_config.execution_boundary,
         models_config.data_policy,
         f"{eval_config.provider}/{eval_config.model}",
-        eval_content_is_public=eval_content_is_public(
+        content_privacy=classify_eval_content(
             datasets, tier, models_config.data_policy
         ),
     )

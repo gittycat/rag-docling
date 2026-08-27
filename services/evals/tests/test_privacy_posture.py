@@ -21,7 +21,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from evals.config import DatasetName, EvalTier, eval_content_is_public
+from evals.config import (
+    DatasetName,
+    EvalTier,
+    classify_eval_content,
+    eval_content_is_public,
+)
 from infrastructure.config.models_config import (
     DEFAULT_ALLOWED_JUDGE_BOUNDARIES,
     DEFAULT_PUBLIC_DATASETS,
@@ -93,7 +98,7 @@ def gate(
         boundary,
         policy,
         "test/judge",
-        eval_content_is_public=eval_content_is_public(datasets, tier, policy),
+        content_privacy=classify_eval_content(datasets, tier, policy),
     )
 
 
@@ -155,14 +160,18 @@ def test_allow_list_is_configurable_and_can_be_narrowed():
              tier=EvalTier.GENERATION, policy=policy)
 
 
-def test_every_gate_error_names_the_three_resolutions():
-    """An operator who hits this must not have to read the source to get out."""
+def test_every_gate_error_names_a_way_out():
+    """An operator who hits this must not have to read the source to get out.
+
+    The resolutions are now the ones for the condition that failed, so this asserts
+    the two that apply to every gated run. `eval_index_is_isolated` deliberately is
+    not among them: it is no help to a generation-tier run that never queries the
+    index — see test_non_public_dataset_error_names_the_dataset."""
     for boundary in (None, ExecutionBoundary.THIRD_PARTY):
         with pytest.raises(ValueError) as exc:
             gate(boundary, datasets=[DatasetName.GOLDEN], tier=EvalTier.GENERATION)
         message = str(exc.value)
         assert "active.eval" in message
-        assert "eval_index_is_isolated" in message
         assert "corpus_confidential" in message
 
 
@@ -236,6 +245,87 @@ def test_third_party_judge_allowed_when_corpus_declared_not_confidential():
         tier=EvalTier.END_TO_END,
         policy=build_policy(corpus_confidential=False),
     )
+
+
+# ── The error names the condition that actually failed ────────────────────────
+
+
+def _gate_message(boundary, *, datasets, tier, policy=None) -> str:
+    with pytest.raises(ValueError) as exc:
+        gate(boundary, datasets=datasets, tier=tier, policy=policy)
+    return str(exc.value)
+
+
+def test_end_to_end_error_blames_the_index_not_the_dataset():
+    """The bug this replaced: a public dataset in the end_to_end tier produced an
+    error whose only dataset advice was to add it to public_datasets, where it
+    already was. The isolation flag is the condition that actually failed."""
+    message = _gate_message(
+        ExecutionBoundary.THIRD_PARTY,
+        datasets=[DatasetName.HOTPOTQA],
+        tier=EvalTier.END_TO_END,
+    )
+    assert "eval_index_is_isolated is false" in message
+    assert "EVAL_INDEX_IS_ISOLATED=true" in message
+    # The dataset is public, so nothing may suggest making it more public.
+    assert "add hotpotqa to data_policy.public_datasets" not in message
+
+
+def test_non_public_dataset_error_names_the_dataset():
+    message = _gate_message(
+        ExecutionBoundary.THIRD_PARTY,
+        datasets=[DatasetName.GOLDEN],
+        tier=EvalTier.GENERATION,
+    )
+    assert "golden are not in data_policy.public_datasets" in message
+    # A generation-tier run never touches the live index, so the isolation flag
+    # is not one of this run's ways out.
+    assert "eval_index_is_isolated" not in message
+
+
+def test_mixed_run_error_names_only_the_confidential_members():
+    message = _gate_message(
+        ExecutionBoundary.THIRD_PARTY,
+        datasets=[DatasetName.RAGBENCH, DatasetName.GOLDEN],
+        tier=EvalTier.GENERATION,
+    )
+    assert "golden" in message
+    assert "ragbench" not in message
+
+
+def test_unidentified_run_error_points_at_the_caller_not_the_operator():
+    """Omitting datasets/tier is a code path bug; sending the operator to
+    config.yml for it would be a wild goose chase."""
+    message = _gate_message(ExecutionBoundary.THIRD_PARTY, datasets=None, tier=None)
+    assert "were not passed to the judge gate" in message
+    assert "resolve_judge_config" in message
+
+
+def test_every_gated_error_offers_the_in_boundary_judge():
+    for datasets, tier in (
+        ([DatasetName.GOLDEN], EvalTier.GENERATION),
+        ([DatasetName.HOTPOTQA], EvalTier.END_TO_END),
+    ):
+        message = _gate_message(ExecutionBoundary.THIRD_PARTY, datasets=datasets, tier=tier)
+        assert "just judge-up" in message
+
+
+def test_unknown_boundary_error_also_carries_the_reason():
+    """Both arms of the gate explain themselves, not just the allow-list arm."""
+    message = _gate_message(
+        None, datasets=[DatasetName.HOTPOTQA], tier=EvalTier.END_TO_END
+    )
+    assert "declares no execution_boundary" in message
+    assert "eval_index_is_isolated is false" in message
+
+
+def test_public_run_has_no_reason_to_explain():
+    privacy = classify_eval_content(
+        [DatasetName.RAGBENCH], EvalTier.GENERATION, build_policy()
+    )
+    assert privacy.is_public
+    assert privacy.reason is None
+    assert privacy.explain() == ""
 
 
 # ── The removed key must not be ignored ───────────────────────────────────────

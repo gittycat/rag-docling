@@ -604,7 +604,7 @@ class TestCitationPrecision:
         assert result.value == 0.5
 
     def test_no_citations(self):
-        """No citations should yield precision of 0.0."""
+        """No citations means the model was never asked to cite — undefined, not 0.0."""
         from evals.metrics.citation import CitationPrecision
         from evals.schemas import EvalQuestion, EvalResponse, GoldPassage
 
@@ -627,8 +627,8 @@ class TestCitationPrecision:
 
         result = metric.compute(question, response)
 
-        assert result.value == 0.0
-        assert "No citations" in result.details.get("note", "")
+        assert result.value is None
+        assert "citation_scope" in result.details.get("note", "")
 
 
 class TestCitationRecall:
@@ -788,7 +788,7 @@ class TestSectionAccuracy:
         assert result.details["section_accuracy"] == 0.0
 
     def test_no_citations(self):
-        """No citations should yield section accuracy of 0.0."""
+        """No citations means the model was never asked to cite — undefined, not 0.0."""
         from evals.metrics.citation import SectionAccuracy
         from evals.schemas import EvalQuestion, EvalResponse, GoldPassage
 
@@ -811,8 +811,8 @@ class TestSectionAccuracy:
 
         result = metric.compute(question, response)
 
-        assert result.value == 0.0
-        assert "No citations" in result.details.get("note", "")
+        assert result.value is None
+        assert "citation_scope" in result.details.get("note", "")
 
 
 # =============================================================================

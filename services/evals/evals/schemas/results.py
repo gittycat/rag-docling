@@ -147,6 +147,7 @@ class ConfigSnapshot:
         chunk_size: SentenceSplitter chunk size (None if not captured)
         chunk_overlap: SentenceSplitter chunk overlap (None if not captured)
         chunker: Which chunking path(s) the server routes documents through
+        prompt_fingerprint: Hash of the server's rendered prompts (None if not captured)
         additional: Any additional config parameters
     """
 
@@ -168,6 +169,9 @@ class ConfigSnapshot:
     chunk_size: int | None = None
     chunk_overlap: int | None = None
     chunker: str | None = None
+    # Hash of the rendered prompts the server would use. Same discipline: None
+    # means the server did not report it, not that the prompts are the defaults.
+    prompt_fingerprint: str | None = None
     additional: dict[str, Any] = field(default_factory=dict)
 
 

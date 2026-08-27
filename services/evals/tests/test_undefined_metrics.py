@@ -50,6 +50,24 @@ def test_citation_metrics_undefined_without_gold(metric):
     assert result.sample_size == 0
 
 
+@pytest.mark.parametrize("metric", CITATION_METRICS, ids=lambda m: m.name)
+def test_citation_metrics_undefined_without_inline_markers(metric):
+    """`citation_scope: retrieved` means the model was never asked to cite.
+
+    Scoring that 0.0 charged the citation objective — 20% of the headline weight
+    — for a configuration choice, on every question of every run.
+    """
+    result = metric.compute(
+        _question(
+            gold_passages=[GoldPassage(doc_id="d", chunk_id="c", text="gold text")]
+        ),
+        _response(answer="Y", citations=[]),
+    )
+    assert result.value is None
+    assert result.sample_size == 0
+    assert "citation_scope" in result.details["note"]
+
+
 @pytest.mark.parametrize("metric", RETRIEVAL_METRICS, ids=lambda m: m.name)
 def test_retrieval_metrics_undefined_without_gold(metric):
     result = metric.compute(

@@ -44,19 +44,33 @@ def _cited_doc_ids(citation: Any, retrieved: Any) -> set[str]:
     return ids
 
 
-def _undefined(metric: "BaseMetric") -> MetricResult:
-    """Citation quality is undefined without gold passages to score against.
+# An answer with no inline markers is not a badly-cited answer: under
+# `eval.citation_scope: retrieved` the model is never asked to cite, so a 0.0
+# here would score a configuration choice as a quality failure and drag the
+# `citation` objective — 20% of the headline weight — to zero on every run.
+# groundedness.py already treats the same condition as undefined; this matches it.
+_NO_CITATIONS = (
+    "No inline citations in the answer — set eval.citation_scope to 'explicit' "
+    "in config.yml for the model to emit them"
+)
 
-    Previously these returned 1.0, so any dataset lacking retrieval annotations
-    (the golden set, until it gained optional gold_passages) displayed perfect
-    citation precision and recall that measured nothing at all.
+_NO_GOLD = "No gold passages defined — citation quality is undefined"
+
+
+def _undefined(metric: "BaseMetric", note: str = _NO_GOLD) -> MetricResult:
+    """Citation quality is undefined without something to score against.
+
+    Previously these returned 1.0 without gold passages, so any dataset lacking
+    retrieval annotations (the golden set, until it gained optional
+    gold_passages) displayed perfect citation precision and recall that measured
+    nothing at all.
     """
     return MetricResult(
         name=metric.name,
         value=None,
         group=metric.group,
         sample_size=0,
-        details={"note": "No gold passages defined — citation quality is undefined"},
+        details={"note": note},
     )
 
 
@@ -86,18 +100,12 @@ class CitationPrecision(BaseMetric):
         response: EvalResponse,
         **kwargs: Any,
     ) -> MetricResult:
-        citations = response.citations
-        if not citations:
-            return MetricResult(
-                name=self.name,
-                value=0.0,
-                group=self.group,
-                sample_size=1,
-                details={"note": "No citations in answer"},
-            )
-
         if not question.gold_passages:
             return _undefined(self)
+
+        citations = response.citations
+        if not citations:
+            return _undefined(self, _NO_CITATIONS)
 
         gold_chunk_ids = {p.chunk_id for p in question.gold_passages}
         doc_only_ids = _doc_only_gold_ids(question)
@@ -166,6 +174,9 @@ class CitationRecall(BaseMetric):
             return _undefined(self)
 
         citations = response.citations
+        if not citations:
+            return _undefined(self, _NO_CITATIONS)
+
         gold_chunk_ids = {p.chunk_id for p in question.gold_passages}
         chunk_lookup = chunk_by_rank(response)
 
@@ -246,13 +257,7 @@ class SectionAccuracy(BaseMetric):
 
         citations = response.citations
         if not citations:
-            return MetricResult(
-                name=self.name,
-                value=0.0,
-                group=self.group,
-                sample_size=1,
-                details={"note": "No citations in answer"},
-            )
+            return _undefined(self, _NO_CITATIONS)
 
         chunk_lookup = chunk_by_rank(response)
         doc_correct = 0

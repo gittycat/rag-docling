@@ -2,6 +2,7 @@
 
 import logging
 import os
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
@@ -380,21 +381,51 @@ class DataPolicyConfig(BaseModel):
         return data
 
 
+@dataclass(frozen=True)
+class ContentPrivacy:
+    """Whether a run's content is public enough for an out-of-boundary judge, and why not.
+
+    Built per run from the datasets and tier (evals.config.classify_eval_content),
+    which is also where the enums live — this layer only renders the verdict.
+    `reason` names the single condition that failed, and `remedies` are the ways
+    out of *that* condition, so the error does not list four options of which
+    three do not apply.
+    """
+
+    is_public: bool
+    reason: str | None = None
+    remedies: tuple[str, ...] = ()
+
+    def explain(self) -> str:
+        """The reason and its remedies, as the tail of a gate error."""
+        if self.is_public:
+            return ""
+        lines = [f"Why this run is gated: {self.reason}"]
+        if self.remedies:
+            lines.append(
+                "One way out of that:"
+                if len(self.remedies) == 1
+                else f"{len(self.remedies)} ways out of that:"
+            )
+            lines += [f"  {i}. {r}" for i, r in enumerate(self.remedies, 1)]
+        return "\n".join(lines)
+
+
 def enforce_judge_boundary(
     boundary: ExecutionBoundary | None,
     policy: DataPolicyConfig,
     judge_label: str,
     *,
-    eval_content_is_public: bool,
+    content_privacy: ContentPrivacy,
 ) -> None:
     """Refuse a judge endpoint that would take confidential corpus content out of bounds.
 
-    `eval_content_is_public` is computed per run from the datasets and tier
-    (evals.config.eval_content_is_public) and fails closed when either is
-    unknown. Called at judge resolution, so the object the runtime actually calls
-    is the object that was checked.
+    `content_privacy` is computed per run from the datasets and tier
+    (evals.config.classify_eval_content) and fails closed when either is unknown.
+    Called at judge resolution, so the object the runtime actually calls is the
+    object that was checked.
     """
-    if not policy.corpus_confidential or eval_content_is_public:
+    if not policy.corpus_confidential or content_privacy.is_public:
         return
 
     allowed = ", ".join(sorted(b.value for b in policy.allowed_judge_boundaries)) or "(none)"
@@ -405,31 +436,28 @@ def enforce_judge_boundary(
             f"unknown boundary is treated as outside the trust boundary. Add "
             f"execution_boundary to its models.eval entry in config.yml (one of: "
             f"{', '.join(b.value for b in ExecutionBoundary)}).\n"
-            f"{_RESOLUTIONS}"
+            f"{content_privacy.explain()}"
         )
 
     if boundary not in policy.allowed_judge_boundaries:
         raise ValueError(
             f"Judge '{judge_label}' runs at execution boundary '{boundary.value}', which "
             f"data_policy.allowed_judge_boundaries does not permit ({allowed}). Judge "
-            f"prompts carry retrieved chunks and answers verbatim and are never masked, "
-            f"and this run's datasets/tier are not declared public.\n"
-            f"{_RESOLUTIONS}"
+            f"prompts carry retrieved chunks and answers verbatim and are never masked.\n"
+            f"{content_privacy.explain()}"
         )
 
 
-# The honest ways out, named in every gate error. Ordered cheapest-to-verify last:
-# declaring the corpus non-confidential is the claim hardest to take back.
-_RESOLUTIONS = (
-    "Three ways to resolve this:\n"
-    "  1. point active.eval at an in-boundary judge (see the vllm entry in config.yml, "
-    "and `just judge-up`)\n"
-    "  2. set data_policy.eval_index_is_isolated: true, if the index this run queries "
-    "really holds only the eval's own documents\n"
-    "  3. set data_policy.corpus_confidential: false, if no document in the corpus is "
-    "confidential\n"
-    "Adding the dataset to data_policy.public_datasets is a fourth option, but only if "
-    "its questions and gold passages genuinely carry no confidential content."
+# Remedies every gated run shares, whichever condition failed. Ordered so the
+# claim hardest to take back comes last: declaring the whole corpus non-
+# confidential is a deployment-wide statement, not a fix for one run.
+IN_BOUNDARY_JUDGE_REMEDY = (
+    "point active.eval at an in-boundary judge (see the vllm entry in config.yml, "
+    "and `just judge-up`)"
+)
+NON_CONFIDENTIAL_CORPUS_REMEDY = (
+    "set data_policy.corpus_confidential: false, if no document in the corpus is "
+    "confidential"
 )
 
 
