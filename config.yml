@@ -71,16 +71,15 @@ models:
     #   requires_api_key: true
     #   execution_boundary: third_party
 
-    # vLLM (confidential-compute VM tier — open-weight models served
-    # OpenAI-compatible, no API key needed behind the network boundary) is the
-    # documented self-hosted-inference path now that local inference no longer
-    # runs on the host:
-    # qwen-vllm:
-    #   provider: vllm
-    #   model: Qwen/Qwen2.5-14B-Instruct
-    #   base_url: http://vllm:8000/v1
-    #   timeout: 120
-    #   execution_boundary: customer_managed
+    # Mode B only: an OpenAI-compatible vLLM endpoint on the private L40S in
+    # the AWS VPC. `just llm-up` replaces the explicit inactive placeholder
+    # with its private address; no laptop-to-AWS route exists or is supported.
+    qwen35-9b:
+      provider: vllm
+      model: Qwen/Qwen3.5-9B
+      base_url: http://unconfigured-private-vllm.invalid/v1
+      timeout: 120
+      execution_boundary: customer_managed
 
   embedding:
     # NOTE: Switching the active embedding model invalidates every stored vector —
@@ -129,7 +128,7 @@ models:
     # Anthropic models for evaluation (cloud API)
     claude-sonnet:
       provider: anthropic
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-5
       base_url: https://api.anthropic.com
       timeout: 120
       requires_api_key: true
@@ -170,6 +169,15 @@ models:
       provider: vllm
       model: Qwen/Qwen3-32B-AWQ
       base_url: http://vllm:8000/v1
+      timeout: 120
+      execution_boundary: customer_managed
+
+    # Mode B only: hosted beside qwen35-9b on the private L40S. The official
+    # FP8 checkpoint is used directly; `just llm-up` writes its VPC address.
+    qwen38-27b-judge:
+      provider: vllm
+      model: Qwen/Qwen3.8-27B-FP8
+      base_url: http://unconfigured-private-vllm.invalid/v1
       timeout: 120
       execution_boundary: customer_managed
 

@@ -41,6 +41,9 @@ services:
       - MAX_UPLOAD_SIZE=80
       - SHARED_UPLOAD_DIR=/tmp/shared
       - USE_CACHED_RERANKER=true
+      # Optional measured self-hosted rates. Empty is deliberately unpriced,
+      # never a zero-cost fallback; see `just llm-price`.
+      - MODEL_PRICE_OVERRIDES=${MODEL_PRICE_OVERRIDES:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -245,6 +248,7 @@ services:
     environment:
       - RAG_SERVER_URL=http://rag-server:8001
       - LOG_LEVEL=WARNING
+      - MODEL_PRICE_OVERRIDES=${MODEL_PRICE_OVERRIDES:-}
     volumes:
       - ./config.yml:/app/config.yml:ro
       - ./services/evals/evals/data:/app/evals/data

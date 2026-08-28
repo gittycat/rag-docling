@@ -382,16 +382,13 @@ See [pii-masking.md](pii-masking.md#the-judge-gate-is-not-a-pii-control) for the
 policy model and [design-decisions.md](design-decisions.md) for why the earlier
 global `eval_dataset_is_public` flag was a defect rather than a simplification.
 
-### Run the judge out of band when it shares a GPU (A8.1)
+### Private judge deployment
 
-`just judge-up` starts a self-hosted vLLM judge (profile-gated, CUDA only), which
-is what makes judged metrics possible on a confidential corpus at all. **If that
-judge shares a GPU with the application, judge evaluation must run after the
-system traces are captured.** A judge competing for the same device inflates the
-latency and cost numbers the whole exercise exists to produce — the measurement
-changes the thing being measured. Nothing in code enforces this while the judge is
-a separate service; it is an operator rule. `docs/ROADMAP.md` records the burst-GPU
-CDK alternative, which sidesteps the contention entirely at the cost of AWS spend.
+Judged evaluation of a confidential corpus requires the customer-managed AWS
+judge configured by `just llm-up`. Inference and judging run on the separate
+private L40S instance, not on the demo Compose host, so evaluation does not
+contend with the application CPU workload. See
+[`docs/guide/12-private-aws-demo.md`](../guide/12-private-aws-demo.md).
 
 ## Persistence
 

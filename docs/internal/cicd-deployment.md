@@ -83,9 +83,9 @@ just deploy-down server   # tear down the same overlay combination
 ```
 
 `just deploy` runs `preflight` first, which now only checks that the Docker daemon is
-reachable. There is nothing host-side left to probe: embedding inference (`tei`) and any
-self-hosted vLLM model are compose services, gated by `depends_on: service_healthy` rather
-than by a preflight check.
+reachable. There is nothing host-side left to probe: embedding inference (`tei`) is a Compose
+service gated by `depends_on: service_healthy`. Private vLLM inference is provisioned separately
+for AWS demos; see [`docs/guide/12-private-aws-demo.md`](../guide/12-private-aws-demo.md).
 
 ## Versioning and release
 

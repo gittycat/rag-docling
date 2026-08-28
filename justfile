@@ -510,3 +510,130 @@ embed-down:
     # -c embedStack=true here too — without it the stack isn't in the app tree
     # and destroy has nothing to match, leaving the GPU instance running.
     cd infra && npx cdk destroy "$STACK" -c embedStack=true --force
+
+# Deploy the private L40S inference/judge stack and point the Mode B entries at it.
+# This is intentionally a cold-pull workflow: the stack is normally down, so it
+# does not retain a model volume or a dedicated GPU AMI merely to save startup time.
+[group('aws')]
+llm-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    AWS_REGION="${AWS_REGION:-ap-southeast-2}"
+    ENV_NAME="${AWS_ENV:-}"
+    if [ -z "$ENV_NAME" ]; then
+        echo "ERROR: no environment selected. Run 'setenv <dev|staging|demo|prod>'." >&2
+        exit 1
+    fi
+
+    STACK=RagbenchLlmStack
+    [ "$ENV_NAME" = "demo" ] || STACK="RagbenchLlmStack-${ENV_NAME}"
+
+    # The stack is not present unless this context flag is supplied. This is a
+    # cost guard, not a convenience flag: `cdk deploy --all` cannot create it.
+    cd infra && npx cdk deploy "$STACK" -c llmStack=true --require-approval never
+    cd - > /dev/null
+
+    # User data publishes only after BOTH models answer /health. A cold boot
+    # pulls ~50 GB of weights, so wait up to 30 minutes rather than treating a
+    # successful EC2 launch as a healthy model endpoint.
+    INFERENCE_ENDPOINT=""
+    JUDGE_ENDPOINT=""
+    for _ in $(seq 1 360); do
+        INFERENCE_ENDPOINT="$(aws ssm get-parameter --region "$AWS_REGION" \
+            --name "/ragbench/${ENV_NAME}/llm-endpoint" --query 'Parameter.Value' --output text 2>/dev/null || true)"
+        JUDGE_ENDPOINT="$(aws ssm get-parameter --region "$AWS_REGION" \
+            --name "/ragbench/${ENV_NAME}/judge-endpoint" --query 'Parameter.Value' --output text 2>/dev/null || true)"
+        if [ -n "$INFERENCE_ENDPOINT" ] && [ "$INFERENCE_ENDPOINT" != "None" ] \
+            && [ -n "$JUDGE_ENDPOINT" ] && [ "$JUDGE_ENDPOINT" != "None" ]; then
+            break
+        fi
+        sleep 5
+    done
+    if [ -z "$INFERENCE_ENDPOINT" ] || [ "$INFERENCE_ENDPOINT" = "None" ] \
+        || [ -z "$JUDGE_ENDPOINT" ] || [ "$JUDGE_ENDPOINT" = "None" ]; then
+        echo "ERROR: ${STACK} did not publish both healthy vLLM endpoints within 30 minutes." >&2
+        exit 1
+    fi
+
+    INFERENCE_URL="http://${INFERENCE_ENDPOINT}:8000/v1"
+    JUDGE_URL="http://${JUDGE_ENDPOINT}:8001/v1"
+    DEMO_STACK=RagbenchDemoStack
+    [ "$ENV_NAME" = "demo" ] || DEMO_STACK="RagbenchDemoStack-${ENV_NAME}"
+    DEMO_INSTANCE_ID="$(aws cloudformation describe-stacks --stack-name "$DEMO_STACK" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)"
+    if [ -z "$DEMO_INSTANCE_ID" ] || [ "$DEMO_INSTANCE_ID" = "None" ]; then
+        echo "ERROR: ${DEMO_STACK} has no running demo instance to configure." >&2
+        exit 1
+    fi
+
+    # The app's bind-mounted config lives on the demo EC2 instance, not in the
+    # operator checkout. Run a narrow, backup-and-restore rewrite there through
+    # SSM Run Command. This is remote administration only, never an endpoint or
+    # tunnel from a laptop to vLLM.
+    REMOTE_COMMAND="cd /opt/ragbench; cp config.yml config.yml.bak; if ! sed -i '/qwen35-9b:/,/execution_boundary: customer_managed/ s|base_url: .*|base_url: ${INFERENCE_URL}|' config.yml || ! sed -i '/qwen38-27b-judge:/,/execution_boundary: customer_managed/ s|base_url: .*|base_url: ${JUDGE_URL}|' config.yml || ! grep -q 'base_url: ${INFERENCE_URL}' config.yml || ! grep -q 'base_url: ${JUDGE_URL}' config.yml; then mv config.yml.bak config.yml; exit 1; fi; rm -f config.yml.bak"
+    COMMAND_ID="$(aws ssm send-command --document-name AWS-RunShellScript --instance-ids "$DEMO_INSTANCE_ID" \
+        --parameters "commands=${REMOTE_COMMAND}" --comment 'Configure private RAGBench vLLM endpoints' \
+        --query 'Command.CommandId' --output text)"
+    if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$DEMO_INSTANCE_ID"; then
+        aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$DEMO_INSTANCE_ID" \
+            --query '[Status,StandardErrorContent]' --output text >&2 || true
+        exit 1
+    fi
+    echo "Inference endpoint: ${INFERENCE_URL}"
+    echo "Judge endpoint: ${JUDGE_URL}"
+
+# Restore inactive Mode B entries to an explicit non-routable placeholder, then
+# terminate the billed GPU instance. No laptop-to-AWS path is ever created.
+[group('aws')]
+llm-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ENV_NAME="${AWS_ENV:-}"
+    if [ -z "$ENV_NAME" ]; then
+        echo "ERROR: no environment selected. Run 'setenv <dev|staging|demo|prod>'." >&2
+        exit 1
+    fi
+    STACK=RagbenchLlmStack
+    [ "$ENV_NAME" = "demo" ] || STACK="RagbenchLlmStack-${ENV_NAME}"
+
+    DEMO_STACK=RagbenchDemoStack
+    [ "$ENV_NAME" = "demo" ] || DEMO_STACK="RagbenchDemoStack-${ENV_NAME}"
+    DEMO_INSTANCE_ID="$(aws cloudformation describe-stacks --stack-name "$DEMO_STACK" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)"
+    if [ -z "$DEMO_INSTANCE_ID" ] || [ "$DEMO_INSTANCE_ID" = "None" ]; then
+        echo "ERROR: ${DEMO_STACK} has no running demo instance to restore." >&2
+        exit 1
+    fi
+    REMOTE_COMMAND="cd /opt/ragbench; cp config.yml config.yml.bak; if ! sed -i '/qwen35-9b:/,/execution_boundary: customer_managed/ s|base_url: .*|base_url: http://unconfigured-private-vllm.invalid/v1|' config.yml || ! sed -i '/qwen38-27b-judge:/,/execution_boundary: customer_managed/ s|base_url: .*|base_url: http://unconfigured-private-vllm.invalid/v1|' config.yml || ! grep -A 5 'qwen35-9b:' config.yml | grep -q 'base_url: http://unconfigured-private-vllm.invalid/v1' || ! grep -A 5 'qwen38-27b-judge:' config.yml | grep -q 'base_url: http://unconfigured-private-vllm.invalid/v1'; then mv config.yml.bak config.yml; exit 1; fi; rm -f config.yml.bak"
+    COMMAND_ID="$(aws ssm send-command --document-name AWS-RunShellScript --instance-ids "$DEMO_INSTANCE_ID" \
+        --parameters "commands=${REMOTE_COMMAND}" --comment 'Restore inactive RAGBench vLLM endpoints' \
+        --query 'Command.CommandId' --output text)"
+    if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$DEMO_INSTANCE_ID"; then
+        aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$DEMO_INSTANCE_ID" \
+            --query '[Status,StandardErrorContent]' --output text >&2 || true
+        exit 1
+    fi
+    cd infra && npx cdk destroy "$STACK" -c llmStack=true --force
+
+# Convert measured aggregate vLLM throughput into the explicit price mapping
+# accepted by rag-server and evals. Use the rate actually paid (spot or
+# on-demand); no self-hosted model is ever implicitly priced at zero.
+[group('aws')]
+llm-price INSTANCE_USD_PER_HOUR INFERENCE_TOKENS_PER_SECOND JUDGE_TOKENS_PER_SECOND:
+    #!/usr/bin/env python3
+    import json
+    instance_usd_per_hour, inference_tps, judge_tps = map(float, (
+        '{{INSTANCE_USD_PER_HOUR}}',
+        '{{INFERENCE_TOKENS_PER_SECOND}}',
+        '{{JUDGE_TOKENS_PER_SECOND}}',
+    ))
+    if min(instance_usd_per_hour, inference_tps, judge_tps) <= 0:
+        raise SystemExit('All inputs must be greater than zero.')
+
+    def rate(tokens_per_second: float) -> float:
+        return instance_usd_per_hour / (tokens_per_second * 3600) * 1_000_000
+
+    print('export MODEL_PRICE_OVERRIDES=' + json.dumps({
+        'Qwen/Qwen3.5-9B': {'input': rate(inference_tps), 'output': rate(inference_tps)},
+        'Qwen/Qwen3.8-27B-FP8': {'input': rate(judge_tps), 'output': rate(judge_tps)},
+    }, separators=(',', ':')))

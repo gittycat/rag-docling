@@ -2,7 +2,7 @@
 
 **A private, self-hostable RAG assistant that answers questions from your own trusted content — with the observability to prove the answers are good.**
 
-RAGBench turns your organisation's documents into an AI assistant that gives accurate, grounded answers instead of the confident guesses you get from a generic chatbot. It runs entirely on your infrastructure, keeps sensitive data private even when using frontier cloud models, and ships with a built-in evaluation service so you can measure answer quality rather than hope for it.
+RAGBench turns your organisation's documents into an AI assistant that gives accurate, grounded answers instead of the confident guesses you get from a generic chatbot. It supports a VPC-private AWS inference mode for confidential demonstrations, frontier cloud models with PII masking, and a built-in evaluation service so you can measure answer quality rather than hope for it.
 
 ---
 
@@ -11,7 +11,7 @@ RAGBench turns your organisation's documents into an AI assistant that gives acc
 Retrieval-Augmented Generation (RAG) has become the most common way enterprises put AI to work: instead of relying on a model's training data, answers are grounded in *your* content. But most RAG deployments have two blind spots — **privacy** (your documents leave the building) and **quality** (whether the answers are correct). RAGBench is built around closing both gaps.
 
 - **Grounded answers, not hallucinations.** Every response is retrieved from and cited against your own corpus.
-- **Privacy by design.** Can run 100% on-premises if the hardware needed is present, or use private cloud models that you control. Alternatively can also use 3rd party frontier models from OpenAI, Anthropic and others using automatic PII redaction on every outbound request.
+- **Privacy by design.** AWS private mode keeps inference and judging in a VPC you control. Laptop Compose can use frontier models from OpenAI and Anthropic with automatic PII redaction on outbound generation requests.
 - **Measured, not guessed.** A dedicated evaluation service scores retrieval and answer quality against public and custom benchmarks.
 - **Own your stack.** Docker Compose, open-source components, no per-seat SaaS lock-in. Currently supports local and AWS deployment.
 
@@ -20,7 +20,7 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 ## Key Features
 
 ### 🔒 Data Privacy
-- **Fully on-premises option** — run every component locally with open-source models; no request ever leaves your network.
+- **VPC-private AWS option** — run inference and evaluation on customer-managed vLLM instances reachable only inside the demo VPC.
 - **Safe cloud-model usage** — when you opt for frontier models (OpenAI, Anthropic, Google, DeepSeek, Moonshot), sensitive data is anonymised before it leaves the perimeter and restored in the response.
 - **Reversible PII masking** — Microsoft Presidio + spaCy detect and token-mask names, emails, and other identifiers across the query, retrieved context, chat history, and session titles, with a corpus-local guardrail and audit logging.
 - **Secrets handled correctly** — API keys and DB credentials via Docker secrets mounted as files, following OWASP guidance (no secrets in environment variables or logs).
@@ -63,23 +63,31 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 | **Evaluation** | In-house metrics, LLM-as-judge (configurable — OpenAI by default) |
 | **Frontend** | SvelteKit, Tailwind CSS, DaisyUI |
 | **Embedding Inference** | Self-hosted HuggingFace Text Embeddings Inference (TEI), a Docker Compose service |
-| **LLM Inference** | OpenAI / Anthropic / Google / DeepSeek / Moonshot (cloud) or a self-hosted vLLM endpoint |
+| **LLM Inference** | OpenAI / Anthropic in laptop mode; VPC-private vLLM in AWS private mode |
 | **Deployment** | Docker Compose |
 
-### Running fully local
+### Deployment modes
+
+There are two deliberately separate modes. Laptop Compose uses OpenAI
+(`gpt-5-mini` for inference and `gpt-5.2` for judging), so the data-policy gate
+correctly refuses a confidential corpus. AWS private mode runs the CPU Compose
+stack on the demo EC2 instance and serves `Qwen/Qwen3.5-9B` plus
+`Qwen/Qwen3.8-27B-FP8` on a separate, VPC-private L40S vLLM instance. It is the
+only supported path for a privacy demonstration; there is no laptop-to-AWS or
+public vLLM endpoint.
+
+### Local Compose components
 
 | Purpose | Model | Runs on |
 |---------|-------|---------|
-| Answer generation | your choice | self-hosted vLLM endpoint (not a Compose service — see `config.yml`'s commented `qwen-vllm` example) |
+| Answer generation | `gpt-5-mini` (default) | OpenAI API |
 | Embeddings | Qwen3-Embedding-0.6B | TEI, a Docker Compose service (`tei`) |
 | Reranking | ms-marco-MiniLM-L-6-v2 | HuggingFace (local) |
 
 Embeddings run locally out of the box — the checked-in `config.yml`'s active
 embedding model (`qwen3-embed`) already points at the in-Compose `tei` service,
-no setup required. Generation defaults to a cloud model; to keep it on-prem too,
-point `active.inference` at a vLLM endpoint you run yourself and no request
-leaves your network. See
-[the getting-running guide](docs/guide/02-getting-running.md) before first boot.
+no setup required. Laptop Compose generation uses a cloud model. For a
+confidential corpus, use AWS private mode; see [the private AWS demo guide](docs/guide/12-private-aws-demo.md).
 
 Evaluation uses an LLM-as-judge, and the shipped judge is a vendor-hosted model.
 Because judge prompts carry retrieved chunks and answers verbatim and are never
@@ -107,9 +115,9 @@ RAGBench ships as a set of Docker Compose services:
 Minimum footprint for local development: Docker, ~4 GB RAM, ~2 GB disk. The
 `tei` service's first cold start downloads its embedding model's weights from
 HuggingFace (a few minutes on a fast connection); `just init` pre-warms this
-so it isn't paid on first `docker compose up`. Production on-prem deployments
-benefit from a GPU server sized for larger open-source models, including for
-self-hosted generation via vLLM.
+so it isn't paid on first `docker compose up`. Private vLLM generation and
+judging use the separate AWS L40S instance described in
+[the private AWS demo guide](docs/guide/12-private-aws-demo.md).
 
 ---
 

@@ -8,6 +8,7 @@ import { buildBundle } from '../lib/bundle';
 import { RagbenchBaseStack } from '../lib/base-stack';
 import { RagbenchImageStack } from '../lib/image-stack';
 import { RagbenchDemoStack } from '../lib/demo-stack';
+import { RagbenchLlmStack } from '../lib/llm-stack';
 
 // Must be a real environment account: loadConfig now refuses to synthesize when
 // the resolved account disagrees with the one ENVIRONMENTS pins for envName.
@@ -58,14 +59,55 @@ function synth(envName: keyof typeof ENVS = 'demo') {
     repositories: base.repositories,
     secrets: base.secrets,
   });
+  const llm = new RagbenchLlmStack(app, 'RagbenchLlmStack', {
+    env,
+    config,
+    vpc: base.vpc,
+    demoInstanceSg: demo.instanceSg,
+  });
 
   return {
     base: Template.fromStack(base),
     image: Template.fromStack(image),
     demo: Template.fromStack(demo),
+    llm: Template.fromStack(llm),
     baseStack: base,
   };
 }
+
+describe('RagbenchLlmStack', () => {
+  test('is private to the demo instance and budgets both vLLM servers explicitly', () => {
+    const { llm } = synth();
+    const ingress = Object.values(llm.findResources('AWS::EC2::SecurityGroupIngress')) as any[];
+
+    expect(ingress).toHaveLength(2);
+    for (const rule of ingress) {
+      expect(rule.Properties.CidrIp).toBeUndefined();
+      expect(rule.Properties.SourceSecurityGroupId).toBeDefined();
+    }
+    const template = JSON.stringify(llm.toJSON());
+    expect(template).toContain('8000');
+    expect(template).toContain('8001');
+    expect(template).toContain('--gpu-memory-utilization 0.30');
+    expect(template).toContain('--gpu-memory-utilization 0.65');
+    expect(template).toContain('Qwen/Qwen3.5-9B');
+    expect(template).toContain('Qwen/Qwen3.8-27B-FP8');
+  });
+
+  test('uses a disposable encrypted 100 GiB root volume for cold model pulls', () => {
+    const { llm } = synth();
+    llm.hasResourceProperties('AWS::EC2::LaunchTemplate', {
+      LaunchTemplateData: Match.objectLike({
+        BlockDeviceMappings: Match.arrayWith([
+          Match.objectLike({
+            DeviceName: '/dev/sda1',
+            Ebs: Match.objectLike({ DeleteOnTermination: true, Encrypted: true, VolumeSize: 100, VolumeType: 'gp3' }),
+          }),
+        ]),
+      }),
+    });
+  });
+});
 
 describe('RagbenchDemoStack', () => {
   test('the instance is reachable only from the ALB, never from the internet', () => {

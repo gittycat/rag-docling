@@ -9,11 +9,12 @@ This covers getting the stack running locally, the `just` recipes that drive day
 - **Docker** (Docker Desktop, OrbStack, or Podman) — the whole stack runs as Compose services.
 
 Nothing needs to run on the host beyond Docker. Embedding inference is the `tei`
-compose service (`Qwen/Qwen3-Embedding-0.6B`), and a self-hosted vLLM model, if
-you configure one, is likewise a compose service. Run `just init` once to warm
-the reranker cache and pull the Qwen3 weights into the `tei_data` volume — on a
-cold volume that download is ~1.2GB and takes a few minutes, and doing it up
-front means the first `just up` isn't waiting on it.
+compose service (`Qwen/Qwen3-Embedding-0.6B`); laptop Compose uses cloud LLMs.
+The supported private LLM deployment is the separate AWS mode described in
+[`docs/guide/12-private-aws-demo.md`](../guide/12-private-aws-demo.md). Run
+`just init` once to warm the reranker cache and pull the Qwen3 weights into the
+`tei_data` volume — on a cold volume that download is ~1.2GB and takes a few
+minutes, and doing it up front means the first `just up` isn't waiting on it.
 
 ## First-time setup
 

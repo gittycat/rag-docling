@@ -93,9 +93,8 @@ grouped by top-level section.
 
 ### `models.inference.*`
 
-Five named model definitions (a sixth, `qwen-vllm`, is commented out and not
-live; a further commented-out placeholder shows what a new cloud-provider
-entry needs, without naming a real one). Each is resolved into the top-level
+Six named model definitions (including the Mode B-only `qwen35-9b`; a further
+commented-out placeholder shows what a new cloud-provider entry needs, without naming a real one). Each is resolved into the top-level
 `llm` object based on `active.inference`, then consumed when building the LLM
 client. `LLMConfig.keep_alive` — the Ollama-only "keep the model resident"
 setting — was deleted from the schema entirely when Ollama was removed; there
@@ -108,13 +107,14 @@ is no replacement column.
 | `claude-haiku` | anthropic | claude-haiku-4-5 | `https://api.anthropic.com` | 120 | true | third_party |
 | `claude-sonnet` | anthropic | claude-sonnet-5 | `https://api.anthropic.com` | 120 | true | third_party |
 | `claude-opus` | anthropic | claude-opus-5 | `https://api.anthropic.com` | 120 | true | third_party |
+| `qwen35-9b` | vllm | Qwen/Qwen3.5-9B | private VPC endpoint written by `just llm-up` | 120 | false | customer_managed |
 
 `timeout` is an int (seconds); `requires_api_key` is a bool; all other fields
 are strings. Google, DeepSeek, and Moonshot are not currently wired up — no
 compose file declares an API-key secret for them — so `config.yml` carries
-only a commented-out template for adding one, not live entries. The commented
-`qwen-vllm` entry (`provider: vllm`, `base_url: http://vllm:8000/v1`) is the
-documented self-hosted-inference path now that no local LLM runs on the host.
+only a commented-out template for adding one, not live entries. `qwen35-9b` is
+the supported self-hosted inference path and is configured only by the AWS
+private-mode procedure.
 
 ### `models.embedding.*`
 
@@ -153,10 +153,11 @@ no separate CLI or dataclass default that can override it (see
 
 | model key | provider | model | requires_api_key | execution_boundary |
 |---|---|---|---|---|
-| `claude-sonnet` | anthropic | claude-sonnet-4-20250514 | true | third_party |
+| `claude-sonnet` | anthropic | claude-sonnet-5 | true | third_party |
 | `claude-opus` | anthropic | claude-opus-4-5-20251101 | true | third_party |
 | `gpt5-mini` | openai | gpt-5-mini | true | third_party |
 | `gpt5-2` | openai | gpt-5.2 | true | third_party |
+| `qwen38-27b-judge` | vllm | Qwen/Qwen3.8-27B-FP8 | false | customer_managed |
 
 `base_url` and `timeout` are also accepted on an eval definition (the shipped
 four all set both). They used to be dropped silently, which made a judge endpoint
@@ -164,6 +165,14 @@ that is not the provider's default URL unaddressable.
 
 `execution_boundary` is required in practice: `data_policy` refuses a judge whose
 boundary is absent. See [`data_policy.*`](#data_policy) below.
+
+The two Mode B entries are inactive by default and deliberately point at an
+explicit non-routable placeholder while the LLM stack is down. `just llm-up`
+replaces only those two `base_url` values with private VPC addresses; `just
+llm-down` restores the placeholders. They are served simultaneously on one L40S
+with vLLM's explicit `--gpu-memory-utilization` split of `0.30` for inference
+and `0.65` for the FP8 judge. This leaves five percent of the 48 GB card for CUDA
+context overhead.
 
 ### `models.reranker.*`
 

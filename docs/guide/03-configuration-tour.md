@@ -191,9 +191,11 @@ it before an experiment. Runs scored with different weights are not comparable.
 
 ## 8. Configure privacy
 
-The strongest posture is local inference plus local embeddings. If you use a cloud
-generation model, `pii.enabled: true` masks detected identifiers in outbound text.
-Masking is reversible pseudonymisation, not anonymisation.
+The strongest supported posture for a confidential corpus is AWS private mode:
+customer-managed vLLM inference and judging with local TEI embeddings. Laptop
+Compose uses cloud generation; there, `pii.enabled: true` masks detected
+identifiers in outbound text. Masking is reversible pseudonymisation, not
+anonymisation. See [Chapter 12](12-private-aws-demo.md).
 
 Important keys:
 

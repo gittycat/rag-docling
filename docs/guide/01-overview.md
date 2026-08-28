@@ -5,8 +5,12 @@ This is not an introduction to RAGs. Knowledge of what embeddings or re-ranking 
 The main differentiators of this RAG are:
 
 - Modular pipeline:  RAGBench is a pipeline with plug and play components. You can replace chunker, embedding model, re-ranker. Retrieval itself is not pluggable: both the keyword (BM25) and vector legs are Postgres indexes over the same table.
-- Can run fully locally: The RAG can be hosted fully on a local server, avoiding leaking any document info to the cloud. This mode requires a fairly well spec'd server  (at least 32GB of RAM)
-- Can be run hybrid:  Local execution can make use of frontier models from the likes of Anthropic, OpenAI for the embedding or inference part.
+- Laptop mode uses Docker Compose with OpenAI for inference and judging. It is
+  appropriate for public datasets, not for demonstrating confidential-corpus
+  privacy.
+- AWS private mode keeps the Compose application on the demo EC2 instance and
+  runs inference plus judging on a separate private L40S vLLM instance in the
+  same VPC. It has no laptop-to-AWS route or public model endpoint.
 
 
 - PII masking: When 3rd party models are used, Personally Identifiable Information (PII) can be masked to preserve the privacy of the info.

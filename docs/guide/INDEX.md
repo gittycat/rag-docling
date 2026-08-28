@@ -26,6 +26,7 @@ It follows one workflow:
 | 9 | [Read the dashboard](09-reading-the-dashboard.md) | Interpret health, experiment, and system panels |
 | 10 | [Troubleshoot](10-troubleshooting.md) | Diagnose startup, ingestion, query, and eval failures |
 | 11 | [Limits and caveats](11-limits-and-caveats.md) | Report what an evaluation can and cannot establish |
+| 12 | [Private AWS demo](12-private-aws-demo.md) | Run private inference and judging in the AWS VPC |
 
 Chapters 1–7 form the main tutorial. Chapters 8–11 are operating references.
 

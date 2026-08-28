@@ -32,6 +32,8 @@ export interface RagbenchConfig {
   readonly imageTag: string;
   /** RagbenchEmbedStack's instance type. g6.xlarge = one NVIDIA L4, 24GB. */
   readonly embedInstanceType: string;
+  /** RagbenchLlmStack's instance type. g6e.xlarge = one NVIDIA L40S, 48GB. */
+  readonly llmInstanceType: string;
   /**
    * Public SSM parameter that resolves to the current Deep Learning Base OSS
    * Nvidia Driver GPU AMI (Ubuntu 24.04) — ships Docker, the NVIDIA driver and
@@ -171,6 +173,7 @@ export function loadConfig(scope: Construct): RagbenchConfig {
     )!,
     imageTag: ctx('imageTag', 'latest')!,
     embedInstanceType: ctx('embedInstanceType', 'g6.xlarge')!,
+    llmInstanceType: ctx('llmInstanceType', 'g6e.xlarge')!,
     // Verified against the AWS DLAMI docs: g6 (L4) is x86_64, and this is the
     // OSS-driver Ubuntu 24.04 base flavour — no framework preinstalled, no
     // second pipeline needed since RagbenchEmbedStack's user data is one

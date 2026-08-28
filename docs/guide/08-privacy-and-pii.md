@@ -4,10 +4,11 @@ RAGBench supports two privacy modes:
 
 | Mode | Configuration | Strength |
 |---|---|---|
-| Keep processing local | Self-hosted `tei` embeddings and a self-hosted `vllm` inference endpoint | Structural: document text is not sent to a model provider |
+| Use AWS private mode | Local `tei` embeddings and VPC-private vLLM inference and judging | Structural: document text remains inside customer-managed AWS infrastructure |
 | Use cloud generation with masking | `pii.enabled: true` and local (`tei`) embeddings | Mitigation: detected identifiers are replaced before cloud calls |
 
-Masking is weaker. Use local processing for genuinely sensitive documents.
+Masking is weaker. Use AWS private mode for genuinely sensitive documents; see
+[Chapter 12](12-private-aws-demo.md).
 
 ## What masking does and does not do
 
@@ -131,9 +132,9 @@ defaults:
 That last one is a deliberate change. `just test-eval` used to pass because one
 global flag said the dataset was public; it never noticed that the tier was
 reaching into your corpus. Every refusal names three ways out: point `active.eval`
-at an in-boundary judge (`just judge-up` starts one — see
-[Chapter 3](03-configuration-tour.md)), declare the index isolated if it really
-is, or declare the corpus non-confidential.
+at the in-boundary AWS judge (`just llm-up` configures it — see
+[Chapter 12](12-private-aws-demo.md)), declare the index isolated if it really is,
+or declare the corpus non-confidential.
 
 Adding `third_party` to `allowed_judge_boundaries` is a fourth way out and a
 deliberate statement that your corpus may reach a vendor API — a decision to

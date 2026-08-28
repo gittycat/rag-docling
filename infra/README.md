@@ -1,6 +1,6 @@
 # RAGBench AWS infrastructure
 
-Four CDK stacks that host RAGBench on AWS for pre-planned demos and bulk
+Five CDK stacks host RAGBench on AWS for pre-planned demos and bulk
 re-ingestion runs, provisioned on demand and destroyed afterwards so idle cost is
 roughly the price of a coffee per month.
 
@@ -10,6 +10,7 @@ roughly the price of a coffee per month.
 | `RagbenchImageStack` | permanent | EC2 Image Builder pipeline that bakes the golden AMI |
 | `RagbenchDemoStack` | ephemeral — deploy before a demo, destroy after | one `m7g.xlarge`, ALB + Cognito auth, A record |
 | `RagbenchEmbedStack` | ephemeral, **opt-in only** — deploy for a bulk re-ingest, destroy after | one spot `g6.xlarge` (L4 GPU) running TEI + Qwen3-Embedding-0.6B, for bulk re-ingestion only |
+| `RagbenchLlmStack` | ephemeral, **opt-in only** — deploy before a private demo, destroy after | one spot `g6e.xlarge` (L40S GPU) running the private inference and judge vLLM servers |
 
 The split is by **lifecycle**, not by function: anything slow to create (ACM
 issuance, DNS delegation) or holding state that must survive a teardown (Cognito
@@ -26,6 +27,13 @@ nothing on it is reachable from the internet. It writes its private IP to SSM
 parameter `/ragbench/<envName>/embed-endpoint` once TEI reports healthy (from
 user data, not from CloudFormation — see the comment in `embed-stack.ts` for
 why), which is how the ingestion tooling finds it.
+
+`RagbenchLlmStack` is likewise gated behind `-c llmStack=true`, so a bare CDK
+deploy cannot create its billed GPU instance. Its two vLLM ports accept traffic
+only from the demo instance security group; it writes the private inference and
+judge endpoints to SSM after both servers are healthy. Use `just llm-up` and
+`just llm-down` to manage the complete private-demo lifecycle. See
+[`docs/guide/12-private-aws-demo.md`](../docs/guide/12-private-aws-demo.md).
 
 ## Environments
 

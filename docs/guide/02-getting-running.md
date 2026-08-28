@@ -34,15 +34,14 @@ active:
 
 Embedding already runs locally out of the box — `qwen3-embed` points at the
 in-Compose `tei` service, nothing to install. This configuration needs only an
-OpenAI API key, for generation and the eval judge. For local generation too,
-change `active.inference` to a self-hosted vLLM endpoint you run yourself (see
-the commented `qwen-vllm` example in `config.yml`) — there is no zero-setup
-local LLM option any more.
+OpenAI API key, for generation and the eval judge. Laptop Compose has no local
+LLM option. For a confidential corpus, use the separate AWS private mode in
+[Chapter 12](12-private-aws-demo.md).
 
 Available providers are OpenAI, Anthropic, `tei` (embedding only, self-hosted),
-and `vllm` (self-hosted, OpenAI-compatible). The configured generation models
-include `gpt5-mini`, `gpt56-luna`, `claude-haiku`, `claude-sonnet`, and
-`claude-opus`.
+and `vllm` (the VPC-private AWS mode). The configured generation models include
+`gpt5-mini`, `gpt56-luna`, `claude-haiku`, `claude-sonnet`, `claude-opus`, and
+the AWS-mode-only `qwen35-9b`.
 
 The only configured embedding model is `qwen3-embed` (`tei`, self-hosted), plus
 `openai-ada`, `openai-3-small`, and `openai-3-large` for OpenAI.

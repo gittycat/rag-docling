@@ -278,7 +278,7 @@ refusal is deliberate and is not affected by `pii.enabled`.
 | The judge's boundary is not in `data_policy.allowed_judge_boundaries` | Point `active.eval` at an allowed judge, or widen the allow-list deliberately |
 | You are running `end_to_end` against a throwaway index that holds only the eval's own documents | Set `data_policy.eval_index_is_isolated: true` (or `EVAL_INDEX_IS_ISOLATED=true` for an ephemeral stack) |
 | No document in the corpus is actually confidential | Set `data_policy.corpus_confidential: false` |
-| You want judged metrics on your own documents | `just judge-up` starts the in-boundary judge, then point `active.eval` at it |
+| You want judged metrics on your own documents | Start AWS private mode with `just llm-up`; it configures the in-boundary judge on the demo instance |
 
 The gate reads the datasets and tier of *this run*, so `--datasets squad_v2 --tier
 generation` can be allowed while `--datasets golden` is refused with the same

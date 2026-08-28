@@ -7,8 +7,10 @@ This specific RAG focuses on two core features: data privacy and observability.
 
 ## Data Privacy
 
-- Option to run fully on-prem (locally). No calls outside the intranet needed.
-For decent performance, this requires a dedicated server spec'd for large open source models.
+- Confidential-corpus privacy is supported in AWS private mode: the demo Compose
+stack uses a separate VPC-private vLLM L40S instance for inference and judging.
+Laptop Compose uses cloud models, so its data-policy gate correctly refuses a
+confidential-corpus evaluation. See [the private AWS demo guide](docs/guide/12-private-aws-demo.md).
 - Frontier cloud models can also be used. Privacy is then ensured by performing data anonymization on any request to the cloud and inserting back the redacted data on responses. This PII masking is opt-in (`pii.enabled` in `config.yml`) and covers queries, chat history, retrieved context, session titles, and document ingestion.
 
 ## Observability
@@ -32,7 +34,7 @@ These metrics allow admins to determine the best combinations of LLM models and 
 - **RAG Pipeline**: Docling, LlamaIndex
 - **Vector store**: pgvector + pgvectorscale StreamingDiskANN, inside the same PostgreSQL
 - **Search**: Hybrid (BM25 + Vector + RRF)
-- **LLM**: cloud providers (OpenAI, Anthropic, etc.) or a self-hosted vLLM endpoint
+- **LLM**: OpenAI or Anthropic in laptop mode; private vLLM in AWS private mode
 - **Embeddings**: self-hosted HuggingFace Text Embeddings Inference (TEI), runs as a Docker Compose service
 - **Infrastructure**: Docker compose
 
@@ -70,11 +72,9 @@ brew install orbstack            # or Docker Desktop if you prefer
 **Linux:** install Docker via your distribution's usual method.
 
 Embedding inference (TEI, serving `Qwen/Qwen3-Embedding-0.6B`) runs as a Docker
-Compose service — nothing to install on the host beyond Docker itself. Fully
-local generation is not out-of-the-box the way embeddings are: it requires
-pointing `active.inference` at a self-hosted vLLM endpoint you run separately
-(see the commented `qwen-vllm` example in `config.yml`); otherwise generation
-uses a cloud provider.
+Compose service — nothing to install on the host beyond Docker itself. Laptop
+Compose uses cloud generation. For private inference and judging, deploy the
+separate AWS mode described in [the private AWS demo guide](docs/guide/12-private-aws-demo.md).
 
 ### 2. Download ragbench source
 
@@ -100,7 +100,7 @@ active:
 
 To switch models, change the active model name to any model defined in the `models` section. `qwen3-embed` (self-hosted TEI) works out of the box — it's a Docker Compose service, not a host install. Cloud models require API keys.
 
-> Note: the checked-in `config.yml`'s embedding model already runs locally via TEI; `active.inference` and `active.eval` default to cloud models and need matching API key files under `secrets/`. To keep generation on-prem too, point `active.inference` at a self-hosted vLLM endpoint (see the commented `qwen-vllm` example in `config.yml`) — there is no local, zero-setup LLM option any more.
+> Note: the checked-in `config.yml`'s embedding model already runs locally via TEI; `active.inference` and `active.eval` default to cloud models and need matching API key files under `secrets/`. The `qwen35-9b` inference and `qwen38-27b-judge` eval entries are for the separate AWS private mode, configured by `just llm-up`.
 >
 > **Breaking change note:** the active embedding model determines `vector_store.dimension` and the `document_chunks.embedding` column type. Switching embedding models always invalidates every stored vector — see [getting-running](docs/guide/02-getting-running.md) before changing it on a database that already has documents in it.
 

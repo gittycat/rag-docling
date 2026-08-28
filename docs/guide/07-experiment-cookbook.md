@@ -57,15 +57,12 @@ moves, the evidence is weak.
 Warm the reranker before measuring latency. Its first query after startup includes
 a one-time model load.
 
-## Recipe 2 — Local vs cloud generation model
+## Recipe 2 — AWS private vs cloud generation
 
-Uncomment and point the `qwen-vllm` entry in `config.yml` at a vLLM endpoint you
-run yourself, then change:
-
-```yaml
-active:
-  inference: qwen-vllm  # was gpt5-mini
-```
+Use [Chapter 12](12-private-aws-demo.md) to start AWS private mode, which
+configures the demo instance with the private inference and judge endpoints.
+For each mode, select the appropriate active inference model on the environment
+being tested and keep the same corpus, prompt, retrieval settings, and judge.
 
 | Item | Choice |
 |---|---|
@@ -78,12 +75,10 @@ This experiment tests whether the model follows the context and abstention
 instructions. Include unanswerable questions or the abstention rates will be
 undefined.
 
-The default judge and cloud generator are both OpenAI models. An LLM judge may
-favour its own family. For an important decision, repeat the comparison with an
-Anthropic judge and review a sample of answers manually.
-
-Local latency depends on your hardware. The cost metric records self-hosted
-vLLM API cost as zero but does not include hardware.
+An LLM judge may favour its own family. For an important decision, review a
+sample of answers manually. Supply measured AWS rates using `just llm-price`;
+the resulting `MODEL_PRICE_OVERRIDES` includes instance time rather than treating
+private vLLM as free.
 
 ## Recipe 3 — Chunk size
 

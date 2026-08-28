@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Four stacks, split by lifecycle:
+ * Five stacks, split by lifecycle:
  *
  *   RagbenchBaseStack   persistent — network, DNS, cert, Cognito, ECR, secrets
  *   RagbenchImageStack  the golden AMI pipeline
  *   RagbenchDemoStack   ephemeral — deployed before a demo, destroyed after
  *   RagbenchEmbedStack  ephemeral burst GPU embedder — opt-in only, see below
+ *   RagbenchLlmStack    ephemeral private GPU inference and judge — opt-in only
  */
 import * as cdk from 'aws-cdk-lib';
 import { loadConfig, stackName } from '../lib/config';
@@ -13,6 +14,7 @@ import { RagbenchBaseStack } from '../lib/base-stack';
 import { RagbenchImageStack } from '../lib/image-stack';
 import { RagbenchDemoStack } from '../lib/demo-stack';
 import { RagbenchEmbedStack } from '../lib/embed-stack';
+import { RagbenchLlmStack } from '../lib/llm-stack';
 
 const app = new cdk.App();
 const config = loadConfig(app);
@@ -71,6 +73,22 @@ if (embedStackEnabled) {
   // Needs demo.instanceSg to scope its ingress rule, not because it needs the
   // demo instance to exist first at runtime.
   embed.addStackDependency(demo);
+}
+
+// As with the burst embedder, never add this stack unless the operator asks for
+// it explicitly. A bare `cdk deploy --all` must never create a billed L40S.
+const llmStackEnabled = String(app.node.tryGetContext('llmStack') ?? 'false') === 'true';
+if (llmStackEnabled) {
+  const llm = new RagbenchLlmStack(app, 'RagbenchLlmStack', {
+    env,
+    config,
+    stackName: stackName(config, 'RagbenchLlmStack'),
+    vpc: base.vpc,
+    demoInstanceSg: demo.instanceSg,
+    description: 'RAGBench — ephemeral private L40S vLLM inference and judge (opt-in: -c llmStack=true)',
+  });
+  llm.addStackDependency(base);
+  llm.addStackDependency(demo);
 }
 
 cdk.Tags.of(app).add('Project', config.project);

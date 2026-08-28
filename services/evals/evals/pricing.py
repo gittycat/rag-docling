@@ -41,8 +41,8 @@ MODEL_COSTS: dict[str, dict[str, float]] = {
     "claude-opus-4-5-20251101": {"input": 5.00, "output": 25.00},
     "claude-sonnet-5": {"input": 3.00, "output": 15.00},
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
-    # Retired 2026-06-15 (returns 404) but still referenced by config.yml's
-    # eval tier — priced so a run against it is not scored as free.
+    # Retained for historical runs only — priced so an old run is not scored as
+    # free even though this retired id returns 404 for new calls.
     "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
     "claude-haiku-3-5-20241022": {"input": 0.80, "output": 4.00},
