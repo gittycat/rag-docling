@@ -501,3 +501,52 @@ three members forces one of them to be mislabelled. The cost of getting this
 wrong is not a failed request — it is a privacy claim in the documentation that
 the code does not implement. Naming the real positions and defaulting to refusal
 is cheaper than any amount of care applied to the wrong abstraction.
+
+## Self-managed inference over Bedrock, despite `aws_managed` being permitted
+
+**Context.** `allowed_judge_boundaries` defaults to `{customer_managed,
+aws_managed}`, so Bedrock and SageMaker are policy-legal for both inference and
+judging. Hosting the models on AWS rather than a laptop also removes the hardware
+ceiling that made a 32B judge impractical locally. That leaves a real choice
+between two permitted boundaries, and the boundary enum deliberately does not
+make it for us.
+
+**What Bedrock actually guarantees.** More than the usual vendor-API posture, and
+it is worth stating precisely rather than dismissing it. Bedrock deploys each
+provider's models into a dedicated AWS-operated account; the provider cannot
+reach it, and invocations stay on the AWS network. `PutAccountDataRetention`
+takes a `mode` of `none`, under which prompts and responses are discarded
+immediately, and an SCP denying that call for any value other than `none`,
+attached at the root OU, makes the setting non-negotiable account-wide. Models
+declare `allowed_modes`; one that requires `provider_data_share` reports
+`status: "unavailable"` under `none` rather than silently downgrading — the same
+fail-closed shape this codebase already applies to unknown boundaries. A VPC
+interface endpoint keeps the traffic off the public internet.
+
+**The residual, which is the whole decision.** Bedrock runs automated CSAM
+detection over model input and output, and AWS states that flagged content may be
+stored and reviewed **even when `mode` is `none`**. The probability is negligible
+and the mechanism is legitimate; that is not the point. The point is that the
+guarantee we make to a customer about a confidential corpus becomes "no human
+sees this, unless an automated classifier we do not control decides otherwise" —
+a claim with a carve-out that we can neither inspect nor disable. On our own
+EC2 instance there is no such clause to explain. A privacy posture whose weakest
+sentence needs a footnote is worth avoiding when the alternative is a container
+we already run.
+
+**Resolution.** Self-managed vLLM behind the VPC boundary is the primary path for
+both inference and judging; Bedrock stays permitted for corpora that are not
+confidential, and for that case it is the better tool. Cost did not decide this.
+Per-token Bedrock is cheaper than a busy GPU is per hour, but RAGBench is spun up
+for demos and torn down afterwards, so the GPU only bills while it is genuinely
+working, and the two land close enough that the difference is not worth a privacy
+carve-out. Self-hosting also keeps the deployment portable: an OpenAI-compatible
+`base_url` moves to another provider without touching anything above the config,
+which matters more than the hourly rate, given that AWS's cheapest rates require
+a multi-year commitment we are not in a position to make.
+
+**Lesson.** "Can this vendor be trusted?" is the wrong question when the vendor
+publishes its controls; the useful question is what the controls still permit
+after every switch is set correctly. Bedrock's answer is small but non-empty and
+non-configurable, and an irreducible exception is a different kind of risk from a
+large one you can turn off.

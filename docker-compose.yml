@@ -155,7 +155,7 @@ services:
   # the intended behaviour, not a bug to work around.
   vllm:
     profiles: ["judge"]
-    image: vllm/vllm-openai:v0.11.0
+    image: vllm/vllm-openai:v0.28.0
     restart: unless-stopped
     # Qwen3-32B at 4-bit AWQ needs ~24GB of VRAM (a standard figure for the
     # quantization, not measured here). Override JUDGE_MODEL for a smaller

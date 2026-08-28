@@ -1025,6 +1025,7 @@ def query_rag_with_context(
         Same shape as query_rag(): answer, sources, session_id, citations, metrics
     """
     from llama_index.core.llms import ChatMessage
+    from infrastructure.config.models_config import get_models_config
 
     reset_token_counter()
     query_start = time.time()
@@ -1035,17 +1036,44 @@ def query_rag_with_context(
         context_lines.append(f"[{i}] (source: {p['doc_id']})\n{p['text']}")
     context_str = "\n\n".join(context_lines)
 
+    # The grounding rules live in `prompts.context` (config.yml) — "answer using
+    # ONLY the context", "never use prior knowledge", and the exact abstention
+    # sentence the abstention metrics look for. This function used to hand-roll
+    # "Context:\n...\n\nQuestion: ..." and send only `prompts.system`, which
+    # carries no grounding rule at all: the generation tier then measured a prompt
+    # that exists nowhere else, and scored an unanswerable question as answered
+    # every time because the model was never told to abstain.
+    #
+    # Assembled the way CondensePlusContextChatEngine assembles it on the retrieval
+    # path — context prompt folded into the system message, question as the user
+    # message — so this tier evaluates the deployed prompt rather than a copy.
+    include_citations = False
+    citation_format = "numeric"
+    try:
+        eval_config = get_models_config().eval
+        include_citations = eval_config.citation_scope == "explicit"
+        citation_format = eval_config.citation_format
+    except Exception:
+        include_citations = False
+
     system_prompt = get_system_prompt()
-    user_content = f"Context:\n{context_str}\n\nQuestion: {query_text}"
+    # replace(), not format(): the filled context is arbitrary document text and
+    # any brace in it would blow up str.format.
+    context_block = get_context_prompt(
+        include_citations=include_citations,
+        citation_format=citation_format,
+    ).replace("{context_str}", context_str)
 
     messages = [
-        ChatMessage(role="system", content=system_prompt),
-        ChatMessage(role="user", content=user_content),
+        ChatMessage(role="system", content=f"{system_prompt}\n\n{context_block}"),
+        ChatMessage(role="user", content=query_text),
     ]
 
     logger.info(f"[QUERY_WITH_CONTEXT] Calling LLM with {len(context_passages)} passages")
     response = Settings.llm.chat(messages)
-    answer = str(response)
+    # str(ChatResponse) is "assistant: <text>" — the role prefix was landing in
+    # every answer this endpoint returned, and from there into the judge's input.
+    answer = response.message.content or ""
 
     token_counts = get_token_counts()
 

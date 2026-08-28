@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from schemas.health import ModelsInfoResponse, ConfigResponse
 from pipelines.inference import get_inference_config
 from infrastructure.config.models_config import get_models_config
+from infrastructure.llm.prompts import get_prompt_fingerprint
 from services.pricing import resolve_rates
 
 router = APIRouter()
@@ -51,6 +52,7 @@ async def get_models_info():
         cost_per_1m_input_tokens=cost_rates.input_per_1m if cost_rates else None,
         cost_per_1m_output_tokens=cost_rates.output_per_1m if cost_rates else None,
         cost_rate_source=cost_rates.source if cost_rates else "unpriced",
+        prompt_fingerprint=get_prompt_fingerprint(),
     )
 
 

@@ -20,6 +20,10 @@ class ModelsInfoResponse(BaseModel):
     cost_per_1m_input_tokens: float | None
     cost_per_1m_output_tokens: float | None
     cost_rate_source: str = "unpriced"  # "table" | "environment" | "unpriced"
+    # Hash of the rendered prompts. Consumers key caches and run provenance on it;
+    # null means an older server that does not report prompts, which is not the
+    # same as "the prompts are unchanged".
+    prompt_fingerprint: str | None = None
 
 
 class ConfigResponse(BaseModel):

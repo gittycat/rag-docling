@@ -8,12 +8,12 @@ RAGBench turns your organisation's documents into an AI assistant that gives acc
 
 ## Why RAGBench
 
-Retrieval-Augmented Generation (RAG) has become the most common way enterprises put AI to work: instead of relying on a model's training data, answers are grounded in *your* content. But most RAG deployments have two blind spots — **privacy** (your documents leave the building) and **quality** (nobody actually measures whether the answers are correct). RAGBench is built around closing both gaps.
+Retrieval-Augmented Generation (RAG) has become the most common way enterprises put AI to work: instead of relying on a model's training data, answers are grounded in *your* content. But most RAG deployments have two blind spots — **privacy** (your documents leave the building) and **quality** (whether the answers are correct). RAGBench is built around closing both gaps.
 
 - **Grounded answers, not hallucinations.** Every response is retrieved from and cited against your own corpus.
-- **Privacy by design.** Run 100% on-premises, or use cloud models with automatic PII redaction on every outbound request.
+- **Privacy by design.** Can run 100% on-premises if the hardware needed is present, or use private cloud models that you control. Alternatively can also use 3rd party frontier models from OpenAI, Anthropic and others using automatic PII redaction on every outbound request.
 - **Measured, not guessed.** A dedicated evaluation service scores retrieval and answer quality against public and custom benchmarks.
-- **Own your stack.** Docker Compose, open-source components, no per-seat SaaS lock-in.
+- **Own your stack.** Docker Compose, open-source components, no per-seat SaaS lock-in. Currently supports local and AWS deployment.
 
 ---
 
