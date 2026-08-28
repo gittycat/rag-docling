@@ -26,6 +26,8 @@ from evals.schemas import (
     QueryMetrics,
     QueryType,
     RetrievedChunk,
+    StageItem,
+    StageTrace,
     TokenUsage,
 )
 
@@ -71,6 +73,7 @@ def _response_to_dict(r: EvalResponse) -> dict[str, Any]:
         "answer": r.answer,
         "session_id": r.session_id,
         "latency_ms": r.metrics.latency_ms if r.metrics else None,
+        "time_to_first_token_ms": r.metrics.time_to_first_token_ms if r.metrics else None,
         "token_usage": (
             {
                 "prompt_tokens": r.metrics.token_usage.prompt_tokens,
@@ -89,6 +92,29 @@ def _response_to_dict(r: EvalResponse) -> dict[str, Any]:
                 "text_span": c.text_span,
             }
             for c in r.citations
+        ],
+        "stages": [
+            {
+                "name": stage.name,
+                "duration_ms": stage.duration_ms,
+                "item_count": stage.item_count,
+                "items": (
+                    [
+                        {
+                            "chunk_id": item.chunk_id,
+                            "doc_id": item.doc_id,
+                            "score": item.score,
+                            "rank": item.rank,
+                        }
+                        for item in stage.items
+                    ]
+                    if stage.items is not None
+                    else None
+                ),
+                "status": stage.status,
+                "error": stage.error,
+            }
+            for stage in (r.metrics.stages if r.metrics else [])
         ],
         "retrieved_chunks": [
             {
@@ -159,6 +185,18 @@ def _response_from_dict(d: dict[str, Any]) -> EvalResponse:
             if usage
             else None
         ),
+        stages=[
+            StageTrace(
+                name=stage["name"],
+                duration_ms=stage["duration_ms"],
+                item_count=stage["item_count"],
+                items=[StageItem(**item) for item in stage["items"]] if stage.get("items") is not None else None,
+                status=stage.get("status", "ok"),
+                error=stage.get("error"),
+            )
+            for stage in d.get("stages", [])
+        ],
+        time_to_first_token_ms=d.get("time_to_first_token_ms"),
     )
     return EvalResponse(
         question_id=d["question_id"],

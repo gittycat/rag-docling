@@ -13,6 +13,8 @@ from evals.schemas import (
     GoldPassage,
     QueryMetrics,
     RetrievedChunk,
+    StageItem,
+    StageTrace,
     TokenUsage,
 )
 
@@ -37,6 +39,15 @@ def sample_pair():
         metrics=QueryMetrics(
             latency_ms=123.4,
             token_usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+            time_to_first_token_ms=12.3,
+            stages=[
+                StageTrace(
+                    name="fusion",
+                    duration_ms=4.5,
+                    item_count=1,
+                    items=[StageItem(chunk_id="d1:1", doc_id="d1", score=0.9, rank=1)],
+                )
+            ],
         ),
     )
     return question, response
@@ -58,6 +69,8 @@ class TestSamples:
         assert loaded_r[0].citations[0].doc_id == "d1"
         assert loaded_r[0].retrieved_chunks[0].score == 0.9
         assert loaded_r[0].metrics.token_usage.total_tokens == 15
+        assert loaded_r[0].metrics.time_to_first_token_ms == 12.3
+        assert loaded_r[0].metrics.stages[0].items[0].chunk_id == "d1:1"
 
     def test_sidecar_sits_next_to_the_run_with_a_distinct_suffix(self, tmp_path):
         run_path = tmp_path / "abc123_20260101_000000.json"

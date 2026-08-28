@@ -563,7 +563,117 @@ def _unmask_source_nodes(source_nodes: List[NodeWithScore], token_mapping: Token
 # CondensePlusContextChatEngine._condense_question / _acondense_question
 # already short-circuit to the raw query when chat_history is empty — no
 # wrapper needed for the first-message-in-session case.
-class _AsyncSafeCondensePlusContextChatEngine(CondensePlusContextChatEngine):
+def _stage_items(nodes: List[NodeWithScore]) -> list[Dict]:
+    return [
+        {
+            "chunk_id": node_with_score.node.node_id,
+            "doc_id": str(node_with_score.node.metadata.get("document_id", "")),
+            "score": node_with_score.score,
+            "rank": rank,
+        }
+        for rank, node_with_score in enumerate(nodes, start=1)
+    ]
+
+
+def _append_stage_trace(
+    stage_traces: list[Dict] | None,
+    name: str,
+    duration_ms: float,
+    nodes: List[NodeWithScore] | None = None,
+    *,
+    status: str = "ok",
+    error: str | None = None,
+) -> None:
+    if stage_traces is None:
+        return
+    stage_traces.append(
+        {
+            "name": name,
+            "duration_ms": duration_ms,
+            "item_count": len(nodes) if nodes is not None else 0,
+            "items": _stage_items(nodes) if nodes is not None else None,
+            "status": status,
+            "error": error,
+        }
+    )
+
+
+def _context_assembly_duration_ms(chat_engine) -> float:
+    value = getattr(chat_engine, "_last_context_assembly_ms", 0.0)
+    return value if isinstance(value, (int, float)) else 0.0
+
+
+def _retriever_stage_traces(
+    retriever, nodes: List[NodeWithScore], duration_ms: float
+) -> list[Dict]:
+    traces = getattr(retriever, "last_stage_traces", None)
+    if isinstance(traces, list):
+        return traces
+
+    # HybridRRFRetriever records both legs and fusion itself. A vector-only
+    # deployment has no discarded leg list to expose, so capture its one stage
+    # here without inventing a BM25 or fusion result.
+    from infrastructure.search.vector_retriever import get_vector_health
+
+    health = get_vector_health()
+    error = health.get("last_error")
+    return [
+        {
+            "name": "vector",
+            "duration_ms": duration_ms,
+            "item_count": len(nodes),
+            "items": _stage_items(nodes),
+            "status": "degraded" if error else "ok",
+            "error": error,
+        }
+    ]
+
+
+class _StageTracingCondensePlusContextChatEngine(CondensePlusContextChatEngine):
+    """Chat engine that records retrieval and context preparation without altering it."""
+
+    def _get_nodes(self, message: str) -> List[NodeWithScore]:
+        retrieval_started = time.perf_counter()
+        nodes = self._retriever.retrieve(message)
+        retrieval_duration_ms = (time.perf_counter() - retrieval_started) * 1000
+        stage_traces = getattr(self, "_stage_traces", None)
+        if isinstance(stage_traces, list):
+            stage_traces.extend(
+                _retriever_stage_traces(self._retriever, nodes, retrieval_duration_ms)
+            )
+
+        pre_rerank_nodes = nodes
+        rerank_duration_ms = 0.0
+        reranker_ran = False
+        for postprocessor in self._node_postprocessors or []:
+            started = time.perf_counter()
+            nodes = postprocessor.postprocess_nodes(nodes, query_bundle=QueryBundle(message))
+            if isinstance(postprocessor, SentenceTransformerRerank):
+                reranker_ran = True
+                rerank_duration_ms += (time.perf_counter() - started) * 1000
+        _append_stage_trace(
+            stage_traces if isinstance(stage_traces, list) else None,
+            "rerank",
+            rerank_duration_ms,
+            nodes if reranker_ran else pre_rerank_nodes,
+        )
+        return nodes
+
+    def _run_c3(self, *args, **kwargs):
+        started = time.perf_counter()
+        result = super()._run_c3(*args, **kwargs)
+        self._last_context_assembly_ms = (time.perf_counter() - started) * 1000
+        stage_traces = getattr(self, "_stage_traces", None)
+        _append_stage_trace(
+            stage_traces if isinstance(stage_traces, list) else None,
+            "context_assembly",
+            self._last_context_assembly_ms,
+            result[2],
+        )
+        return result
+
+
+class _AsyncSafeCondensePlusContextChatEngine(_StageTracingCondensePlusContextChatEngine):
     """CondensePlusContextChatEngine variant safe to `await` directly on the
     main event loop.
 
@@ -574,12 +684,46 @@ class _AsyncSafeCondensePlusContextChatEngine(CondensePlusContextChatEngine):
     """
 
     async def _aget_nodes(self, message: str) -> List[NodeWithScore]:
+        retrieval_started = time.perf_counter()
         nodes = await self._retriever.aretrieve(message)
-        for postprocessor in self._node_postprocessors:
+        retrieval_duration_ms = (time.perf_counter() - retrieval_started) * 1000
+        stage_traces = getattr(self, "_stage_traces", None)
+        if isinstance(stage_traces, list):
+            stage_traces.extend(
+                _retriever_stage_traces(self._retriever, nodes, retrieval_duration_ms)
+            )
+
+        pre_rerank_nodes = nodes
+        rerank_duration_ms = 0.0
+        reranker_ran = False
+        for postprocessor in self._node_postprocessors or []:
+            started = time.perf_counter()
             nodes = await asyncio.to_thread(
                 postprocessor.postprocess_nodes, nodes, query_bundle=QueryBundle(message)
             )
+            if isinstance(postprocessor, SentenceTransformerRerank):
+                reranker_ran = True
+                rerank_duration_ms += (time.perf_counter() - started) * 1000
+        _append_stage_trace(
+            stage_traces if isinstance(stage_traces, list) else None,
+            "rerank",
+            rerank_duration_ms,
+            nodes if reranker_ran else pre_rerank_nodes,
+        )
         return nodes
+
+    async def _arun_c3(self, *args, **kwargs):
+        started = time.perf_counter()
+        result = await super()._arun_c3(*args, **kwargs)
+        self._last_context_assembly_ms = (time.perf_counter() - started) * 1000
+        stage_traces = getattr(self, "_stage_traces", None)
+        _append_stage_trace(
+            stage_traces if isinstance(stage_traces, list) else None,
+            "context_assembly",
+            self._last_context_assembly_ms,
+            result[2],
+        )
+        return result
 
 
 def create_chat_engine(
@@ -590,6 +734,7 @@ def create_chat_engine(
     async_safe: bool = False,
     memory_override: Optional[ChatMemoryBuffer] = None,
     pii_token_mapping: Optional[TokenMapping] = None,
+    stage_traces: list[Dict] | None = None,
 ) -> CondensePlusContextChatEngine:
     """
     Create chat engine with hybrid search, reranking, and conversational memory.
@@ -654,7 +799,7 @@ def create_chat_engine(
         logger.info("[CHAT_ENGINE] Using hybrid retriever (pg_textsearch BM25 + pgvector + RRF)")
     else:
         logger.info("[CHAT_ENGINE] Using vector retriever only")
-    engine_class = _AsyncSafeCondensePlusContextChatEngine if async_safe else CondensePlusContextChatEngine
+    engine_class = _AsyncSafeCondensePlusContextChatEngine if async_safe else _StageTracingCondensePlusContextChatEngine
     chat_engine = engine_class.from_defaults(
         retriever=retriever,
         memory=memory,
@@ -664,6 +809,7 @@ def create_chat_engine(
         condense_prompt=condense_prompt,
         verbose=False
     )
+    chat_engine._stage_traces = stage_traces
 
     logger.info("[CHAT_ENGINE] Chat engine created successfully")
     return chat_engine
@@ -812,6 +958,7 @@ def query_rag(
 
     logger.info(f"[QUERY] Processing query for session: {session_id} (temporary={is_temporary})")
     query_start = time.time()
+    stage_traces: list[Dict] = []
 
     # Reset token counter before query
     reset_token_counter()
@@ -832,11 +979,19 @@ def query_rag(
         ensure_metadata=ensure_metadata,
         memory_override=pii_ctx.scratch_memory if pii_ctx else None,
         pii_token_mapping=pii_ctx.token_mapping if pii_ctx else None,
+        stage_traces=stage_traces,
     )
 
     # Execute query
     logger.info(f"[QUERY] Executing RAG query...")
+    generation_started = time.perf_counter()
     response = chat_engine.chat(pii_ctx.masked_query if pii_ctx else query_text)
+    generation_duration_ms = max(
+        (time.perf_counter() - generation_started) * 1000
+        - _context_assembly_duration_ms(chat_engine),
+        0.0,
+    )
+    _append_stage_trace(stage_traces, "generation", generation_duration_ms)
 
     # Capture token usage immediately after query
     token_counts = get_token_counts()
@@ -871,6 +1026,7 @@ def query_rag(
     answer = _finalize_pii_masking(pii_ctx, query_text, str(response), session_id) if pii_ctx else str(response)
 
     citations = None
+    citation_started = time.perf_counter()
     if include_chunks:
         try:
             from infrastructure.config.models_config import get_models_config
@@ -880,6 +1036,7 @@ def query_rag(
                 citations = extract_numeric_citations(answer, sources)
         except Exception:
             citations = None
+    _append_stage_trace(stage_traces, "citation", (time.perf_counter() - citation_started) * 1000)
 
     # Update session metadata (non-temporary sessions only)
     if update_session_metadata and not is_temporary:
@@ -905,6 +1062,7 @@ def query_rag(
         'metrics': {
             'latency_ms': latency_ms,
             'token_usage': token_counts if token_counts['total_tokens'] > 0 else None,
+            'stages': stage_traces,
         },
     }
 
@@ -931,6 +1089,7 @@ async def query_rag_async(
 
     logger.info(f"[QUERY] Processing async query for session: {session_id} (temporary={is_temporary})")
     query_start = time.time()
+    stage_traces: list[Dict] = []
 
     reset_token_counter()
 
@@ -948,10 +1107,18 @@ async def query_rag_async(
         async_safe=True,
         memory_override=pii_ctx.scratch_memory if pii_ctx else None,
         pii_token_mapping=pii_ctx.token_mapping if pii_ctx else None,
+        stage_traces=stage_traces,
     )
 
     logger.info(f"[QUERY] Executing async RAG query...")
+    generation_started = time.perf_counter()
     response = await chat_engine.achat(pii_ctx.masked_query if pii_ctx else query_text)
+    generation_duration_ms = max(
+        (time.perf_counter() - generation_started) * 1000
+        - _context_assembly_duration_ms(chat_engine),
+        0.0,
+    )
+    _append_stage_trace(stage_traces, "generation", generation_duration_ms)
 
     token_counts = get_token_counts()
 
@@ -971,6 +1138,7 @@ async def query_rag_async(
     )
 
     citations = None
+    citation_started = time.perf_counter()
     if include_chunks:
         try:
             models_config = get_models_config()
@@ -978,6 +1146,7 @@ async def query_rag_async(
                 citations = extract_numeric_citations(answer, sources)
         except Exception:
             citations = None
+    _append_stage_trace(stage_traces, "citation", (time.perf_counter() - citation_started) * 1000)
 
     if update_session_metadata and not is_temporary:
         await touch_session_async(session_id)
@@ -1001,8 +1170,36 @@ async def query_rag_async(
         'metrics': {
             'latency_ms': latency_ms,
             'token_usage': token_counts if token_counts['total_tokens'] > 0 else None,
+            'stages': stage_traces,
         },
     }
+
+
+async def search_rag_async(query_text: str, top_k: int) -> list[Dict]:
+    """Run retrieval and reranking only, without creating chat state or calling an LLM."""
+    retriever = create_hybrid_retriever(similarity_top_k=top_k)
+    retrieval_started = time.perf_counter()
+    nodes = await retriever.aretrieve(query_text)
+    retrieval_duration_ms = (time.perf_counter() - retrieval_started) * 1000
+    stage_traces = _retriever_stage_traces(retriever, nodes, retrieval_duration_ms)
+
+    pre_rerank_nodes = nodes
+    reranker = create_reranker_postprocessor()
+    rerank_started = time.perf_counter()
+    if reranker:
+        for postprocessor in reranker:
+            nodes = await asyncio.to_thread(
+                postprocessor.postprocess_nodes,
+                nodes,
+                query_bundle=QueryBundle(query_text),
+            )
+    _append_stage_trace(
+        stage_traces,
+        "rerank",
+        (time.perf_counter() - rerank_started) * 1000 if reranker else 0.0,
+        nodes if reranker else pre_rerank_nodes,
+    )
+    return stage_traces
 
 
 def query_rag_with_context(
@@ -1242,6 +1439,9 @@ async def query_rag_stream_async(
 
     try:
         logger.info(f"[QUERY_STREAM] Starting async streaming query for session: {session_id} (temporary={is_temporary})")
+        stream_started = time.perf_counter()
+        stage_traces: list[Dict] = []
+        time_to_first_token_ms: float | None = None
 
         config = get_inference_config()
         pii_ctx = await _prepare_pii_masking_async(session_id, is_temporary, ensure_metadata, query_text)
@@ -1253,9 +1453,11 @@ async def query_rag_stream_async(
             async_safe=True,
             memory_override=pii_ctx.scratch_memory if pii_ctx else None,
             pii_token_mapping=pii_ctx.token_mapping if pii_ctx else None,
+            stage_traces=stage_traces,
         )
 
         logger.info(f"[QUERY_STREAM] Executing async streaming RAG query...")
+        generation_started = time.perf_counter()
         streaming_response = await chat_engine.astream_chat(pii_ctx.masked_query if pii_ctx else query_text)
 
         full_answer_parts = []
@@ -1263,13 +1465,23 @@ async def query_rag_stream_async(
             async for chunk in buffer_and_unmask_stream_async(
                 streaming_response.async_response_gen(), get_pii_service(), pii_ctx.token_mapping, context_id=session_id
             ):
+                if time_to_first_token_ms is None:
+                    time_to_first_token_ms = (time.perf_counter() - stream_started) * 1000
                 full_answer_parts.append(chunk)
                 yield f"event: token\ndata: {json.dumps({'token': chunk})}\n\n"
         else:
             async for token in streaming_response.async_response_gen():
+                if time_to_first_token_ms is None:
+                    time_to_first_token_ms = (time.perf_counter() - stream_started) * 1000
                 full_answer_parts.append(token)
                 yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
         full_answer = "".join(full_answer_parts)
+        generation_duration_ms = max(
+            (time.perf_counter() - generation_started) * 1000
+            - _context_assembly_duration_ms(chat_engine),
+            0.0,
+        )
+        _append_stage_trace(stage_traces, "generation", generation_duration_ms)
 
         source_nodes = (
             _unmask_source_nodes(streaming_response.source_nodes, pii_ctx.token_mapping)
@@ -1292,6 +1504,7 @@ async def query_rag_stream_async(
             await pii_ctx.real_memory.aput(ChatMessage(role=MessageRole.ASSISTANT, content=full_answer))
 
         citations = None
+        citation_started = time.perf_counter()
         if include_chunks:
             try:
                 models_config = get_models_config()
@@ -1299,6 +1512,7 @@ async def query_rag_stream_async(
                     citations = extract_numeric_citations(full_answer, sources)
             except Exception:
                 citations = None
+        _append_stage_trace(stage_traces, "citation", (time.perf_counter() - citation_started) * 1000)
         logger.info(f"[QUERY_STREAM] Async streaming complete - {len(sources)} sources")
 
         if update_session_metadata and not is_temporary:
@@ -1309,7 +1523,12 @@ async def query_rag_stream_async(
                 title = generate_session_title(query_text)
                 await update_session_title_async(session_id, title)
 
-        yield f"event: sources\ndata: {json.dumps({'sources': sources, 'citations': citations, 'session_id': session_id})}\n\n"
+        metrics = {
+            "latency_ms": (time.perf_counter() - stream_started) * 1000,
+            "time_to_first_token_ms": time_to_first_token_ms,
+            "stages": stage_traces,
+        }
+        yield f"event: sources\ndata: {json.dumps({'sources': sources, 'citations': citations, 'session_id': session_id, 'metrics': metrics})}\n\n"
 
         yield f"event: done\ndata: {{}}\n\n"
 

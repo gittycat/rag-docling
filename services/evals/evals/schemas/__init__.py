@@ -12,6 +12,8 @@ from evals.schemas.response import (
     Citation,
     RetrievedChunk,
     TokenUsage,
+    StageItem,
+    StageTrace,
     QueryMetrics,
 )
 from evals.schemas.results import (
@@ -36,6 +38,8 @@ __all__ = [
     "Citation",
     "RetrievedChunk",
     "TokenUsage",
+    "StageItem",
+    "StageTrace",
     "QueryMetrics",
     # Result schemas
     "MetricResult",

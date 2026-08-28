@@ -1,166 +1,280 @@
-## About
+# RAGBench
 
-This project implements a RAG AI assistant that searches your organisation’s trusted content and answers questions using it. It delivers more accurate, relevant responses grounded in your data than what is obtained by simple LLM apps like ChatGPT.
+A self-hostable RAG assistant that answers questions from your organisation's own
+content, plus an evaluation service that measures whether those answers are any
+good. Built around two things most RAG deployments skip: **data privacy** and
+**observability**.
 
-RAGs have become the most common application of AI in enterprise environments.
-This specific RAG focuses on two core features: data privacy and observability.
+> Development/research project, not production software. No authentication in the
+> laptop stack, no HA, no enterprise monitoring.
 
-## Data Privacy
+---
 
-- Confidential-corpus privacy is supported in AWS private mode: the demo Compose
-stack uses a separate VPC-private vLLM L40S instance for inference and judging.
-Laptop Compose uses cloud models, so its data-policy gate correctly refuses a
-confidential-corpus evaluation. See [the private AWS demo guide](docs/guide/12-private-aws-demo.md).
-- Frontier cloud models can also be used. Privacy is then ensured by performing data anonymization on any request to the cloud and inserting back the redacted data on responses. This PII masking is opt-in (`pii.enabled` in `config.yml`) and covers queries, chat history, retrieved context, session titles, and document ingestion.
+## Pick your deployment first
 
-## Observability
+The two deployments are separate. Nothing bridges them — there is no tunnel, VPN,
+or route from a laptop to the AWS models, and that is deliberate.
 
-This covers both measures of the **quality** of the data (accuracy, completeness, groundedness / hallucination rate, relevance) and **Operational metrics** values like cost, latency and speed.
+| | **Local (laptop)** | **AWS private** |
+|---|---|---|
+| Runs on | Docker Compose on your machine | EC2 demo instance + opt-in GPU instance |
+| Answer model | OpenAI `gpt-5-mini` (cloud API) | `Qwen/Qwen3.5-9B` on vLLM, in your VPC |
+| Judge model | OpenAI `gpt-5.2` (cloud API) | `Qwen/Qwen3.8-27B-FP8` on vLLM, in your VPC |
+| Embeddings | self-hosted TEI container | self-hosted TEI container |
+| Confidential corpus | **refused** by the data-policy gate | allowed |
+| Cost when idle | free | roughly a coffee/month; GPU billed only while up |
+| Start here | [Local quick start](#local-quick-start) | [AWS private deployment](#aws-private-deployment) |
 
-The system includes an **Evaluation Service** that runs automated quality assessments against multiple datasets. Results are distilled into 5 dashboard metrics:
+**A privacy demo requires the AWS deployment.** The laptop stack has no local LLM
+option, so its only generation path is a vendor API — the policy gate correctly
+refuses a confidential corpus there. Full rationale:
+[private model slate plan](docs/private-model-slate-plan.md).
 
-- **Retrieval Relevance** — Are we finding the right content?
-- **Faithfulness** — Is the answer grounded in retrieved context?
-- **Answer Completeness** — Does the answer cover all key points?
-- **Answer Relevance** — Does the answer address the question asked?
-- **Response Latency** — Is the system fast enough?
+---
 
-These metrics allow admins to determine the best combinations of LLM models and settings for their data and organisation constraints.
+## Local quick start
 
-## Tech Stack
+### 1. Install prerequisites
 
-- **Backend**: Python, FastAPI, PostgreSQL (pg_textsearch for BM25)
-- **Frontend**: SvelteKit, Tailwind CSS, DaisyUI
-- **RAG Pipeline**: Docling, LlamaIndex
-- **Vector store**: pgvector + pgvectorscale StreamingDiskANN, inside the same PostgreSQL
-- **Search**: Hybrid (BM25 + Vector + RRF)
-- **LLM**: OpenAI or Anthropic in laptop mode; private vLLM in AWS private mode
-- **Embeddings**: self-hosted HuggingFace Text Embeddings Inference (TEI), runs as a Docker Compose service
-- **Infrastructure**: Docker compose
-
-## Requirements
-
-- **Docker** - Docker Desktop, OrbStack, or Podman
-- **4GB RAM** - For local development with slow inference.
-- **2GB disk** - For models and data for development.
-
-Embeddings run locally out of the box via the `tei` Compose service — no separate
-install. On the very first boot it downloads the embedding model's weights
-(~1.2GB), which takes a few minutes on a fast connection; `just init` pre-warms
-this so `docker compose up` isn't the first time it happens.
-
-## Status
-
-This is a development/research project, not production-ready software. It lacks authentication, enterprise security, monitoring, high availability features to name some main ones.
-
-## AI Development
-
-This project is developed using **Claude Code** (Anthropic) as the primary coding assistant. OpenAI GPT and Google Gemini models are also used to explore alternative implementations.
-
-All code is reviewed, tested (TDD), and validated for correctness and security.
-
-## Quick Start
-
-### 1. Install Prerequisites
-
-**macOS:**
 ```bash
-# Install Docker
-brew install orbstack            # or Docker Desktop if you prefer
+# macOS
+brew install orbstack   # or Docker Desktop / Podman
+brew install just uv    # task runner + Python env manager
 ```
 
-**Linux:** install Docker via your distribution's usual method.
+Linux: install Docker your distribution's usual way, then `just` and `uv`.
 
-Embedding inference (TEI, serving `Qwen/Qwen3-Embedding-0.6B`) runs as a Docker
-Compose service — nothing to install on the host beyond Docker itself. Laptop
-Compose uses cloud generation. For private inference and judging, deploy the
-separate AWS mode described in [the private AWS demo guide](docs/guide/12-private-aws-demo.md).
+Nothing else is installed on the host. Embedding inference (TEI serving
+`Qwen/Qwen3-Embedding-0.6B`) is a Compose service.
 
-### 2. Download ragbench source
+**Needs:** Docker, ~4GB RAM, ~2GB disk for models and data.
+
+### 2. Get the source
 
 ```bash
-# Clone the repository
 git clone https://github.com/gittycat/ragbench.git
 cd ragbench
+just setup      # local venv used by `just show-config` and the eval recipes
 ```
 
-### 3. Configure
+### 3. Create secrets
 
-**Select the LLM Models to use** (`config.yml`):
+Credentials are **files** under `secrets/`, mounted at `/run/secrets/<NAME>` by
+Compose and read at startup by Pydantic Settings. Environment variables with the
+same names are ignored — this follows
+[OWASP secrets-management guidance](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html).
 
-The `config.yml` file defines available models and RAG settings. The `active` section controls which models are used:
+```bash
+mkdir -p secrets
+echo -n "ragbench_admin"          > secrets/POSTGRES_SUPERUSER
+echo -n "$(openssl rand -hex 24)" > secrets/POSTGRES_SUPERPASSWORD
+echo -n "ragbench_app"            > secrets/RAG_SERVER_DB_USER
+echo -n "$(openssl rand -hex 24)" > secrets/RAG_SERVER_DB_PASSWORD
+echo -n "sk-..."                  > secrets/OPENAI_API_KEY   # default active models
+```
+
+Add `secrets/ANTHROPIC_API_KEY` only if you switch an active model to Anthropic.
+
+### 4. Choose models (optional)
+
+`config.yml` defines every available model; the `active` block picks which are
+used. The checked-in defaults work as-is once an OpenAI key exists:
 
 ```yaml
 active:
-  inference: gpt5-mini    # LLM for answering questions
-  embedding: qwen3-embed  # Model for document embeddings
-  eval: gpt5-2            # Model for evaluation metrics
-  reranker: minilm-l6     # Model for result reranking
+  inference: gpt5-mini    # OpenAI — answers questions
+  embedding: qwen3-embed  # self-hosted TEI, no host install
+  eval: gpt5-2            # OpenAI — evaluation judge
+  reranker: minilm-l6     # local cross-encoder
 ```
 
-To switch models, change the active model name to any model defined in the `models` section. `qwen3-embed` (self-hosted TEI) works out of the box — it's a Docker Compose service, not a host install. Cloud models require API keys.
+Swap in any name from the `models` section. The `qwen35-9b` and `qwen38-27b-judge`
+entries are AWS-only — they point at a non-routable placeholder until `just llm-up`
+writes the real VPC address on the demo instance.
 
-> Note: the checked-in `config.yml`'s embedding model already runs locally via TEI; `active.inference` and `active.eval` default to cloud models and need matching API key files under `secrets/`. The `qwen35-9b` inference and `qwen38-27b-judge` eval entries are for the separate AWS private mode, configured by `just llm-up`.
->
-> **Breaking change note:** the active embedding model determines `vector_store.dimension` and the `document_chunks.embedding` column type. Switching embedding models always invalidates every stored vector — see [getting-running](docs/guide/02-getting-running.md) before changing it on a database that already has documents in it.
+> **Breaking change:** the active embedding model fixes `vector_store.dimension`
+> and the `document_chunks.embedding` column type. Changing it invalidates every
+> stored vector, and there are no migrations for it — you must
+> `docker compose down -v` and re-ingest. Read
+> [getting running](docs/guide/02-getting-running.md) first.
 
-**Secrets**:
-
-API keys are provided via Docker Compose secrets mounted as files under `/run/secrets` and loaded at startup via Pydantic Settings (no environment variables). This follows OWASP best practices for secrets handling and storage guidance:
-
-```
-https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html?utm_source=chatgpt.com
-https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
-```
-
-Database access also uses secrets per service. Create the required files under `secrets/` before starting containers.
-
-### 4. Start the Application
+### 5. Build and start
 
 ```bash
-# Pre-fetch the re-ranking model and warm the TEI embedding weights.
-# This significantly speeds up the rag-server and tei container startup.
-just init
-
-# Start RAG Bench
-docker compose up -d
+just init    # pre-fetch the reranker + warm TEI weights (~1.2GB, few minutes, once)
+just up      # start webapp, rag-server, task-worker, evals, postgres, tei
 ```
 
-Open **http://localhost:8000** in your browser. The eval service API is available at **http://localhost:8002**.
+- Web app: **http://localhost:8000**
+- RAG API: **http://localhost:8001**
+- Eval API: **http://localhost:8002**
 
-### 5. Stop the Application
+Skipping `just init` is safe but the first `just up` spends ~200s downloading
+embedding weights before `tei` reports healthy.
+
+### 6. Stop
 
 ```bash
-docker compose down
+just down                # stop containers, keep data
+docker compose down -v   # stop and DELETE the database and document store
 ```
 
-### Delete all persistent stores (database, document storage)
+---
+
+## AWS private deployment
+
+Full procedure, pricing and teardown:
+**[docs/guide/12-private-aws-demo.md](docs/guide/12-private-aws-demo.md)**.
+Infrastructure detail: [infra/README.md](infra/README.md).
+
+Prerequisites: an AWS account per [infra/README.md](infra/README.md), Node.js for
+CDK, and a selected environment — every recipe refuses to run without one:
 
 ```bash
-docker compose down -v
+setenv demo    # selects AWS_ENV + AWS_PROFILE together; `setenv none` clears it
 ```
+
+### Bring it up
+
+```bash
+just ecr-push    # 1. build arm64 images, push to ECR
+just aws-bake    # 2. bake the golden AMI (polls until AVAILABLE, prints elapsed)
+just aws-up      # 3. deploy RagbenchDemoStack, prints the demo URL
+```
+
+That gives you a CPU-only demo instance still calling cloud models. For **private
+inference and judging**, add the opt-in GPU stack:
+
+```bash
+just llm-up      # 4. spot g6e.xlarge (L40S), both vLLM servers, up to 30 min cold
+```
+
+`just llm-up` waits for both private `/health` endpoints, then rewrites only the
+two `base_url` values in the demo instance's `config.yml` over SSM Run Command.
+The GPU has no public ingress and no laptop-reachable route. Then set
+`active.inference: qwen35-9b` and `active.eval: qwen38-27b-judge` for the run.
+
+Self-hosted is not free, and an unpriced model is dropped from cost scoring rather
+than counted as $0 — which silently reweights the headline score. Measure
+throughput and publish an explicit rate:
+
+```bash
+just llm-price <instance-usd-per-hour> <inference-tok/s> <judge-tok/s>
+```
+
+Export the printed `MODEL_PRICE_OVERRIDES` in the shell that starts `rag-server`
+and `evals`.
+
+### Tear it down
+
+Tear down in reverse — the GPU is the expensive part, so kill it first.
+
+```bash
+just llm-down    # restores the placeholder base_urls, destroys RagbenchLlmStack
+just aws-down    # destroys RagbenchDemoStack
+```
+
+Confirm both CloudFormation stacks are gone before calling the demo complete.
+
+### Other deployment targets
+
+```bash
+just deploy server        # base stack + Caddy TLS reverse proxy + bearer auth
+just deploy cloud         # base stack, pulling pre-built registry images
+just deploy-down server   # tear the same combination down
+```
+
+---
+
+## Everyday commands
+
+| Command | What it does |
+|---|---|
+| `just` | list every recipe, grouped |
+| `just up` / `just down` / `just logs` | start, stop, tail the local stack |
+| `just build` | rebuild all images |
+| `just show-config` | print the resolved active configuration |
+| `just eval <args>` | run an evaluation |
+| `just eval-compare <args>` | compare two runs |
+| `just demo-check` | fail loudly if vector search has silently degraded to BM25-only |
+| `just test-unit` / `just test-integration` | run tests |
+
+---
+
+## What it does
+
+### Data privacy
+
+- **AWS private mode** keeps a confidential corpus inside a VPC you control: both
+  the answer model and the judge run on your own vLLM instance, so no corpus text
+  reaches a vendor API.
+- **PII masking** for cloud models — opt-in via `pii.enabled` in `config.yml`,
+  covering queries, chat history, retrieved context, session titles, and document
+  ingestion. Identifiers are token-masked on the way out and restored on the way
+  back.
+- **A data-policy gate** refuses to evaluate a confidential corpus with a judge
+  outside the allowed execution boundary, and fails closed on a missing boundary.
+
+### Observability
+
+Quality (accuracy, groundedness, relevance) and operations (cost, latency) are
+both measured. The built-in evaluation service runs automated assessments against
+public datasets and your own golden Q&A, distilled into five dashboard metrics:
+
+- **Retrieval Relevance** — are we finding the right content?
+- **Faithfulness** — is the answer grounded in retrieved context?
+- **Answer Completeness** — does it cover all key points?
+- **Answer Relevance** — does it address the question asked?
+- **Response Latency** — is it fast enough?
+
+These let you pick the model and setting combination that fits your data and
+constraints, instead of guessing.
+
+---
+
+## Tech stack
+
+- **Backend:** Python, FastAPI, PostgreSQL (pg_textsearch for BM25)
+- **Frontend:** SvelteKit, Tailwind CSS, DaisyUI
+- **RAG pipeline:** Docling, LlamaIndex
+- **Vector store:** pgvector + pgvectorscale StreamingDiskANN, in the same PostgreSQL
+- **Search:** hybrid BM25 + vector, fused with RRF
+- **LLM:** OpenAI or Anthropic locally; private vLLM (Qwen3.5-9B / Qwen3.8-27B-FP8) on AWS
+- **Embeddings:** self-hosted HuggingFace Text Embeddings Inference (TEI)
+- **Infrastructure:** Docker Compose locally, AWS CDK for the demo stacks
+
+---
 
 ## Documentation
 
-- **[Operator guide](docs/guide/INDEX.md)** — running, configuring, and tuning
-  RAGBench. Built around the tuning loop: measure a baseline, change one thing,
-  re-measure, decide whether it helped. Covers building an evaluation set from your
-  own documents, an experiment cookbook, privacy verification, and the limits of
-  what the evaluations prove.
-- **[Internal documentation](docs/internal/INDEX.md)** — engineering reference:
-  architecture, RAG pipeline, retrieval, APIs, database, configuration, testing,
-  CI/CD, and the reasoning behind key design decisions.
+- **[Operator guide](docs/guide/INDEX.md)** — running, configuring, and tuning.
+  Built around the tuning loop: measure a baseline, change one thing, re-measure,
+  decide whether it helped. Covers building an evaluation set from your own
+  documents, an experiment cookbook, privacy verification, and what the
+  evaluations do and don't prove.
+- **[Private AWS demo](docs/guide/12-private-aws-demo.md)** — start, price, and
+  tear down the GPU.
+- **[Internal documentation](docs/internal/INDEX.md)** — architecture, RAG
+  pipeline, retrieval, APIs, database, configuration, testing, CI/CD, and design
+  rationale.
 - **[Suggestions](docs/suggestions.md)** — known defects and improvement proposals.
 
-New here? Start with [what this does](docs/guide/01-overview.md), then
+New here? Read [what this does](docs/guide/01-overview.md), then
 [getting running](docs/guide/02-getting-running.md).
 
-## Development
-
-Prerequisites, local setup, `just` recipes, and testing:
+Developing on it? Prerequisites, `just` recipes, and testing are in
 [docs/internal/development.md](docs/internal/development.md).
+
+---
+
+## AI development
+
+Developed using **Claude Code** (Anthropic) as the primary coding assistant.
+OpenAI GPT and Google Gemini models are also used to explore alternative
+implementations. All code is reviewed, tested (TDD), and validated for
+correctness and security.
 
 ## License
 
-Built on the shoulder of a multitude of great open source software.
+Built on the shoulders of a multitude of great open source software.
 [MIT License](./LICENSE.md)

@@ -1,0 +1,53 @@
+"""Evaluator handling for query-pipeline stage traces."""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from evals.runner import RAGClient, parse_rag_response
+
+
+def test_parse_rag_response_preserves_stage_items_and_ttft():
+    response = parse_rag_response(
+        "q1",
+        {
+            "answer": "answer",
+            "metrics": {
+                "stages": [
+                    {
+                        "name": "fusion",
+                        "duration_ms": 2.5,
+                        "item_count": 1,
+                        "items": [
+                            {"chunk_id": "chunk-1", "doc_id": "doc-1", "score": 0.4, "rank": 1}
+                        ],
+                        "status": "ok",
+                        "error": None,
+                    }
+                ],
+                "time_to_first_token_ms": 42.0,
+            },
+        },
+        latency_ms=100.0,
+    )
+
+    assert response.metrics.time_to_first_token_ms == 42.0
+    assert response.metrics.stages[0].name == "fusion"
+    assert response.metrics.stages[0].items[0].chunk_id == "chunk-1"
+
+
+@pytest.mark.asyncio
+async def test_rag_client_search_posts_retrieval_only_payload():
+    client = RAGClient("http://rag.test")
+    response = MagicMock()
+    response.json.return_value = [{"name": "fusion"}]
+    client._client.post = AsyncMock(return_value=response)
+
+    result = await client.search("where is the evidence?", top_k=7, stages=["fusion"])
+
+    assert result == [{"name": "fusion"}]
+    client._client.post.assert_awaited_once_with(
+        "http://rag.test/search",
+        json={"query": "where is the evidence?", "top_k": 7, "stages": ["fusion"]},
+    )
+    await client.close()

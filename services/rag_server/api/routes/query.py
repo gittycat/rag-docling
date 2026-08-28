@@ -5,8 +5,21 @@ from functools import partial
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from schemas.query import QueryRequest, QueryResponse, QueryMetrics, TokenUsage, QueryWithContextRequest
-from pipelines.inference import query_rag_async, query_rag_stream_async, query_rag_with_context
+from schemas.query import (
+    QueryRequest,
+    QueryResponse,
+    QueryMetrics,
+    TokenUsage,
+    QueryWithContextRequest,
+    SearchRequest,
+    StageTrace,
+)
+from pipelines.inference import (
+    query_rag_async,
+    query_rag_stream_async,
+    query_rag_with_context,
+    search_rag_async,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -60,6 +73,7 @@ async def query(request: QueryRequest):
             metrics = QueryMetrics(
                 latency_ms=raw_metrics['latency_ms'],
                 token_usage=token_usage,
+                stages=raw_metrics.get("stages", []),
             )
 
         return QueryResponse(
@@ -73,6 +87,30 @@ async def query(request: QueryRequest):
         import traceback
         logger.error(f"[QUERY] Error processing query: {str(e)}")
         logger.error(f"[QUERY] Traceback:\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/search", response_model=list[StageTrace])
+async def search(request: SearchRequest):
+    """Run retrieval and reranking without generation, session state, or chat memory."""
+    try:
+        traces = await search_rag_async(request.query, request.top_k)
+        if request.stages is None:
+            return traces
+
+        requested = set(request.stages)
+        available = {trace["name"] for trace in traces}
+        unknown = requested - available
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown or unavailable stages: {', '.join(sorted(unknown))}",
+            )
+        return [trace for trace in traces if trace["name"] in requested]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("[SEARCH] Error processing retrieval-only query")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -102,6 +140,7 @@ async def query_with_context(request: QueryWithContextRequest):
             metrics = QueryMetrics(
                 latency_ms=raw_metrics["latency_ms"],
                 token_usage=token_usage,
+                stages=raw_metrics.get("stages", []),
             )
 
         return QueryResponse(

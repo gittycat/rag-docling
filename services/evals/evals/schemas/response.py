@@ -60,6 +60,28 @@ class TokenUsage:
 
 
 @dataclass
+class StageItem:
+    """One ranked chunk emitted by a query-pipeline stage."""
+
+    chunk_id: str
+    doc_id: str
+    score: float | None = None
+    rank: int = 0
+
+
+@dataclass
+class StageTrace:
+    """Timing, status, and optional ranked output for a query-pipeline stage."""
+
+    name: str
+    duration_ms: float
+    item_count: int
+    items: list[StageItem] | None = None
+    status: str = "ok"
+    error: str | None = None
+
+
+@dataclass
 class QueryMetrics:
     """Performance metrics for a single query.
 
@@ -70,6 +92,8 @@ class QueryMetrics:
 
     latency_ms: float
     token_usage: TokenUsage | None = None
+    stages: list[StageTrace] = field(default_factory=list)
+    time_to_first_token_ms: float | None = None
 
 
 @dataclass

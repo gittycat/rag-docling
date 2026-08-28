@@ -63,6 +63,8 @@ from evals.schemas import (
     Citation,
     QueryMetrics,
     TokenUsage,
+    StageItem,
+    StageTrace,
     MetricResult,
     MetricGroup,
     Scorecard,
@@ -90,6 +92,20 @@ class RAGClient:
             payload["session_id"] = session_id
 
         response = await self._client.post(f"{self.base_url}/query", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    async def search(
+        self,
+        question: str,
+        top_k: int = 10,
+        stages: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """POST /search for retrieval-only evaluations that must not spend LLM tokens."""
+        payload: dict[str, Any] = {"query": question, "top_k": top_k}
+        if stages is not None:
+            payload["stages"] = stages
+        response = await self._client.post(f"{self.base_url}/search", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -244,7 +260,24 @@ def parse_rag_response(
             total_tokens=usage.get("total_tokens", 0),
         )
 
-    metrics = QueryMetrics(latency_ms=latency_ms, token_usage=token_usage)
+    raw_stages = metrics_data.get("stages", []) if isinstance(metrics_data, dict) else []
+    stages = [
+        StageTrace(
+            name=stage["name"],
+            duration_ms=stage["duration_ms"],
+            item_count=stage["item_count"],
+            items=[StageItem(**item) for item in stage["items"]] if stage.get("items") is not None else None,
+            status=stage.get("status", "ok"),
+            error=stage.get("error"),
+        )
+        for stage in raw_stages
+    ]
+    metrics = QueryMetrics(
+        latency_ms=latency_ms,
+        token_usage=token_usage,
+        stages=stages,
+        time_to_first_token_ms=metrics_data.get("time_to_first_token_ms") if isinstance(metrics_data, dict) else None,
+    )
 
     return EvalResponse(
         question_id=question_id,
