@@ -241,6 +241,25 @@ async def get_batch_status(batch_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/documents/{document_id}/ingestion-stages")
+async def get_document_ingestion_stages(document_id: str):
+    """Measured ingestion stages for an uploaded document."""
+    try:
+        document_uuid = uuid.UUID(document_id)
+        async with get_session() as session:
+            if await db_docs.get_document(session, document_uuid) is None:
+                raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+            stages = await db_docs.get_ingestion_stages(session, document_uuid)
+        return {"document_id": document_id, "stages": stages}
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document ID format")
+    except Exception as e:
+        logger.error(f"[DOCUMENTS] Error reading ingestion stages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/documents/{document_id}", response_model=DeleteResponse)
 async def delete_document_by_id(document_id: str):
     try:

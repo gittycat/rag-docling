@@ -1,5 +1,6 @@
 """Document database operations."""
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -160,6 +161,77 @@ async def add_chunks(
     session.add_all(chunk_models)
     await session.flush()
     return chunk_models
+
+
+async def add_ingestion_stages(
+    session: AsyncSession,
+    document_id: UUID,
+    stages: list[dict[str, Any]],
+) -> None:
+    """Persist the measured stages from one document-ingestion attempt."""
+    if not stages:
+        return
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO document_ingestion_stages
+                (document_id, stage, duration_ms, input_tokens, output_tokens,
+                 item_count, status, error, details)
+            VALUES
+                (:document_id, :stage, :duration_ms, :input_tokens, :output_tokens,
+                 :item_count, :status, :error, CAST(:details AS jsonb))
+            """
+        ),
+        [
+            {
+                "document_id": str(document_id),
+                "stage": stage["name"],
+                "duration_ms": stage["duration_ms"],
+                "input_tokens": stage.get("input_tokens"),
+                "output_tokens": stage.get("output_tokens"),
+                "item_count": stage.get("item_count"),
+                "status": stage.get("status", "ok"),
+                "error": stage.get("error"),
+                "details": json.dumps({
+                    "enrichment_success_rate": stage.get("enrichment_success_rate")
+                }) if stage.get("enrichment_success_rate") is not None else "{}",
+            }
+            for stage in stages
+        ],
+    )
+
+
+async def get_ingestion_stages(
+    session: AsyncSession, document_id: UUID
+) -> list[dict[str, Any]]:
+    """Return ingestion stages in pipeline order for one document."""
+    result = await session.execute(
+        text(
+            """
+            SELECT stage, duration_ms, input_tokens, output_tokens, item_count,
+                   status, error, details, created_at
+            FROM document_ingestion_stages
+            WHERE document_id = :document_id
+            ORDER BY created_at, id
+            """
+        ),
+        {"document_id": str(document_id)},
+    )
+    return [
+        {
+            "name": row.stage,
+            "duration_ms": row.duration_ms,
+            "input_tokens": row.input_tokens,
+            "output_tokens": row.output_tokens,
+            "item_count": row.item_count,
+            "status": row.status,
+            "error": row.error,
+            "enrichment_success_rate": (row.details or {}).get("enrichment_success_rate"),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in result
+    ]
 
 
 async def get_all_chunks(session: AsyncSession) -> list[DocumentChunk]:

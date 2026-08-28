@@ -55,6 +55,8 @@ from evals.metrics import (
     LatencyP50,
     LatencyP95,
     CostPerQuery,
+    IngestionCostPerDocument,
+    IngestionLatencyPerDocument,
 )
 from evals.schemas import (
     EvalQuestion,
@@ -65,6 +67,7 @@ from evals.schemas import (
     TokenUsage,
     StageItem,
     StageTrace,
+    IngestionStage,
     MetricResult,
     MetricGroup,
     Scorecard,
@@ -160,6 +163,14 @@ class RAGClient:
         response.raise_for_status()
         data = response.json()
         return data.get("documents", data) if isinstance(data, dict) else data
+
+    async def get_document_ingestion_stages(self, document_id: str) -> list[dict[str, Any]]:
+        """Read the persisted ingestion measurements for one document."""
+        response = await self._client.get(
+            f"{self.base_url}/documents/{document_id}/ingestion-stages"
+        )
+        response.raise_for_status()
+        return response.json().get("stages", [])
 
     async def delete_document(self, document_id: str) -> bool:
         """DELETE /documents/{document_id}. Returns True on success."""
@@ -323,6 +334,7 @@ class EvaluationRunner:
         # Set once the config snapshot exists — a cached query answer is only valid
         # for the configuration that produced it.
         self._query_cache_key: str | None = None
+        self._ingestion_stages: list[IngestionStage] = []
 
     @property
     def client(self) -> RAGClient:
@@ -806,6 +818,17 @@ class EvaluationRunner:
                 gold_to_rag[gold_doc_id] = doc["id"]
 
         logger.info(f"[EVAL] Mapped {len(gold_to_rag)} of {len(doc_texts)} documents to RAG IDs")
+        self._ingestion_stages = []
+        for document_id in gold_to_rag.values():
+            try:
+                stages = await self.client.get_document_ingestion_stages(document_id)
+                self._ingestion_stages.extend(
+                    IngestionStage(document_id=document_id, **stage) for stage in stages
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[EVAL] Could not read ingestion stages for {document_id}: {e}"
+                )
         return gold_to_rag
 
     async def _cleanup_documents(self, rag_doc_ids: list[str]) -> None:
@@ -941,6 +964,23 @@ class EvaluationRunner:
 
         # Add performance metrics
         if self.config.metrics.performance:
+            ingestion_cost: MetricResult | None = None
+            if self.config.tier == EvalTier.END_TO_END:
+                try:
+                    ingestion_latency = IngestionLatencyPerDocument(self._ingestion_stages)
+                    scorecard.add_metric(await ingestion_latency.compute_batch(questions, responses))
+                    ingestion_cost_metric = IngestionCostPerDocument(
+                        self._ingestion_stages,
+                        llm_model=self._model_config.get("llm_model"),
+                        embedding_model=self._model_config.get("embedding_model"),
+                        llm_input_rate=self._model_config.get("cost_per_1m_input_tokens"),
+                        llm_output_rate=self._model_config.get("cost_per_1m_output_tokens"),
+                    )
+                    ingestion_cost = await ingestion_cost_metric.compute_batch(questions, responses)
+                    scorecard.add_metric(ingestion_cost)
+                except Exception as e:
+                    logger.error(f"[EVAL] Failed to compute ingestion metrics: {e}")
+
             # Latency metrics
             if latencies:
                 # Latency P50
@@ -990,6 +1030,15 @@ class EvaluationRunner:
                         cost_per_1m_output_tokens=self._model_config.get("cost_per_1m_output_tokens"),
                         judge_usage=self._judge_usage if self.config.judge.enabled else None,
                         judge_model=self.config.judge.model if self.config.judge.enabled else None,
+                        # An end-to-end benchmark creates a fresh corpus; include
+                        # that measured ingestion bill in the run's cost per query.
+                        # If a component is unpriced, pass None so it is excluded
+                        # rather than silently treated as free.
+                        ingestion_cost_usd=(
+                            None if ingestion_cost is not None and ingestion_cost.value is None
+                            else (ingestion_cost.details.get("total_cost_usd", 0.0)
+                                  if ingestion_cost is not None else 0.0)
+                        ),
                     )
                     result = await cost_metric.compute_batch(questions, responses)
                     scorecard.add_metric(result)

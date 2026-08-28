@@ -82,6 +82,21 @@ class StageTrace:
 
 
 @dataclass
+class IngestionStage:
+    """One persisted stage of a document-ingestion attempt."""
+
+    document_id: str
+    name: str
+    duration_ms: float
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    item_count: int | None = None
+    status: str = "ok"
+    error: str | None = None
+    enrichment_success_rate: float | None = None
+
+
+@dataclass
 class QueryMetrics:
     """Performance metrics for a single query.
 

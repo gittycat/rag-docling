@@ -43,6 +43,26 @@ USING bm25 (content) WITH (text_config='english');
 CREATE INDEX idx_chunks_embedding ON document_chunks
 USING diskann (embedding vector_cosine_ops);
 
+-- Per-document timing, token usage and outcome for the ingestion pipeline.
+-- These rows are separate from chunk metadata so observing a failed or skipped
+-- stage never changes the data used by retrieval.
+CREATE TABLE IF NOT EXISTS document_ingestion_stages (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id   UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    stage         TEXT NOT NULL,
+    duration_ms   DOUBLE PRECISION NOT NULL,
+    input_tokens  INTEGER,
+    output_tokens INTEGER,
+    item_count    INTEGER,
+    status        TEXT NOT NULL DEFAULT 'ok',
+    error         TEXT,
+    details       JSONB DEFAULT '{}',
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_stages_doc
+    ON document_ingestion_stages(document_id);
+
 -- Chat sessions
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id UUID PRIMARY KEY,

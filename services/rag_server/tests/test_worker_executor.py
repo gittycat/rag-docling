@@ -46,6 +46,7 @@ def test_ingest_document_runs_off_the_event_loop_thread(tmp_path):
         mock_document_service.delete_document = AsyncMock()
         mock_db_docs.create_document = AsyncMock()
         mock_db_docs.add_chunks = AsyncMock()
+        mock_db_docs.add_ingestion_stages = AsyncMock()
         mock_db_jobs.set_task_total_chunks = AsyncMock()
         mock_db_jobs.increment_task_chunk_progress = AsyncMock()
 

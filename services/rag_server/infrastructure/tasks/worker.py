@@ -114,12 +114,46 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
         # Persist chunk text/metadata/embeddings in PostgreSQL — this single write
         # populates the BM25 index, the vector index and document introspection
         chunks_data = result.get("chunks_data", [])
-        write_start = time.time()
-        if chunks_data:
-            logger.info(f"[TASK {task_id}] Storing {len(chunks_data)} chunks in PostgreSQL...")
-            async with get_session() as session:
-                await db_docs.add_chunks(session, UUID(doc_id), chunks_data)
-        write_duration = time.time() - write_start
+        write_start = time.perf_counter()
+        stages = list(result.get("stages", []))
+        try:
+            if chunks_data:
+                logger.info(f"[TASK {task_id}] Storing {len(chunks_data)} chunks in PostgreSQL...")
+                async with get_session() as session:
+                    await db_docs.add_chunks(session, UUID(doc_id), chunks_data)
+                    # Indexing happens as part of this insert (BM25 trigger and
+                    # vector index); keep its measurement next to the other
+                    # pipeline stages, not in an unstructured worker log line.
+                    stages.append({
+                        "name": "index",
+                        "duration_ms": (time.perf_counter() - write_start) * 1000,
+                        "item_count": len(chunks_data),
+                        "input_tokens": None,
+                        "output_tokens": None,
+                        "status": "ok",
+                        "error": None,
+                    })
+                    await db_docs.add_ingestion_stages(session, UUID(doc_id), stages)
+            else:
+                stages.append({
+                    "name": "index", "duration_ms": 0.0, "item_count": 0,
+                    "input_tokens": None, "output_tokens": None,
+                    "status": "ok", "error": None,
+                })
+                async with get_session() as session:
+                    await db_docs.add_ingestion_stages(session, UUID(doc_id), stages)
+        except Exception as e:
+            stages.append({
+                "name": "index",
+                "duration_ms": (time.perf_counter() - write_start) * 1000,
+                "item_count": len(chunks_data),
+                "input_tokens": None,
+                "output_tokens": None,
+                "status": "failed",
+                "error": str(e),
+            })
+            raise
+        write_duration = time.perf_counter() - write_start
 
         # Baseline timing summary for this document (parse/embed from the
         # ingestion pipeline, write from the DB round-trip above) — one line so

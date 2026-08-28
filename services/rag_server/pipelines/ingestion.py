@@ -50,6 +50,30 @@ SUPPORTED_EXTENSIONS = {
 SIMPLE_TEXT_EXTENSIONS = {'.txt', '.md'}
 
 
+def _record_stage(
+    stages: list[dict[str, Any]] | None,
+    name: str,
+    start: float,
+    item_count: int | None = None,
+    *,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    status: str = "ok",
+    error: str | None = None,
+) -> None:
+    if stages is None:
+        return
+    stages.append({
+        "name": name,
+        "duration_ms": (time.perf_counter() - start) * 1000,
+        "item_count": item_count,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "status": status,
+        "error": error,
+    })
+
+
 def get_ingestion_config() -> Dict[str, bool]:
     """Get ingestion configuration from models config"""
     config = get_models_config()
@@ -129,7 +153,9 @@ def clean_metadata_for_storage(metadata: Dict[str, Any]) -> Dict[str, Any]:
 # STEP 2: DOCUMENT CHUNKING
 # ============================================================================
 
-def chunk_document_with_docling(file_path: str) -> List[TextNode]:
+def chunk_document_with_docling(
+    file_path: str, stages: list[dict[str, Any]] | None = None
+) -> List[TextNode]:
     """
     Process complex documents (PDF, DOCX, etc.) using Docling.
 
@@ -147,15 +173,18 @@ def chunk_document_with_docling(file_path: str) -> List[TextNode]:
 
     # Phase 1: Read document structure
     logger.info(f"[CHUNKING] Phase 1: Reading document with Docling...")
-    read_start = time.time()
+    read_start = time.perf_counter()
     try:
         documents = reader.load_data(file_path=str(file_path))
-        read_duration = time.time() - read_start
+        read_duration = time.perf_counter() - read_start
+        _record_stage(stages, "parse", read_start, len(documents))
         logger.info(f"[CHUNKING] Phase 1 complete ({read_duration:.2f}s) - {len(documents)} documents extracted")
     except FileNotFoundError as e:
+        _record_stage(stages, "parse", read_start, 0, status="failed", error=str(e))
         raise FileNotFoundError(f"File not found during processing: {file_path}") from e
     except Exception as e:
-        read_duration = time.time() - read_start
+        read_duration = time.perf_counter() - read_start
+        _record_stage(stages, "parse", read_start, 0, status="failed", error=str(e))
         logger.error(f"[CHUNKING] DoclingReader failed after {read_duration:.2f}s: {str(e)}")
         raise ValueError(f"Failed to process document {file_path}: {str(e)}") from e
 
@@ -164,14 +193,16 @@ def chunk_document_with_docling(file_path: str) -> List[TextNode]:
 
     # Phase 2: Parse into chunks
     logger.info(f"[CHUNKING] Phase 2: Parsing into chunks...")
-    parse_start = time.time()
+    parse_start = time.perf_counter()
     try:
         node_parser = DoclingNodeParser()
         nodes = node_parser.get_nodes_from_documents(documents)
-        parse_duration = time.time() - parse_start
+        parse_duration = time.perf_counter() - parse_start
+        _record_stage(stages, "chunk", parse_start, len(nodes))
         logger.info(f"[CHUNKING] Phase 2 complete ({parse_duration:.2f}s) - {len(nodes)} chunks created")
     except Exception as e:
-        parse_duration = time.time() - parse_start
+        parse_duration = time.perf_counter() - parse_start
+        _record_stage(stages, "chunk", parse_start, 0, status="failed", error=str(e))
         logger.error(f"[CHUNKING] DoclingNodeParser failed after {parse_duration:.2f}s: {str(e)}")
         raise ValueError(f"Failed to parse document into chunks: {str(e)}") from e
 
@@ -187,6 +218,7 @@ def chunk_document_with_text_splitter(
     file_path: str,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    stages: list[dict[str, Any]] | None = None,
 ) -> List[TextNode]:
     """
     Process simple text documents using SentenceSplitter.
@@ -201,13 +233,17 @@ def chunk_document_with_text_splitter(
 
     # Phase 1: Load text file
     logger.info(f"[CHUNKING] Phase 1: Loading text file...")
+    read_start = time.perf_counter()
     try:
         reader = SimpleDirectoryReader(input_files=[str(file_path)])
         documents = reader.load_data()
+        _record_stage(stages, "parse", read_start, len(documents))
         logger.info(f"[CHUNKING] Phase 1 complete - {len(documents)} documents loaded")
     except FileNotFoundError as e:
+        _record_stage(stages, "parse", read_start, 0, status="failed", error=str(e))
         raise FileNotFoundError(f"File not found during processing: {file_path}") from e
     except Exception as e:
+        _record_stage(stages, "parse", read_start, 0, status="failed", error=str(e))
         raise ValueError(f"Failed to read file {file_path}: {str(e)}") from e
 
     if not documents:
@@ -221,8 +257,10 @@ def chunk_document_with_text_splitter(
         f"[CHUNKING] Phase 2: Splitting into chunks "
         f"(chunk_size={chunk_size}, chunk_overlap={chunk_overlap})..."
     )
+    chunk_start = time.perf_counter()
     splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     nodes = splitter.get_nodes_from_documents(documents)
+    _record_stage(stages, "chunk", chunk_start, len(nodes))
     logger.info(f"[CHUNKING] Phase 2 complete - {len(nodes)} chunks created")
 
     return nodes
@@ -232,6 +270,7 @@ def chunk_document(
     file_path: str,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    stages: list[dict[str, Any]] | None = None,
 ) -> List[TextNode]:
     """
     Main chunking dispatcher - routes to appropriate chunking method based on file type.
@@ -253,9 +292,9 @@ def chunk_document(
 
     # Route to appropriate chunker
     if extension in SIMPLE_TEXT_EXTENSIONS:
-        nodes = chunk_document_with_text_splitter(file_path, chunk_size, chunk_overlap)
+        nodes = chunk_document_with_text_splitter(file_path, chunk_size, chunk_overlap, stages)
     else:
-        nodes = chunk_document_with_docling(file_path)
+        nodes = chunk_document_with_docling(file_path, stages)
 
     # Log preview of first chunk
     if nodes:
@@ -302,8 +341,28 @@ def _unmask_contextual_prefix(context: str, token_mapping: Optional["TokenMappin
     return unmask_text(recovered, token_mapping, context_id=document_name).unmasked_text
 
 
+def _response_token_usage(response: Any) -> tuple[int | None, int | None]:
+    """Read provider-reported usage without estimating missing token counts."""
+    candidates = [response, getattr(response, "raw", None), getattr(response, "additional_kwargs", None)]
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            usage = candidate.get("usage", candidate.get("usage_metadata"))
+        else:
+            usage = getattr(candidate, "usage", None) or getattr(candidate, "usage_metadata", None)
+        if isinstance(usage, dict):
+            prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
+            completion = usage.get("completion_tokens", usage.get("output_tokens"))
+        else:
+            prompt = getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", None))
+            completion = getattr(usage, "completion_tokens", getattr(usage, "output_tokens", None))
+        if isinstance(prompt, (int, float)) or isinstance(completion, (int, float)):
+            return int(prompt or 0), int(completion or 0)
+    return None, None
+
+
 def add_contextual_prefix_to_chunk(
-    node: TextNode, document_name: str, document_type: str, token_mapping: Optional["TokenMapping"] = None
+    node: TextNode, document_name: str, document_type: str, token_mapping: Optional["TokenMapping"] = None,
+    outcome: dict[str, Any] | None = None,
 ) -> TextNode:
     """
     Add LLM-generated contextual prefix to chunk (Anthropic method).
@@ -341,17 +400,27 @@ def add_contextual_prefix_to_chunk(
         total_duration = time.time() - start_time
         logger.info(f"[CONTEXTUAL] LLM call completed in {llm_duration:.2f}s (total: {total_duration:.2f}s)")
         logger.debug(f"[CONTEXTUAL] Added prefix: {context[:80]}...")
+        if outcome is not None:
+            prompt_tokens, completion_tokens = _response_token_usage(response)
+            outcome.update({
+                "success": True,
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+            })
         return node
 
     except Exception as e:
         duration = time.time() - start_time
         logger.warning(f"[CONTEXTUAL] Failed to generate context after {duration:.2f}s: {e}")
+        if outcome is not None:
+            outcome.update({"success": False, "error": str(e)})
         # Return original node if context generation fails
         return node
 
 
 async def add_contextual_prefix_to_chunk_async(
-    node: TextNode, document_name: str, document_type: str, token_mapping: Optional["TokenMapping"] = None
+    node: TextNode, document_name: str, document_type: str, token_mapping: Optional["TokenMapping"] = None,
+    outcome: dict[str, Any] | None = None,
 ) -> TextNode:
     """Async variant of add_contextual_prefix_to_chunk, using llm.acomplete()."""
     from infrastructure.llm import get_contextual_prefix_prompt
@@ -378,16 +447,27 @@ async def add_contextual_prefix_to_chunk_async(
         total_duration = time.time() - start_time
         logger.info(f"[CONTEXTUAL] LLM call completed in {llm_duration:.2f}s (total: {total_duration:.2f}s)")
         logger.debug(f"[CONTEXTUAL] Added prefix: {context[:80]}...")
+        if outcome is not None:
+            prompt_tokens, completion_tokens = _response_token_usage(response)
+            outcome.update({
+                "success": True,
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+            })
         return node
 
     except Exception as e:
         duration = time.time() - start_time
         logger.warning(f"[CONTEXTUAL] Failed to generate context after {duration:.2f}s: {e}")
+        if outcome is not None:
+            outcome.update({"success": False, "error": str(e)})
         # Return original node if context generation fails
         return node
 
 
-async def _add_contextual_retrieval_async(nodes: List[TextNode], file_path: str, concurrency: int) -> List[TextNode]:
+async def _add_contextual_retrieval_async(
+    nodes: List[TextNode], file_path: str, concurrency: int
+) -> tuple[List[TextNode], dict[str, Any]]:
     file_path_obj = Path(file_path)
     extension = file_path_obj.suffix.lower()
     total = len(nodes)
@@ -395,6 +475,7 @@ async def _add_contextual_retrieval_async(nodes: List[TextNode], file_path: str,
     sem = asyncio.Semaphore(concurrency)
     contextual_start = time.time()
     completed = 0
+    outcomes: list[dict[str, Any]] = [{} for _ in nodes]
 
     # One mapping per document so the same entity gets the same token in every chunk.
     # mask() runs synchronously between awaits, so concurrent tasks can't interleave mutations.
@@ -403,11 +484,15 @@ async def _add_contextual_retrieval_async(nodes: List[TextNode], file_path: str,
 
     doc_token_mapping = TokenMapping() if get_pii_config().enabled else None
 
-    async def _process(node: TextNode) -> TextNode:
+    async def _process(index: int, node: TextNode) -> TextNode:
         nonlocal completed
         async with sem:
             result = await add_contextual_prefix_to_chunk_async(
-                node, file_path_obj.name, extension, token_mapping=doc_token_mapping
+                node,
+                file_path_obj.name,
+                extension,
+                token_mapping=doc_token_mapping,
+                outcome=outcomes[index],
             )
             completed += 1
             if completed % 10 == 0:
@@ -417,11 +502,23 @@ async def _add_contextual_retrieval_async(nodes: List[TextNode], file_path: str,
                 logger.info(f"[CONTEXTUAL] Progress: {completed}/{total} - Elapsed: {elapsed:.1f}s, Est. remaining: {est_remaining:.1f}s")
             return result
 
-    # gather preserves input order in the returned list
-    return list(await asyncio.gather(*(_process(node) for node in nodes)))
+    # gather preserves input order in the returned list.
+    results = list(await asyncio.gather(*(_process(i, node) for i, node in enumerate(nodes))))
+    failures = [outcome for outcome in outcomes if not outcome.get("success")]
+    known_usage = [outcome for outcome in outcomes if outcome.get("input_tokens") is not None]
+    return results, {
+        "attempted": total,
+        "succeeded": total - len(failures),
+        "failed": len(failures),
+        "input_tokens": sum(outcome["input_tokens"] for outcome in known_usage) if known_usage else None,
+        "output_tokens": sum(outcome.get("output_tokens", 0) for outcome in known_usage) if known_usage else None,
+        "errors": [outcome.get("error") for outcome in failures if outcome.get("error")],
+    }
 
 
-def add_contextual_retrieval(nodes: List[TextNode], file_path: str) -> List[TextNode]:
+def add_contextual_retrieval(
+    nodes: List[TextNode], file_path: str, stages: list[dict[str, Any]] | None = None
+) -> List[TextNode]:
     """
     Add contextual prefixes to all chunks using LLM (if enabled).
 
@@ -434,9 +531,19 @@ def add_contextual_retrieval(nodes: List[TextNode], file_path: str) -> List[Text
 
     if not config['contextual_retrieval_enabled']:
         logger.info("[CONTEXTUAL] Contextual retrieval disabled - skipping")
+        if stages is not None:
+            stages.append({
+                "name": "contextual_enrich", "duration_ms": 0.0, "item_count": 0,
+                "input_tokens": None, "output_tokens": None, "status": "skipped", "error": None,
+            })
         return nodes
 
     if not nodes:
+        if stages is not None:
+            stages.append({
+                "name": "contextual_enrich", "duration_ms": 0.0, "item_count": 0,
+                "input_tokens": 0, "output_tokens": 0, "status": "ok", "error": None,
+            })
         return nodes
 
     concurrency = get_models_config().retrieval.contextual_concurrency
@@ -446,11 +553,22 @@ def add_contextual_retrieval(nodes: List[TextNode], file_path: str) -> List[Text
     contextual_start = time.time()
     # Safe: this function only runs inside the task-worker's executor thread
     # (see infrastructure/tasks/worker.py), which has no running event loop.
-    enhanced_nodes = asyncio.run(_add_contextual_retrieval_async(nodes, file_path, concurrency))
+    enhanced_nodes, stats = asyncio.run(_add_contextual_retrieval_async(nodes, file_path, concurrency))
 
     contextual_duration = time.time() - contextual_start
     avg_per_node = contextual_duration / len(nodes)
     logger.info(f"[CONTEXTUAL] Contextual prefixes complete ({contextual_duration:.2f}s, avg: {avg_per_node:.2f}s per chunk)")
+    if stages is not None:
+        stages.append({
+            "name": "contextual_enrich",
+            "duration_ms": contextual_duration * 1000,
+            "item_count": len(nodes),
+            "input_tokens": stats["input_tokens"],
+            "output_tokens": stats["output_tokens"],
+            "status": "ok" if stats["failed"] == 0 else "degraded",
+            "error": "; ".join(stats["errors"]) or None,
+            "enrichment_success_rate": stats["succeeded"] / stats["attempted"],
+        })
 
     return enhanced_nodes
 
@@ -602,7 +720,8 @@ async def _embed_chunks_async(
 
 def embed_chunks(
     nodes: List[TextNode],
-    progress_callback: Optional[Callable[[int, int], None]] = None
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    stages: list[dict[str, Any]] | None = None,
 ) -> None:
     """
     Generate embeddings for chunks in batches, assigning them to node.embedding.
@@ -618,6 +737,11 @@ def embed_chunks(
     logger.info(f"[EMBEDDING] Starting embedding generation for {len(nodes)} chunks")
 
     if not nodes:
+        if stages is not None:
+            stages.append({
+                "name": "embed", "duration_ms": 0.0, "item_count": 0,
+                "input_tokens": 0, "output_tokens": 0, "status": "ok", "error": None,
+            })
         return
 
     first_text = nodes[0].get_content()
@@ -626,13 +750,31 @@ def embed_chunks(
 
     concurrency = get_models_config().retrieval.embed_concurrency
 
-    embedding_start = time.time()
+    embedding_start = time.perf_counter()
+    try:
+        embedding_tokens = sum(
+            len(Settings.tokenizer(node.get_content(metadata_mode=MetadataMode.EMBED)))
+            for node in nodes
+        )
+    except Exception as e:
+        # The embedding provider did not report usage and the local tokenizer is
+        # unavailable. Preserve unknown rather than inventing an estimate.
+        logger.warning(f"[EMBEDDING] Could not count input tokens: {e}")
+        embedding_tokens = None
     # Safe: this function only runs inside the task-worker's executor thread
     # (see infrastructure/tasks/worker.py), which has no running event loop —
     # same guarantee add_contextual_retrieval() relies on for its asyncio.run().
-    asyncio.run(_embed_chunks_async(nodes, progress_callback, concurrency))
+    try:
+        asyncio.run(_embed_chunks_async(nodes, progress_callback, concurrency))
+    except Exception as e:
+        _record_stage(
+            stages, "embed", embedding_start, len(nodes), input_tokens=embedding_tokens,
+            status="failed", error=str(e),
+        )
+        raise
 
-    total_duration = time.time() - embedding_start
+    total_duration = time.perf_counter() - embedding_start
+    _record_stage(stages, "embed", embedding_start, len(nodes), input_tokens=embedding_tokens)
     avg_per_node = total_duration / len(nodes)
     logger.info(f"[EMBEDDING] Embedding complete ({total_duration:.2f}s, avg: {avg_per_node:.2f}s per chunk)")
 
@@ -688,16 +830,17 @@ def ingest_document(
 
     # STEP 2: Chunk document
     logger.info(f"[INGESTION] Step 2: Chunking document...")
-    chunk_start = time.time()
-    nodes = chunk_document(file_path)
-    chunk_duration = time.time() - chunk_start
+    stages: list[dict[str, Any]] = []
+    chunk_start = time.perf_counter()
+    nodes = chunk_document(file_path, stages=stages)
+    chunk_duration = time.perf_counter() - chunk_start
     logger.info(f"[INGESTION] Step 2 complete ({chunk_duration:.2f}s) - {len(nodes)} chunks created")
 
     # STEP 3: Add contextual prefixes (optional)
     logger.info(f"[INGESTION] Step 3: Adding contextual retrieval prefixes...")
-    contextual_start = time.time()
-    nodes = add_contextual_retrieval(nodes, file_path)
-    contextual_duration = time.time() - contextual_start
+    contextual_start = time.perf_counter()
+    nodes = add_contextual_retrieval(nodes, file_path, stages=stages)
+    contextual_duration = time.perf_counter() - contextual_start
     logger.info(f"[INGESTION] Step 3 complete ({contextual_duration:.2f}s)")
 
     # STEP 4: Add document metadata
@@ -717,9 +860,9 @@ def ingest_document(
 
     # STEP 5: Embed
     logger.info(f"[INGESTION] Step 5: Generating embeddings...")
-    embed_start = time.time()
-    embed_chunks(nodes, progress_callback)
-    embed_duration = time.time() - embed_start
+    embed_start = time.perf_counter()
+    embed_chunks(nodes, progress_callback, stages=stages)
+    embed_duration = time.perf_counter() - embed_start
     logger.info(f"[INGESTION] Step 5 complete ({embed_duration:.2f}s)")
 
     # Summary
@@ -758,6 +901,7 @@ def ingest_document(
             'contextual_s': contextual_duration,
             'embed_s': embed_duration,
         },
+        'stages': stages,
     }
 
 

@@ -66,3 +66,25 @@ def test_add_contextual_prefix_to_chunk_async_falls_back_on_error():
         result = asyncio.run(add_contextual_prefix_to_chunk_async(node, "doc.txt", ".txt"))
 
     assert result.text == "original text"
+
+
+def test_contextual_stage_records_tokens_and_partial_failure():
+    nodes = _make_nodes(2)
+    mock_llm = MagicMock()
+    responses = [MagicMock(text="context", raw={"usage": {"prompt_tokens": 11, "completion_tokens": 3}})]
+    mock_llm.acomplete = AsyncMock(side_effect=[responses[0], Exception("LLM unavailable")])
+    stages = []
+
+    with patch("pipelines.ingestion.get_ingestion_config", return_value={"contextual_retrieval_enabled": True}), \
+         patch("pipelines.ingestion.get_llm_client", return_value=mock_llm), \
+         patch("pipelines.ingestion.get_models_config") as mock_get_config:
+        mock_get_config.return_value.retrieval.contextual_concurrency = 1
+        add_contextual_retrieval(nodes, "/tmp/doc.txt", stages=stages)
+
+    assert len(stages) == 1
+    stage = stages[0]
+    assert stage["name"] == "contextual_enrich"
+    assert stage["status"] == "degraded"
+    assert stage["input_tokens"] == 11
+    assert stage["output_tokens"] == 3
+    assert stage["enrichment_success_rate"] == 0.5

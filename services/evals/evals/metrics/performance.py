@@ -4,7 +4,13 @@ import statistics
 from typing import Any
 
 from evals.metrics.base import BaseMetric
-from evals.pricing import ModelRates, UsageTotals, resolve_rates
+from evals.pricing import (
+    ModelRates,
+    UsageTotals,
+    get_embedding_cost,
+    resolve_embedding_rate,
+    resolve_rates,
+)
 from evals.schemas import (
     EvalQuestion,
     EvalResponse,
@@ -33,6 +39,10 @@ class LatencyP50(BaseMetric):
 
     @property
     def requires_gold(self) -> bool:
+        return False
+
+    @property
+    def requires_judge(self) -> bool:
         return False
 
     def compute(
@@ -113,6 +123,10 @@ class LatencyP95(BaseMetric):
 
     @property
     def requires_gold(self) -> bool:
+        return False
+
+    @property
+    def requires_judge(self) -> bool:
         return False
 
     def compute(
@@ -200,6 +214,7 @@ class CostPerQuery(BaseMetric):
         judge_model: str | None = None,
         judge_cost_per_1m_input_tokens: float | None = None,
         judge_cost_per_1m_output_tokens: float | None = None,
+        ingestion_cost_usd: float | None = 0.0,
     ):
         """Initialize with the generation model and, optionally, judge usage.
 
@@ -218,6 +233,7 @@ class CostPerQuery(BaseMetric):
             judge_cost_per_1m_input_tokens,
             judge_cost_per_1m_output_tokens,
         )
+        self._ingestion_cost_usd = ingestion_cost_usd
 
     @property
     def model(self) -> str:
@@ -338,6 +354,8 @@ class CostPerQuery(BaseMetric):
             unpriced.append("generation")
         if judge_has_usage and self._judge_rates is None:
             unpriced.append("judge")
+        if self._ingestion_cost_usd is None:
+            unpriced.append("ingestion")
 
         generation_cost = (
             self._rates.cost(total_prompt_tokens, total_completion_tokens)
@@ -361,7 +379,11 @@ class CostPerQuery(BaseMetric):
             total_cost = None
             avg_cost = None
         else:
-            total_cost = (generation_cost or 0.0) + (judge_cost or 0.0)
+            total_cost = (
+                (generation_cost or 0.0)
+                + (judge_cost or 0.0)
+                + (self._ingestion_cost_usd or 0.0)
+            )
             avg_cost = total_cost / query_count
 
         details: dict[str, Any] = {
@@ -370,6 +392,7 @@ class CostPerQuery(BaseMetric):
             "total_prompt_tokens": total_prompt_tokens,
             "total_completion_tokens": total_completion_tokens,
             "generation_cost_usd": generation_cost,
+            "ingestion_cost_usd": self._ingestion_cost_usd,
             "per_question": per_question,
             "query_count": query_count,
             **self._rate_details(),
@@ -399,4 +422,184 @@ class CostPerQuery(BaseMetric):
             group=self.group,
             sample_size=counted,
             details=details,
+        )
+
+
+class IngestionCostPerDocument(BaseMetric):
+    """Average ingestion cost per document, split into contextual and embedding work."""
+
+    def __init__(
+        self,
+        stages: list[Any],
+        llm_model: str | None,
+        embedding_model: str | None,
+        llm_input_rate: float | None = None,
+        llm_output_rate: float | None = None,
+    ):
+        self._stages = stages
+        self._llm_model = llm_model
+        self._embedding_model = embedding_model
+        self._llm_rates = resolve_rates(llm_model, llm_input_rate, llm_output_rate)
+        self._embedding_rate = resolve_embedding_rate(embedding_model)
+
+    @property
+    def name(self) -> str:
+        return "ingestion_cost_per_document"
+
+    @property
+    def group(self) -> MetricGroup:
+        return MetricGroup.PERFORMANCE
+
+    @property
+    def description(self) -> str:
+        return "Average document-ingestion cost in USD (contextual enrichment + embedding)"
+
+    @property
+    def requires_gold(self) -> bool:
+        return False
+
+    @property
+    def requires_judge(self) -> bool:
+        return False
+
+    def compute(self, question: EvalQuestion, response: EvalResponse, **kwargs: Any) -> MetricResult:
+        raise NotImplementedError("Ingestion metrics are computed from document-stage records")
+
+    async def compute_batch(
+        self, questions: list[EvalQuestion], responses: list[EvalResponse], **kwargs: Any
+    ) -> MetricResult:
+        by_document: dict[str, list[Any]] = {}
+        for stage in self._stages:
+            by_document.setdefault(stage.document_id, []).append(stage)
+
+        if not by_document:
+            return MetricResult(
+                name=self.name, value=None, group=self.group, sample_size=0,
+                details={"note": "No persisted ingestion-stage records available"},
+            )
+
+        per_document: dict[str, float] = {}
+        stage_totals = {"contextual_enrich": 0.0, "embed": 0.0}
+        unpriced: list[str] = []
+        for document_id, stages in by_document.items():
+            total = 0.0
+            unknown = False
+            for stage in stages:
+                if stage.name == "contextual_enrich" and stage.status != "skipped":
+                    if stage.input_tokens is None or stage.output_tokens is None or self._llm_rates is None:
+                        unknown = True
+                        unpriced.append(f"{document_id}:contextual_enrich")
+                        continue
+                    cost = self._llm_rates.cost(stage.input_tokens, stage.output_tokens)
+                    total += cost
+                    stage_totals[stage.name] += cost
+                elif stage.name == "embed" and stage.item_count:
+                    if stage.input_tokens is None or self._embedding_rate is None:
+                        unknown = True
+                        unpriced.append(f"{document_id}:embed")
+                        continue
+                    cost = get_embedding_cost(self._embedding_model or "", stage.input_tokens)
+                    if cost is None:
+                        unknown = True
+                        unpriced.append(f"{document_id}:embed")
+                        continue
+                    total += cost
+                    stage_totals[stage.name] += cost
+            if not unknown:
+                per_document[document_id] = total
+
+        if len(per_document) != len(by_document):
+            return MetricResult(
+                name=self.name, value=None, group=self.group, sample_size=len(per_document),
+                details={
+                    "note": "At least one cost-bearing ingestion stage is unpriced or lacks token usage.",
+                    "unpriced_stages": unpriced,
+                    "per_document": per_document,
+                },
+            )
+
+        total = sum(per_document.values())
+        count = len(per_document)
+        return MetricResult(
+            name=self.name,
+            value=total / count,
+            group=self.group,
+            sample_size=count,
+            details={
+                "total_cost_usd": total,
+                "per_document": per_document,
+                "by_stage_usd": stage_totals,
+                "contextual_rate_source": self._llm_rates.source if self._llm_rates else "unpriced",
+                "embedding_rate_source": self._embedding_rate[1] if self._embedding_rate else "unpriced",
+            },
+        )
+
+
+class IngestionLatencyPerDocument(BaseMetric):
+    """Average wall-clock stage time per document, with a stage breakdown."""
+
+    def __init__(self, stages: list[Any]):
+        self._stages = stages
+
+    @property
+    def name(self) -> str:
+        return "ingestion_latency_per_document_ms"
+
+    @property
+    def group(self) -> MetricGroup:
+        return MetricGroup.PERFORMANCE
+
+    @property
+    def description(self) -> str:
+        return "Average document-ingestion latency in milliseconds"
+
+    @property
+    def requires_gold(self) -> bool:
+        return False
+
+    @property
+    def requires_judge(self) -> bool:
+        return False
+
+    def compute(self, question: EvalQuestion, response: EvalResponse, **kwargs: Any) -> MetricResult:
+        raise NotImplementedError("Ingestion metrics are computed from document-stage records")
+
+    async def compute_batch(
+        self, questions: list[EvalQuestion], responses: list[EvalResponse], **kwargs: Any
+    ) -> MetricResult:
+        by_document: dict[str, list[Any]] = {}
+        for stage in self._stages:
+            by_document.setdefault(stage.document_id, []).append(stage)
+        if not by_document:
+            return MetricResult(
+                name=self.name, value=None, group=self.group, sample_size=0,
+                details={"note": "No persisted ingestion-stage records available"},
+            )
+
+        per_document = {
+            document_id: sum(stage.duration_ms for stage in stages)
+            for document_id, stages in by_document.items()
+        }
+        by_stage: dict[str, float] = {}
+        for stages in by_document.values():
+            for stage in stages:
+                by_stage[stage.name] = by_stage.get(stage.name, 0.0) + stage.duration_ms
+        count = len(per_document)
+        enrichment_rates = [
+            stage.enrichment_success_rate
+            for stage in self._stages
+            if stage.name == "contextual_enrich" and stage.enrichment_success_rate is not None
+        ]
+        return MetricResult(
+            name=self.name,
+            value=sum(per_document.values()) / count,
+            group=self.group,
+            sample_size=count,
+            details={
+                "per_document": per_document,
+                "by_stage_ms": by_stage,
+                "enrichment_success_rate": (
+                    sum(enrichment_rates) / len(enrichment_rates) if enrichment_rates else None
+                ),
+            },
         )

@@ -68,15 +68,12 @@ MODEL_COSTS: dict[str, dict[str, float]] = {
     # zero if that is genuinely the intent.
 }
 
-# Per 1M tokens. Embedding costs are not yet part of CostPerQuery; the table is
-# kept here so both live in one place when they are.
+# Per 1M input tokens. A self-hosted embedder is intentionally absent: it must
+# receive a measured amortized rate through MODEL_PRICE_OVERRIDES, just like a
+# self-hosted generation model. An explicit zero override remains valid.
 EMBEDDING_COSTS: dict[str, float] = {
     "text-embedding-3-small": 0.02,
     "text-embedding-3-large": 0.13,
-    # Self-hosted via TEI. Explicitly zero rather than unpriced: this is a
-    # declaration that the marginal token cost is being treated as zero, not an
-    # absence of information.
-    "Qwen/Qwen3-Embedding-0.6B": 0.0,
 }
 
 
@@ -267,10 +264,24 @@ def get_model_cost(
     return rates.cost(prompt_tokens, completion_tokens)
 
 
-def get_embedding_cost(model: str, tokens: int) -> float | None:
-    """Embedding cost in USD, or None when the model is unpriced."""
+def resolve_embedding_rate(model: str | None) -> tuple[float, str] | None:
+    """Resolve an embedding input-token rate, preserving unpriced as unknown."""
+    if not model:
+        return None
+    override = _match(model, _env_overrides())
+    if override is not None:
+        return override["input"], "environment"
     table = {key: {"input": value, "output": value} for key, value in EMBEDDING_COSTS.items()}
     entry = _match(model, table)
     if entry is None:
         return None
-    return tokens * entry["input"] / 1_000_000
+    return entry["input"], "table"
+
+
+def get_embedding_cost(model: str, tokens: int) -> float | None:
+    """Embedding cost in USD, or None when the model is unpriced."""
+    resolved = resolve_embedding_rate(model)
+    if resolved is None:
+        return None
+    rate, _ = resolved
+    return tokens * rate / 1_000_000

@@ -33,6 +33,8 @@ from evals.metrics.performance import (
     LatencyP50,
     LatencyP95,
     CostPerQuery,
+    IngestionCostPerDocument,
+    IngestionLatencyPerDocument,
 )
 from evals.schemas.results import MetricGroup
 
@@ -48,7 +50,10 @@ METRIC_GROUPS = {
         UncitedClaimRate,
     ],
     MetricGroup.ABSTENTION: [UnanswerableAccuracy, FalsePositiveRate, FalseNegativeRate],
-    MetricGroup.PERFORMANCE: [LatencyP50, LatencyP95, CostPerQuery],
+    MetricGroup.PERFORMANCE: [
+        LatencyP50, LatencyP95, CostPerQuery,
+        IngestionCostPerDocument, IngestionLatencyPerDocument,
+    ],
 }
 
 __all__ = [
@@ -81,6 +86,8 @@ __all__ = [
     "LatencyP50",
     "LatencyP95",
     "CostPerQuery",
+    "IngestionCostPerDocument",
+    "IngestionLatencyPerDocument",
     # Groups
     "METRIC_GROUPS",
 ]
