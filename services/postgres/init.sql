@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     -- text before it is stored, so this column is what the BM25 index covers.
     content TEXT NOT NULL,
     metadata JSONB DEFAULT '{}',
+    -- Stable coordinates in the original source document. Kept separately
+    -- from retrieval metadata so re-chunking does not invalidate gold anchors.
+    source_locator JSONB,
     -- Nullable: a chunk row can exist before its embedding is written. NULL
     -- rows are neither indexed nor returned by the vector retriever.
     -- Dimension matches Qwen/Qwen3-Embedding-0.6B served via TEI (1024-dim).

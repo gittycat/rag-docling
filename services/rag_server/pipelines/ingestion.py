@@ -22,6 +22,7 @@ import asyncio
 import time
 import hashlib
 import logging
+import re
 
 from llama_index.readers.docling import DoclingReader
 from llama_index.node_parser.docling import DoclingNodeParser
@@ -48,6 +49,84 @@ SUPPORTED_EXTENSIONS = {
 }
 
 SIMPLE_TEXT_EXTENSIONS = {'.txt', '.md'}
+SOURCE_LOCATOR_METADATA_KEY = "_source_locator"
+
+
+def _normalized_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _source_locator(
+    node: TextNode,
+    source_format: str,
+    document_hash: str,
+    locator: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not locator:
+        return None
+    normalized = _normalized_text(node.get_content())
+    return {
+        "document_hash": document_hash,
+        "source_format": source_format,
+        "locator": locator,
+        "normalized_text": normalized,
+        "normalized_text_hash": hashlib.sha256(normalized.encode()).hexdigest(),
+    }
+
+
+def _text_source_locator(node: TextNode, source_format: str, document_hash: str) -> dict[str, Any] | None:
+    """Build source coordinates for a text-splitter node without fuzzy matching."""
+    start = getattr(node, "start_char_idx", None)
+    end = getattr(node, "end_char_idx", None)
+    if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end < start:
+        return None
+    return _source_locator(
+        node,
+        source_format,
+        document_hash,
+        {"element_path": "document", "start_char": start, "end_char": end},
+    )
+
+
+def _docling_source_locator(node: TextNode, source_format: str, document_hash: str) -> dict[str, Any] | None:
+    """Extract a structural coordinate emitted by Docling, if the parser exposes one."""
+    metadata = node.metadata
+    raw = metadata.get("source_locator") or metadata.get("docling_source_locator")
+    if isinstance(raw, dict):
+        locator = dict(raw)
+    else:
+        locator = {}
+        regions: list[dict[str, Any]] = []
+        for item in metadata.get("doc_items", []):
+            if not isinstance(item, dict):
+                continue
+            element_id = item.get("self_ref")
+            provenances = item.get("prov") or []
+            if not provenances and element_id:
+                regions.append({"element_id": element_id})
+            for provenance in provenances:
+                if not isinstance(provenance, dict):
+                    continue
+                region = {"element_id": element_id} if element_id else {}
+                if provenance.get("page_no") is not None:
+                    region["page"] = provenance["page_no"]
+                bbox = provenance.get("bbox")
+                if isinstance(bbox, dict):
+                    values = [bbox.get(key) for key in ("l", "t", "r", "b")]
+                    if all(isinstance(value, (int, float)) for value in values):
+                        region["bbox"] = values
+                if region:
+                    regions.append(region)
+        if regions:
+            locator["regions"] = regions
+        for key in ("element_id", "page", "bbox", "block_id", "sheet", "row", "col", "range"):
+            value = metadata.get(key)
+            if value is not None:
+                locator[key] = value
+        element_path = metadata.get("element_path") or metadata.get("self_ref")
+        if element_path is not None:
+            locator["element_path"] = element_path
+    return _source_locator(node, source_format, document_hash, locator)
 
 
 def _record_stage(
@@ -154,7 +233,9 @@ def clean_metadata_for_storage(metadata: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================================
 
 def chunk_document_with_docling(
-    file_path: str, stages: list[dict[str, Any]] | None = None
+    file_path: str,
+    stages: list[dict[str, Any]] | None = None,
+    document_hash: str | None = None,
 ) -> List[TextNode]:
     """
     Process complex documents (PDF, DOCX, etc.) using Docling.
@@ -209,6 +290,10 @@ def chunk_document_with_docling(
     # Clean metadata for storage
     logger.info(f"[CHUNKING] Cleaning metadata for storage")
     for node in nodes:
+        if document_hash:
+            node.metadata[SOURCE_LOCATOR_METADATA_KEY] = _docling_source_locator(
+                node, Path(file_path).suffix.lower().lstrip("."), document_hash
+            )
         node.metadata = clean_metadata_for_storage(node.metadata)
 
     return nodes
@@ -219,6 +304,7 @@ def chunk_document_with_text_splitter(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
     stages: list[dict[str, Any]] | None = None,
+    document_hash: str | None = None,
 ) -> List[TextNode]:
     """
     Process simple text documents using SentenceSplitter.
@@ -260,6 +346,12 @@ def chunk_document_with_text_splitter(
     chunk_start = time.perf_counter()
     splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     nodes = splitter.get_nodes_from_documents(documents)
+    if document_hash:
+        source_format = Path(file_path).suffix.lower().lstrip(".")
+        for node in nodes:
+            node.metadata[SOURCE_LOCATOR_METADATA_KEY] = _text_source_locator(
+                node, source_format, document_hash
+            )
     _record_stage(stages, "chunk", chunk_start, len(nodes))
     logger.info(f"[CHUNKING] Phase 2 complete - {len(nodes)} chunks created")
 
@@ -271,6 +363,7 @@ def chunk_document(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
     stages: list[dict[str, Any]] | None = None,
+    document_hash: str | None = None,
 ) -> List[TextNode]:
     """
     Main chunking dispatcher - routes to appropriate chunking method based on file type.
@@ -292,9 +385,11 @@ def chunk_document(
 
     # Route to appropriate chunker
     if extension in SIMPLE_TEXT_EXTENSIONS:
-        nodes = chunk_document_with_text_splitter(file_path, chunk_size, chunk_overlap, stages)
+        nodes = chunk_document_with_text_splitter(
+            file_path, chunk_size, chunk_overlap, stages, document_hash
+        )
     else:
-        nodes = chunk_document_with_docling(file_path, stages)
+        nodes = chunk_document_with_docling(file_path, stages, document_hash)
 
     # Log preview of first chunk
     if nodes:
@@ -832,7 +927,7 @@ def ingest_document(
     logger.info(f"[INGESTION] Step 2: Chunking document...")
     stages: list[dict[str, Any]] = []
     chunk_start = time.perf_counter()
-    nodes = chunk_document(file_path, stages=stages)
+    nodes = chunk_document(file_path, stages=stages, document_hash=metadata["file_hash"])
     chunk_duration = time.perf_counter() - chunk_start
     logger.info(f"[INGESTION] Step 2 complete ({chunk_duration:.2f}s) - {len(nodes)} chunks created")
 
@@ -852,7 +947,9 @@ def ingest_document(
     # structures — this is kept only because changing the shape of persisted
     # chunk metadata is out of scope here, and downstream consumers (retrievers,
     # eval tooling, the dashboard) currently assume flat scalar values.
+    source_locators = []
     for node in nodes:
+        source_locators.append(node.metadata.pop(SOURCE_LOCATOR_METADATA_KEY, None))
         node.metadata = {
             k: v for k, v in node.metadata.items()
             if isinstance(v, (str, int, float, bool)) or v is None
@@ -884,6 +981,7 @@ def ingest_document(
             "chunk_index": i,
             "content": node.get_content(),
             "metadata": dict(node.metadata),
+            "source_locator": source_locators[i],
             "embedding": node.embedding,
         })
 

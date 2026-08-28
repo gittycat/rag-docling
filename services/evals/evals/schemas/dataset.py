@@ -1,7 +1,9 @@
-"""Dataset schemas for evaluation questions and gold passages."""
+"""Dataset schemas for evaluation questions and source-anchored evidence."""
 
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
+import re
 from typing import Any
 
 
@@ -25,6 +27,30 @@ class Difficulty(str, Enum):
 
 
 @dataclass
+class EvidenceLocator:
+    """A stable ground-truth coordinate in the original source document."""
+
+    document_hash: str
+    source_format: str
+    locator: dict[str, Any]
+    normalized_text: str
+    normalized_text_hash: str
+    evidence_set_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.document_hash:
+            raise ValueError("document_hash cannot be empty")
+        if not self.source_format:
+            raise ValueError("source_format cannot be empty")
+        if not self.locator:
+            raise ValueError("locator cannot be empty")
+        normalized = re.sub(r"\s+", " ", self.normalized_text).strip()
+        expected_hash = hashlib.sha256(normalized.encode()).hexdigest()
+        if self.normalized_text_hash != expected_hash:
+            raise ValueError("normalized_text_hash must match normalized_text")
+
+
+@dataclass
 class GoldPassage:
     """A gold (ground truth) passage that should be retrieved for a question.
 
@@ -36,15 +62,13 @@ class GoldPassage:
     """
 
     doc_id: str
-    chunk_id: str
+    chunk_id: str | None
     text: str
     relevance_score: float = 1.0
 
     def __post_init__(self):
         if not self.doc_id:
             raise ValueError("doc_id cannot be empty")
-        if not self.chunk_id:
-            raise ValueError("chunk_id cannot be empty")
 
 
 @dataclass
@@ -70,6 +94,7 @@ class EvalQuestion:
     question: str
     expected_answer: str | None
     gold_passages: list[GoldPassage] = field(default_factory=list)
+    evidence: list[EvidenceLocator] = field(default_factory=list)
     context_passages: list[GoldPassage] = field(default_factory=list)
     query_type: QueryType = QueryType.FACTOID
     difficulty: Difficulty = Difficulty.MEDIUM

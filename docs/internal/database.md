@@ -50,6 +50,7 @@ three, so BM25 and vector search read the same table.
 | `chunk_index` | `INTEGER` | 0-based position within the document |
 | `content` | `TEXT` | chunk text, contextual-retrieval prefix included inline when enabled |
 | `metadata` | `JSONB` | default `{}` |
+| `source_locator` | `JSONB` | stable source coordinate and source-text checksum; `NULL` when the parser cannot map a chunk |
 | `embedding` | `vector(1024)` | nullable — a chunk row can exist before its embedding is written; `NULL` rows are neither indexed nor returned |
 | `created_at` | `TIMESTAMPTZ` | default `NOW()` |
 

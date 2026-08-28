@@ -860,6 +860,8 @@ def extract_sources(
         if include_chunks:
             source["chunk_id"] = chunk_id
             source["chunk_index"] = chunk_index
+            source["source_locator"] = metadata.get("source_locator")
+            source["file_hash"] = metadata.get("file_hash")
         sources.append(source)
 
     return sources

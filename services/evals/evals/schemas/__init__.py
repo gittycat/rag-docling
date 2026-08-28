@@ -2,6 +2,7 @@
 
 from evals.schemas.dataset import (
     EvalQuestion,
+    EvidenceLocator,
     GoldPassage,
     EvalDataset,
     QueryType,
@@ -30,6 +31,7 @@ from evals.schemas.results import (
 __all__ = [
     # Dataset schemas
     "EvalQuestion",
+    "EvidenceLocator",
     "GoldPassage",
     "EvalDataset",
     "QueryType",

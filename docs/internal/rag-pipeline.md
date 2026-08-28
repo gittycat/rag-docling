@@ -25,7 +25,8 @@ worker for each queued document. It runs synchronously inside a worker thread
    list/dict metadata Docling attached is dropped at this point. Postgres JSONB
    would take nested structures; the flattening is retained because downstream
    consumers (the retrievers, eval tooling, the dashboard) assume flat scalars,
-   not because the store requires it.
+   not because the store requires it. Source-coordinate lineage is deliberately
+   kept outside that flattened metadata in `document_chunks.source_locator`.
 5. **Embed** — batches chunks, calls the embedding model, and assigns the
    result to each node's `embedding`. Nothing is written here.
 
@@ -220,6 +221,17 @@ Per-chunk metadata persisted with the row (after the scalar-only sanitize pass):
 
 Any non-scalar metadata Docling attached upstream is dropped at this stage —
 only `str`, `int`, `float`, `bool`, and `None` survive.
+
+### Source-coordinate lineage
+
+Every text/Markdown chunk stores its half-open source character range
+(`element_path`, `start_char`, `end_char`) plus the document SHA-256 in the
+separate `source_locator` JSONB column. Docling chunks store the structural
+locator it exposes (page/block, element id, or sheet/cell). If a parser cannot
+provide a coordinate, the column is `NULL`; evaluation records this as a
+lineage failure and leaves affected retrieval metrics undefined rather than
+guessing with text similarity. The column is returned with `include_chunks` so
+source-anchored evidence can be resolved after a re-chunk.
 
 ## Task worker
 

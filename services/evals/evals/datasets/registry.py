@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from evals.config import DatasetName
 from evals.schemas import EvalDataset
-from evals.schemas.dataset import EvalQuestion, GoldPassage, QueryType, Difficulty
+from evals.schemas.dataset import EvidenceLocator, EvalQuestion, GoldPassage, QueryType, Difficulty
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,17 @@ def _dataset_to_dict(ds: EvalDataset, fingerprint: dict[str, Any] | None = None)
                     }
                     for gp in q.gold_passages
                 ],
+                "evidence": [
+                    {
+                        "document_hash": evidence.document_hash,
+                        "source_format": evidence.source_format,
+                        "locator": evidence.locator,
+                        "normalized_text": evidence.normalized_text,
+                        "normalized_text_hash": evidence.normalized_text_hash,
+                        "evidence_set_id": evidence.evidence_set_id,
+                    }
+                    for evidence in q.evidence
+                ],
                 "context_passages": [
                     {
                         "doc_id": cp.doc_id,
@@ -140,11 +151,22 @@ def _dataset_from_dict(d: dict[str, Any]) -> EvalDataset:
         gold_passages = [
             GoldPassage(
                 doc_id=gp["doc_id"],
-                chunk_id=gp["chunk_id"],
+                chunk_id=gp.get("chunk_id"),
                 text=gp["text"],
                 relevance_score=gp.get("relevance_score", 1.0),
             )
             for gp in q.get("gold_passages", [])
+        ]
+        evidence = [
+            EvidenceLocator(
+                document_hash=item["document_hash"],
+                source_format=item["source_format"],
+                locator=item["locator"],
+                normalized_text=item["normalized_text"],
+                normalized_text_hash=item["normalized_text_hash"],
+                evidence_set_id=item.get("evidence_set_id"),
+            )
+            for item in q.get("evidence", [])
         ]
         context_passages = [
             GoldPassage(
@@ -160,6 +182,7 @@ def _dataset_from_dict(d: dict[str, Any]) -> EvalDataset:
             question=q["question"],
             expected_answer=q.get("expected_answer"),
             gold_passages=gold_passages,
+            evidence=evidence,
             context_passages=context_passages,
             query_type=QueryType(q.get("query_type", "factoid")),
             difficulty=Difficulty(q.get("difficulty", "medium")),

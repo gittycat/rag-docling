@@ -152,6 +152,7 @@ async def add_chunks(
             chunk_index=chunk["chunk_index"],
             content=chunk["content"],
             metadata_=chunk.get("metadata", {}),
+            source_locator=chunk.get("source_locator"),
             # Absent or None writes SQL NULL; such rows are skipped by the
             # vector retriever and never enter the diskann index.
             embedding=chunk.get("embedding"),

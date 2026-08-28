@@ -240,7 +240,11 @@ def parse_rag_response(
             text=source.get("full_text", source.get("text", source.get("content", ""))),
             score=source.get("score"),
             rank=i + 1,
-            metadata=source.get("metadata", {}),
+            metadata={
+                **source.get("metadata", {}),
+                "file_hash": source.get("file_hash"),
+                "source_locator": source.get("source_locator"),
+            },
         )
         retrieved_chunks.append(chunk)
 
@@ -556,6 +560,12 @@ class EvaluationRunner:
             for question in dataset:
                 all_questions_to_run.append(question)
 
+        ground_truth_modes = sorted({
+            "source_coordinate" if question.evidence else "chunk_id"
+            for question in all_questions_to_run
+            if question.evidence or question.gold_passages
+        }) or ["none"]
+
         logger.info(f"[EVAL] Total questions: {len(all_questions_to_run)}")
         _report(
             "datasets_loaded",
@@ -686,6 +696,10 @@ class EvaluationRunner:
                 "samples_per_dataset": self.config.samples_per_dataset,
                 "seed": self.config.seed,
                 "tier": self.config.tier.value,
+                # A coordinate-anchored run and a legacy chunk-id run answer
+                # different questions after re-chunking, so never blend them
+                # under an unlabeled scorecard.
+                "ground_truth": ground_truth_modes,
                 "judge_model": self.config.judge.model if self.config.judge.enabled else None,
                 "judge_provider": self.config.judge.provider if self.config.judge.enabled else None,
                 "judge_execution_boundary": (

@@ -125,6 +125,7 @@ class PgSearchBM25Retriever(BaseRetriever):
                 dc.chunk_index,
                 dc.content,
                 dc.metadata,
+                dc.source_locator,
                 dc.created_at,
                 d.file_name,
                 d.file_type,
@@ -170,6 +171,9 @@ class PgSearchBM25Retriever(BaseRetriever):
                 "file_size_bytes": row.file_size_bytes,
                 "file_hash": row.file_hash,
                 "uploaded_at": row.uploaded_at.isoformat() if row.uploaded_at else None,
+                "source_locator": (
+                    dict(source_locator) if (source_locator := getattr(row, "source_locator", None)) else None
+                ),
             })
 
             # Create TextNode

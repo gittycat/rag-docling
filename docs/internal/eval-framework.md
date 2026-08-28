@@ -80,11 +80,16 @@ abstention, and performance metrics are computed by direct matching or arithmeti
 — matching falls back from exact chunk-ID match to Jaccard token-overlap with a
 0.3 threshold when IDs don't line up cleanly.
 
-Retrieved-chunk matching against gold passages, and citation matching, both use the
-same exact-ID-first, Jaccard-overlap-fallback logic — there is one shared matching
-implementation behind both metric groups. Citation matching adds a document-level
-path for gold passages that carry no text (produced by `gold_doc_ids`), which
-would otherwise be unmatchable and score a spurious 0.
+Legacy chunk-ID ground truth uses exact-ID-first, Jaccard-overlap-fallback
+matching. Source-coordinate ground truth uses only source-locator overlap
+(character ranges, page/block boxes, element ids, or spreadsheet cells); it
+never falls back to Jaccard because chunk-size sweeps would otherwise score
+against newly generated chunks. A missing locator records `lineage_failure` and
+leaves affected retrieval metrics undefined. Each saved run labels its ground
+truth mode, so legacy `chunk_id` and `source_coordinate` results are never
+silently mixed. Citation matching retains the legacy shared matcher and adds a
+document-level path for gold passages that carry no text (produced by
+`gold_doc_ids`), which would otherwise be unmatchable and score a spurious 0.
 
 ## Claim-level grounding (the `groundedness` group)
 

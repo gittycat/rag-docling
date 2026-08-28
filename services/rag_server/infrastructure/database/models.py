@@ -82,6 +82,7 @@ class DocumentChunk(Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default="{}"
     )
+    source_locator: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # Nullable: a chunk row can exist before its embedding is written. NULL rows
     # are excluded by the vector retriever and never indexed.
     embedding: Mapped[list[float] | None] = mapped_column(
