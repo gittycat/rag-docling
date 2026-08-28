@@ -340,6 +340,11 @@ class EvalConfig:
     cleanup_on_failure: bool = True
     query_concurrency: int = 10
     judge_concurrency: int = 10
+    # Uses POST /search and records a selected retrieval stage as the response.
+    # This is an evaluation mode only; it never changes server retrieval settings.
+    retrieval_only: bool = False
+    retrieval_source: str = "rerank"
+    search_top_k: int = 10
 
     @property
     def weights(self) -> dict[str, float]:
@@ -363,6 +368,12 @@ class EvalConfig:
         # Normalize tier
         if isinstance(self.tier, str):
             self.tier = EvalTier(self.tier)
+        if self.retrieval_only and self.tier != EvalTier.END_TO_END:
+            raise ValueError("retrieval_only requires the end_to_end tier")
+        if self.retrieval_source not in {"bm25", "vector", "fusion", "rerank"}:
+            raise ValueError("retrieval_source must be bm25, vector, fusion, or rerank")
+        if self.search_top_k < 1:
+            raise ValueError("search_top_k must be at least 1")
         # Validate tier/dataset combinations
         for ds in self.datasets:
             supported = DATASET_TIER_SUPPORT.get(ds, list(EvalTier))
@@ -466,6 +477,9 @@ class EvalConfig:
             "cleanup_on_failure": self.cleanup_on_failure,
             "query_concurrency": self.query_concurrency,
             "judge_concurrency": self.judge_concurrency,
+            "retrieval_only": self.retrieval_only,
+            "retrieval_source": self.retrieval_source,
+            "search_top_k": self.search_top_k,
         }
 
         with open(path, "w") as f:

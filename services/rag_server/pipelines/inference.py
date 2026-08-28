@@ -570,6 +570,10 @@ def _stage_items(nodes: List[NodeWithScore]) -> list[Dict]:
             "doc_id": str(node_with_score.node.metadata.get("document_id", "")),
             "score": node_with_score.score,
             "rank": rank,
+            "metadata": {
+                "file_hash": node_with_score.node.metadata.get("file_hash"),
+                "source_locator": node_with_score.node.metadata.get("source_locator"),
+            },
         }
         for rank, node_with_score in enumerate(nodes, start=1)
     ]

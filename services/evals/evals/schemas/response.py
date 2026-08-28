@@ -67,6 +67,9 @@ class StageItem:
     doc_id: str
     score: float | None = None
     rank: int = 0
+    # Source-coordinate lineage makes per-leg metrics meaningful after a
+    # chunk-size sweep. It contains no chunk text.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

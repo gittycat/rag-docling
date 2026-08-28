@@ -6,6 +6,14 @@ from evals.metrics.retrieval import (
     PrecisionAtK,
     MRR,
     NDCG,
+    FusionLift,
+    RerankPromotions,
+    RerankDemotions,
+    CandidateRecallCeiling,
+    EvidenceSetRecall,
+    EvidenceContainment,
+    EvidenceFragmentation,
+    OrphanedEvidenceRate,
 )
 from evals.metrics.generation import (
     Faithfulness,
@@ -40,7 +48,11 @@ from evals.schemas.results import MetricGroup
 
 # Metric groups for easy selection
 METRIC_GROUPS = {
-    MetricGroup.RETRIEVAL: [RecallAtK, PrecisionAtK, MRR, NDCG],
+    MetricGroup.RETRIEVAL: [
+        RecallAtK, PrecisionAtK, MRR, NDCG,
+        FusionLift, RerankPromotions, RerankDemotions, CandidateRecallCeiling,
+        EvidenceSetRecall, EvidenceContainment, EvidenceFragmentation, OrphanedEvidenceRate,
+    ],
     MetricGroup.GENERATION: [Faithfulness, AnswerCorrectness, AnswerRelevancy],
     MetricGroup.CITATION: [CitationPrecision, CitationRecall, SectionAccuracy],
     MetricGroup.GROUNDEDNESS: [
@@ -64,6 +76,14 @@ __all__ = [
     "PrecisionAtK",
     "MRR",
     "NDCG",
+    "FusionLift",
+    "RerankPromotions",
+    "RerankDemotions",
+    "CandidateRecallCeiling",
+    "EvidenceSetRecall",
+    "EvidenceContainment",
+    "EvidenceFragmentation",
+    "OrphanedEvidenceRate",
     # Generation
     "Faithfulness",
     "AnswerCorrectness",

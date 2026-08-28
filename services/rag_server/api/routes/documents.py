@@ -82,6 +82,41 @@ async def get_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/documents/{document_id}/chunks")
+async def get_document_chunks(document_id: str):
+    """Return chunk lineage for evaluation without exposing chunk content."""
+    try:
+        doc_uuid = uuid.UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+
+    try:
+        async with get_session() as session:
+            document = await db_docs.get_document_info(session, doc_uuid)
+            if document is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            chunks = await db_docs.get_chunks_for_document(session, doc_uuid)
+        return {
+            "chunks": [
+                {
+                    "chunk_id": str(chunk.id),
+                    "doc_id": str(chunk.document_id),
+                    "rank": chunk.chunk_index + 1,
+                    "metadata": {
+                        "file_hash": document["file_hash"],
+                        "source_locator": chunk.source_locator,
+                    },
+                }
+                for chunk in chunks
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DOCUMENTS] Error reading chunks for {document_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/documents/check-duplicates", response_model=FileCheckResponse)
 async def check_duplicate_documents(request: FileCheckRequest):
     """

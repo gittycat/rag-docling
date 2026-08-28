@@ -17,7 +17,15 @@ from schemas.query import SearchRequest
 
 def _node(chunk_id: str, doc_id: str, score: float) -> NodeWithScore:
     return NodeWithScore(
-        node=TextNode(id_=chunk_id, text=chunk_id, metadata={"document_id": doc_id}),
+        node=TextNode(
+            id_=chunk_id,
+            text=chunk_id,
+            metadata={
+                "document_id": doc_id,
+                "file_hash": "a" * 64,
+                "source_locator": {"document_hash": "a" * 64, "source_format": "txt", "locator": {}},
+            },
+        ),
         score=score,
     )
 
@@ -60,6 +68,7 @@ def test_hybrid_retriever_records_ranked_legs_and_fusion():
     assert [item["chunk_id"] for item in traces[0]["items"]] == ["a", "b"]
     assert [item["chunk_id"] for item in traces[1]["items"]] == ["b", "c"]
     assert [item["chunk_id"] for item in traces[2]["items"]] == ["b", "a"]
+    assert traces[0]["items"][0]["metadata"]["file_hash"] == "a" * 64
     assert all(trace["status"] == "ok" for trace in traces)
     assert all(trace["duration_ms"] >= 0 for trace in traces)
 

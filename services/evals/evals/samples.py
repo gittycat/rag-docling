@@ -22,6 +22,7 @@ from evals.schemas import (
     Difficulty,
     EvalQuestion,
     EvalResponse,
+    EvidenceLocator,
     GoldPassage,
     QueryMetrics,
     QueryType,
@@ -64,6 +65,17 @@ def _question_to_dict(q: EvalQuestion) -> dict[str, Any]:
             }
             for p in q.gold_passages
         ],
+        "evidence": [
+            {
+                "document_hash": item.document_hash,
+                "source_format": item.source_format,
+                "locator": item.locator,
+                "normalized_text": item.normalized_text,
+                "normalized_text_hash": item.normalized_text_hash,
+                "evidence_set_id": item.evidence_set_id,
+            }
+            for item in q.evidence
+        ],
     }
 
 
@@ -105,6 +117,7 @@ def _response_to_dict(r: EvalResponse) -> dict[str, Any]:
                             "doc_id": item.doc_id,
                             "score": item.score,
                             "rank": item.rank,
+                            "metadata": item.metadata,
                         }
                         for item in stage.items
                     ]
@@ -123,6 +136,7 @@ def _response_to_dict(r: EvalResponse) -> dict[str, Any]:
                 "text": c.text[:MAX_CHUNK_TEXT],
                 "score": c.score,
                 "rank": c.rank,
+                "metadata": c.metadata,
             }
             for c in r.retrieved_chunks
         ],
@@ -158,12 +172,13 @@ def _question_from_dict(d: dict[str, Any]) -> EvalQuestion:
         gold_passages=[
             GoldPassage(
                 doc_id=p["doc_id"],
-                chunk_id=p["chunk_id"],
+                chunk_id=p.get("chunk_id"),
                 text=p.get("text", ""),
                 relevance_score=p.get("relevance_score", 1.0),
             )
             for p in d.get("gold_passages", [])
         ],
+        evidence=[EvidenceLocator(**item) for item in d.get("evidence", [])],
         query_type=QueryType(d.get("query_type", "factoid")),
         difficulty=Difficulty(d.get("difficulty", "medium")),
         domain=d.get("domain", "unknown"),
@@ -208,6 +223,7 @@ def _response_from_dict(d: dict[str, Any]) -> EvalResponse:
                 text=c.get("text", ""),
                 score=c.get("score"),
                 rank=c.get("rank"),
+                metadata=c.get("metadata", {}),
             )
             for c in d.get("retrieved_chunks", [])
         ],

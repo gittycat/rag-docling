@@ -33,6 +33,7 @@ class StageItem(BaseModel):
     doc_id: str
     score: float | None = None
     rank: int
+    metadata: dict = Field(default_factory=dict)
 
 
 class StageTrace(BaseModel):

@@ -140,6 +140,23 @@ def main():
         help="Evaluation tier: generation (inject context, no ingestion) or end_to_end (full pipeline)",
     )
     eval_parser.add_argument(
+        "--retrieval-only",
+        action="store_true",
+        help="Use POST /search only: no generation or judge calls",
+    )
+    eval_parser.add_argument(
+        "--retrieval-source",
+        choices=["bm25", "vector", "fusion", "rerank"],
+        default="rerank",
+        help="Stage treated as the final ranking in retrieval-only mode",
+    )
+    eval_parser.add_argument(
+        "--search-top-k",
+        type=int,
+        default=10,
+        help="Candidate depth requested from POST /search in retrieval-only mode",
+    )
+    eval_parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Bypass dataset cache (re-download from source)",
@@ -324,6 +341,10 @@ def cmd_eval(args):
             config.cache.query = True
         if args.groundedness:
             config.metrics.groundedness = True
+        if args.retrieval_only:
+            config.retrieval_only = True
+            config.retrieval_source = args.retrieval_source
+            config.search_top_k = args.search_top_k
     else:
         # Parse datasets
         dataset_names = [
@@ -357,6 +378,9 @@ def cmd_eval(args):
                 ),
                 metrics=MetricConfig(groundedness=args.groundedness),
                 tier=tier,
+                retrieval_only=args.retrieval_only,
+                retrieval_source=args.retrieval_source,
+                search_top_k=args.search_top_k,
                 cache=CacheConfig(
                     judge=not args.no_judge_cache,
                     query=args.cache_queries,

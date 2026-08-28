@@ -38,6 +38,14 @@ from evals.metrics import (
     PrecisionAtK,
     MRR,
     NDCG,
+    FusionLift,
+    RerankPromotions,
+    RerankDemotions,
+    CandidateRecallCeiling,
+    EvidenceSetRecall,
+    EvidenceContainment,
+    EvidenceFragmentation,
+    OrphanedEvidenceRate,
     Faithfulness,
     AnswerCorrectness,
     AnswerRelevancy,
@@ -172,6 +180,12 @@ class RAGClient:
         response.raise_for_status()
         return response.json().get("stages", [])
 
+    async def get_document_chunks(self, document_id: str) -> list[dict[str, Any]]:
+        """Read a document's current chunk ids and source lineage, without text."""
+        response = await self._client.get(f"{self.base_url}/documents/{document_id}/chunks")
+        response.raise_for_status()
+        return response.json().get("chunks", [])
+
     async def delete_document(self, document_id: str) -> bool:
         """DELETE /documents/{document_id}. Returns True on success."""
         try:
@@ -242,8 +256,8 @@ def parse_rag_response(
             rank=i + 1,
             metadata={
                 **source.get("metadata", {}),
-                "file_hash": source.get("file_hash"),
-                "source_locator": source.get("source_locator"),
+                **({"file_hash": source["file_hash"]} if source.get("file_hash") is not None else {}),
+                **({"source_locator": source["source_locator"]} if source.get("source_locator") is not None else {}),
             },
         )
         retrieved_chunks.append(chunk)
@@ -293,7 +307,6 @@ def parse_rag_response(
         stages=stages,
         time_to_first_token_ms=metrics_data.get("time_to_first_token_ms") if isinstance(metrics_data, dict) else None,
     )
-
     return EvalResponse(
         question_id=question_id,
         answer=answer,
@@ -304,6 +317,33 @@ def parse_rag_response(
         raw_response=raw_response,
     )
 
+
+def parse_search_response(
+    question_id: str,
+    stages: list[dict[str, Any]],
+    latency_ms: float,
+    selected_stage: str,
+) -> EvalResponse:
+    """Turn a retrieval-only response into an evaluation response without an LLM call."""
+    selected = next((stage for stage in stages if stage.get("name") == selected_stage), None)
+    if selected is None:
+        raise ValueError(f"Search response did not contain requested stage {selected_stage!r}")
+    sources = []
+    for item in selected.get("items") or []:
+        metadata = dict(item.get("metadata") or {})
+        sources.append({
+            "doc_id": item.get("doc_id", ""),
+            "chunk_id": item.get("chunk_id", ""),
+            "score": item.get("score"),
+            "metadata": metadata,
+            "file_hash": metadata.get("file_hash"),
+            "source_locator": metadata.get("source_locator"),
+        })
+    return parse_rag_response(
+        question_id,
+        {"answer": "", "sources": sources, "metrics": {"stages": stages}},
+        latency_ms,
+    )
 
 class EvaluationRunner:
     """Orchestrates evaluation runs.
@@ -339,6 +379,7 @@ class EvaluationRunner:
         # for the configuration that produced it.
         self._query_cache_key: str | None = None
         self._ingestion_stages: list[IngestionStage] = []
+        self._chunk_catalog: list[RetrievedChunk] = []
 
     @property
     def client(self) -> RAGClient:
@@ -381,12 +422,20 @@ class EvaluationRunner:
             ] + [
                 MRR(),
                 NDCG(k=10),
+                FusionLift(),
+                RerankPromotions(),
+                RerankDemotions(),
+                CandidateRecallCeiling(),
+                EvidenceSetRecall(),
+                EvidenceContainment(),
+                EvidenceFragmentation(),
+                OrphanedEvidenceRate(),
             ]
 
         # Generation metrics (require judge). The runner's judge is injected rather
         # than letting each metric construct its own: three separate judges would
         # each build their own LLM client and none would see the response cache.
-        if self.config.metrics.generation and self.config.judge.enabled:
+        if not self.config.retrieval_only and self.config.metrics.generation and self.config.judge.enabled:
             self._metrics[MetricGroup.GENERATION] = [
                 Faithfulness(judge=self.judge),
                 AnswerCorrectness(judge=self.judge),
@@ -394,7 +443,7 @@ class EvaluationRunner:
             ]
 
         # Citation metrics
-        if self.config.metrics.citation:
+        if not self.config.retrieval_only and self.config.metrics.citation:
             self._metrics[MetricGroup.CITATION] = [
                 CitationPrecision(),
                 CitationRecall(),
@@ -404,7 +453,7 @@ class EvaluationRunner:
         # Groundedness metrics. One shared evaluator: the three judged metrics
         # read overlapping slices of the same per-question analysis, and building
         # one each would triple the judge bill for identical work.
-        if self.config.metrics.groundedness and self.config.judge.enabled:
+        if not self.config.retrieval_only and self.config.metrics.groundedness and self.config.judge.enabled:
             evaluator = ClaimEntailmentEvaluator(
                 judge=self.judge,
                 max_claims=self.config.metrics.max_claims_per_answer,
@@ -420,7 +469,7 @@ class EvaluationRunner:
             ]
 
         # Abstention metrics
-        if self.config.metrics.abstention:
+        if not self.config.retrieval_only and self.config.metrics.abstention:
             self._metrics[MetricGroup.ABSTENTION] = [
                 UnanswerableAccuracy(),
                 FalsePositiveRate(),
@@ -606,7 +655,12 @@ class EvaluationRunner:
                             raw_response, latency_ms = cached
                         else:
                             start_time = time.perf_counter()
-                            if self.config.tier == EvalTier.GENERATION:
+                            if self.config.retrieval_only:
+                                stages = await self.client.search(
+                                    question.question, top_k=self.config.search_top_k
+                                )
+                                raw_response = {"answer": "", "metrics": {"stages": stages}}
+                            elif self.config.tier == EvalTier.GENERATION:
                                 # Inject the full original document set (gold + distractors)
                                 # so generation is evaluated under realistic noisy context
                                 raw_response = await self.client.query_with_context(
@@ -619,10 +673,15 @@ class EvaluationRunner:
                                 )
                             latency_ms = (time.perf_counter() - start_time) * 1000
                             self._set_cached_query(question, raw_response, latency_ms)
-                        response = parse_rag_response(
-                            question_id=question.id,
-                            raw_response=raw_response,
-                            latency_ms=latency_ms,
+                        response = (
+                            parse_search_response(
+                                question.id,
+                                raw_response["metrics"]["stages"],
+                                latency_ms,
+                                self.config.retrieval_source,
+                            )
+                            if self.config.retrieval_only
+                            else parse_rag_response(question.id, raw_response, latency_ms)
                         )
                         return (question, response, latency_ms)
                     except Exception as e:
@@ -754,6 +813,10 @@ class EvaluationRunner:
             self.config.tier.value,
             question.question,
         ]
+        if self.config.retrieval_only:
+            # /search's selected stage and candidate depth change the ranking;
+            # never reuse a generated-query cache entry for a retrieval sweep.
+            parts.extend(["retrieval_only", self.config.retrieval_source, self.config.search_top_k])
         if self.config.tier == EvalTier.GENERATION:
             # The injected context is part of the input, so it is part of the key
             parts.append(
@@ -833,6 +896,7 @@ class EvaluationRunner:
 
         logger.info(f"[EVAL] Mapped {len(gold_to_rag)} of {len(doc_texts)} documents to RAG IDs")
         self._ingestion_stages = []
+        self._chunk_catalog = []
         for document_id in gold_to_rag.values():
             try:
                 stages = await self.client.get_document_ingestion_stages(document_id)
@@ -842,6 +906,21 @@ class EvaluationRunner:
             except Exception as e:
                 logger.warning(
                     f"[EVAL] Could not read ingestion stages for {document_id}: {e}"
+                )
+            try:
+                self._chunk_catalog.extend(
+                    RetrievedChunk(
+                        doc_id=chunk["doc_id"],
+                        chunk_id=chunk["chunk_id"],
+                        text="",
+                        rank=chunk.get("rank"),
+                        metadata=chunk.get("metadata", {}),
+                    )
+                    for chunk in await self.client.get_document_chunks(document_id)
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[EVAL] Could not read chunk lineage for {document_id}: {e}"
                 )
         return gold_to_rag
 
@@ -939,6 +1018,8 @@ class EvaluationRunner:
                     kwargs: dict[str, Any] = {}
                     if metric.requires_judge:
                         kwargs["judge"] = self.judge
+                    if isinstance(metric, (EvidenceContainment, EvidenceFragmentation, OrphanedEvidenceRate)):
+                        kwargs["chunk_catalog"] = self._chunk_catalog
 
                     if metric.requires_judge:
                         _report(
