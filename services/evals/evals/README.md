@@ -31,6 +31,7 @@ Judge prompts embed retrieved chunks and generated answers verbatim and are neve
 |---|---|---|
 | `faithfulness` | Whether the answer is grounded in the retrieved context (no hallucination) | 0-1, higher is better |
 | `answer_correctness` | Semantic equivalence to the expected answer | 0-1, higher is better |
+| `answer_completeness` | Fraction of cached reference-answer facts covered by the answer | 0-1, higher is better |
 | `answer_relevancy` | Whether the answer addresses the question asked | 0-1, higher is better |
 
 ### Citation
@@ -47,7 +48,7 @@ Measures how accurately the system cites its sources.
 
 Claim-level grounding and claim-to-citation entailment. Where the citation group asks whether a cited chunk is one of the gold passages, this asks whether that chunk entails the sentence citing it — a citation can pass the first test and fail this one. Sentence-level claims are segmented deterministically (`evals/claims.py`), including the inline `[1]` markers attached to each claim.
 
-Off by default: it costs one judge call per claim plus one per claim-citation link, against three per question for the whole generation group. Enable with `--groundedness` (CLI), `groundedness: true` (`POST /eval/runs`), or the run panel's "Claim grounding" checkbox. Capped at 5 claims/answer and 2 citations/claim, with truncation reported per question.
+Runs by default: it costs one judge call per claim plus one per claim-citation link, against three per question for the whole generation group. The groundedness scoring weight remains 0.0, so collecting the extra signal does not change the headline score. Capped at 5 claims/answer and 2 citations/claim, with truncation reported per question.
 
 The two citation-link metrics need `eval.citation_scope: explicit` in `config.yml`; under the default `retrieved` the model is never asked for markers and they report `n/a`.
 
@@ -57,6 +58,7 @@ The two citation-link metrics need `eval.citation_scope: explicit` in `config.ym
 | `citation_entailment` | Fraction of (claim → cited passage) links where the passage entails the claim | 0-1, higher is better |
 | `claim_citation_support` | Fraction of cited claims backed by at least one of their own citations | 0-1, higher is better |
 | `uncited_claim_rate` | Fraction of claims carrying no citation marker | 0-1, lower is better |
+| `contextual_prefix_factuality` | Fraction of contextual prefixes supported by their source chunk | 0-1, higher is better |
 
 `groundedness` is its own weighted-score objective, weighted `0.0` by default — reported, not scored, until an operator decides otherwise.
 

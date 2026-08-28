@@ -48,6 +48,8 @@ from evals.metrics import (
     OrphanedEvidenceRate,
     Faithfulness,
     AnswerCorrectness,
+    AnswerCompleteness,
+    ContextualPrefixFactuality,
     AnswerRelevancy,
     CitationPrecision,
     CitationRecall,
@@ -439,6 +441,7 @@ class EvaluationRunner:
             self._metrics[MetricGroup.GENERATION] = [
                 Faithfulness(judge=self.judge),
                 AnswerCorrectness(judge=self.judge),
+                AnswerCompleteness(judge=self.judge),
                 AnswerRelevancy(judge=self.judge),
             ]
 
@@ -981,17 +984,23 @@ class EvaluationRunner:
         """Compute all metrics for the evaluation."""
         scorecard = Scorecard()
 
+        if self.config.judge.enabled:
+            scorecard.notes.append(
+                "Judged metrics are uncalibrated on this domain until `just "
+                "eval-calibrate` is re-run with the active judge."
+            )
+
         # A skipped or hobbled group leaves nothing behind in `metrics` to explain
         # its own absence — recorded here so whoever reads the saved run (not just
         # whoever watched the log scroll by) sees why groundedness/citation columns
         # are missing or empty, instead of a silent gap that reads as "0 metrics".
         if not self.config.metrics.groundedness:
             scorecard.notes.append(
-                "groundedness group disabled (opt-in): claim_groundedness, "
+                "groundedness group disabled: claim_groundedness, "
                 "citation_entailment, claim_citation_support and uncited_claim_rate "
                 "were not computed. It costs a judge call per claim plus one per "
                 "claim-citation link on top of the generation group; enable with "
-                "--groundedness (or metrics.groundedness: true) to compute them."
+                "metrics.groundedness: true to compute them."
             )
         if self.config.metrics.citation or self.config.metrics.groundedness:
             eval_settings = (self._model_config or {}).get("eval", {})
@@ -1045,6 +1054,10 @@ class EvaluationRunner:
                     else:
                         result = await metric.compute_batch(questions, responses, **kwargs)
 
+                    if metric.requires_judge:
+                        result.details.setdefault(
+                            "calibration_status", "uncalibrated_on_this_domain"
+                        )
                     scorecard.add_metric(result)
                     if result.value is None:
                         logger.info(
@@ -1056,6 +1069,23 @@ class EvaluationRunner:
 
                 except Exception as e:
                     logger.error(f"[EVAL] Failed to compute {metric.name}: {e}")
+
+        if (
+            self.config.tier == EvalTier.END_TO_END
+            and self.config.metrics.groundedness
+            and self.config.judge.enabled
+        ):
+            try:
+                prefix_metric = ContextualPrefixFactuality(self.judge, self._ingestion_stages)
+                prefix_result = await prefix_metric.compute_batch(
+                    questions, responses, concurrency=self.config.judge_concurrency,
+                )
+                prefix_result.details.setdefault(
+                    "calibration_status", "uncalibrated_on_this_domain"
+                )
+                scorecard.add_metric(prefix_result)
+            except Exception as e:
+                logger.error(f"[EVAL] Failed to compute contextual prefix factuality: {e}")
 
         # Add performance metrics
         if self.config.metrics.performance:

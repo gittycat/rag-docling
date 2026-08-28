@@ -97,6 +97,9 @@ class IngestionStage:
     status: str = "ok"
     error: str | None = None
     enrichment_success_rate: float | None = None
+    # Pairs captured during contextual enrichment. They remain in the ingestion
+    # record so prefix factuality can be judged without recreating the prefix.
+    contextual_prefixes: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass

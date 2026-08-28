@@ -32,10 +32,8 @@ def compute_dashboard_metrics(scorecard: dict | None, tier: str = "") -> Dashboa
             retrieval_relevance = sum(vals) / len(vals)
 
     faithfulness = lookup.get("faithfulness")
+    claim_groundedness = lookup.get("claim_groundedness")
     answer_correctness = lookup.get("answer_correctness")
-    # No completeness metric exists yet — this stays None until one is built rather
-    # than aliasing to answer_correctness, which measures a different failure mode
-    # (an answer can be correct as far as it goes yet leave things out).
     answer_completeness = lookup.get("answer_completeness")
     answer_relevance = lookup.get("answer_relevancy")
 
@@ -52,6 +50,7 @@ def compute_dashboard_metrics(scorecard: dict | None, tier: str = "") -> Dashboa
     return DashboardMetrics(
         retrieval_relevance=retrieval_relevance,
         faithfulness=faithfulness,
+        claim_groundedness=claim_groundedness,
         answer_correctness=answer_correctness,
         answer_completeness=answer_completeness,
         answer_relevance=answer_relevance,

@@ -29,6 +29,7 @@ def _scorecard(*, tier="end_to_end", include_retrieval=True, cost_details=None):
         add("mrr", 0.7, "retrieval")
 
     add("faithfulness", 0.9, "generation")
+    add("claim_groundedness", 0.8, "groundedness")
     add("answer_correctness", 0.85, "generation")
     add("answer_relevancy", 0.75, "generation")
     add("latency_p50_ms", 120.0, "performance")
@@ -119,6 +120,10 @@ class TestTelemetryDerivation:
         scorecard = _scorecard(tier="generation", include_retrieval=False)
         dm = compute_dashboard_metrics(scorecard, tier="generation")
         assert dm.retrieval_relevance is None
+
+    def test_claim_groundedness_is_a_dashboard_headline(self):
+        dm = compute_dashboard_metrics(_scorecard(), tier="end_to_end")
+        assert dm.claim_groundedness == 0.8
 
 
 class TestCompareDeltas:

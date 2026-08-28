@@ -3,12 +3,14 @@
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from evals.config import DatasetName
 from evals.schemas import EvalDataset
 from evals.schemas.dataset import EvidenceLocator, EvalQuestion, GoldPassage, QueryType, Difficulty
+from evals.claims import extract_claims
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +72,8 @@ _register_default_loaders()
 
 # Bump when the cached dataset schema changes (invalidates old cache files).
 # v3 folds the loader fingerprint into the key and stores it in the file.
-_CACHE_SCHEMA_VERSION = 3
+_CACHE_SCHEMA_VERSION = 4
+_NUGGET_DERIVATION_VERSION = "claim-segmentation-v1"
 
 
 def _cache_key(
@@ -105,6 +108,7 @@ def _dataset_to_dict(ds: EvalDataset, fingerprint: dict[str, Any] | None = None)
                 "id": q.id,
                 "question": q.question,
                 "expected_answer": q.expected_answer,
+                "answer_nuggets": q.answer_nuggets,
                 "query_type": q.query_type.value,
                 "difficulty": q.difficulty.value,
                 "domain": q.domain,
@@ -181,6 +185,7 @@ def _dataset_from_dict(d: dict[str, Any]) -> EvalDataset:
             id=q["id"],
             question=q["question"],
             expected_answer=q.get("expected_answer"),
+            answer_nuggets=q.get("answer_nuggets", []),
             gold_passages=gold_passages,
             evidence=evidence,
             context_passages=context_passages,
@@ -243,6 +248,35 @@ def _write_cache(key: str, ds: EvalDataset, fingerprint: dict[str, Any] | None =
         logger.warning(f"[REGISTRY] Failed to write cache: {e}")
 
 
+def _derive_answer_nuggets(dataset: EvalDataset) -> EvalDataset:
+    """Populate missing, cacheable answer nuggets from reference answers.
+
+    Dataset loading is the offline boundary for this derivation. We deliberately
+    do not call a model here: the deterministic claim splitter makes the cached
+    ground truth reproducible and keeps loading a confidential dataset inside the
+    same privacy boundary as the rest of the evaluator. Each nugget is judged
+    against a generated answer later, not regenerated for every run.
+    """
+    for question in dataset.questions:
+        if question.answer_nuggets or not question.expected_answer:
+            continue
+        nuggets = [claim.text for claim in extract_claims(question.expected_answer)]
+        # `extract_claims` deliberately rejects short fragments such as "One
+        # fact.". Reference answers often contain exactly those concise facts,
+        # so fall back to sentence boundaries rather than collapsing a multi-
+        # fact reference into one all-or-nothing nugget.
+        if len(nuggets) <= 1:
+            sentence_nuggets = [
+                sentence.strip()
+                for sentence in re.split(r"(?<=[.!?])\s+", question.expected_answer)
+                if sentence.strip()
+            ]
+            if len(sentence_nuggets) > len(nuggets):
+                nuggets = sentence_nuggets
+        question.answer_nuggets = nuggets or [question.expected_answer.strip()]
+    return dataset
+
+
 def clear_cache() -> int:
     """Delete all cached datasets. Returns number of files removed."""
     if not CACHE_DIR.exists():
@@ -266,7 +300,10 @@ def get_dataset(
         name = DatasetName(name)
 
     loader = get_loader(name)
-    fingerprint = loader.fingerprint()
+    fingerprint = {
+        **loader.fingerprint(),
+        "answer_nuggets": _NUGGET_DERIVATION_VERSION,
+    }
     key = _cache_key(name.value, split, max_samples, seed, fingerprint)
 
     if use_cache:
@@ -275,7 +312,7 @@ def get_dataset(
             logger.info(f"[REGISTRY] Cache hit for {name.value} ({key})")
             return cached
 
-    ds = loader.load(split=split, max_samples=max_samples, seed=seed)
+    ds = _derive_answer_nuggets(loader.load(split=split, max_samples=max_samples, seed=seed))
 
     if use_cache:
         _write_cache(key, ds, fingerprint)

@@ -217,12 +217,14 @@ class MetricConfig:
     citation: bool = True
     abstention: bool = True
     performance: bool = True
-    # Off by default because it is the only metric group whose cost scales with
+    # Claim-level grounding is surfaced by default. Its 0.0 scoring weight keeps
+    # historic headline scores comparable while still exposing hallucinations.
+    # It is the only metric group whose cost scales with
     # the *shape* of the answer rather than the number of questions: one judge
     # call per claim, plus one per claim-citation link, against three per question
-    # for the whole generation group. Enable it deliberately (`--groundedness`),
-    # knowing the bill. See metrics/groundedness.py.
-    groundedness: bool = False
+    # for the whole generation group. The work is enabled by default so
+    # hallucination data is visible; see metrics/groundedness.py.
+    groundedness: bool = True
 
     # Retrieval metric parameters
     recall_k_values: list[int] = field(default_factory=lambda: [1, 3, 5, 10])

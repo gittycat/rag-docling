@@ -115,7 +115,7 @@ class JobManager:
         samples: int = 100,
         seed: int | None = 42,
         judge_enabled: bool = True,
-        groundedness: bool = False,
+        groundedness: bool = True,
         rag_server_url: str = "http://rag-server:8001",
     ) -> str:
         """Start or queue an eval job. Returns job_id.

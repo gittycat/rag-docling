@@ -476,6 +476,7 @@ def add_contextual_prefix_to_chunk(
     logger.info(f"[CONTEXTUAL] Generating contextual prefix for chunk via LLM...")
     start_time = time.time()
 
+    source_text = node.text
     chunk_preview = node.get_content()[:400]
     masked_name, masked_preview, pii_mapping = _mask_contextual_inputs(document_name, chunk_preview, token_mapping)
     prompt = get_contextual_prefix_prompt(masked_name, document_type, masked_preview)
@@ -501,6 +502,8 @@ def add_contextual_prefix_to_chunk(
                 "success": True,
                 "input_tokens": prompt_tokens,
                 "output_tokens": completion_tokens,
+                "contextual_prefix": context,
+                "source_text": source_text,
             })
         return node
 
@@ -523,6 +526,7 @@ async def add_contextual_prefix_to_chunk_async(
     logger.info(f"[CONTEXTUAL] Generating contextual prefix for chunk via LLM...")
     start_time = time.time()
 
+    source_text = node.text
     chunk_preview = node.get_content()[:400]
     masked_name, masked_preview, pii_mapping = _mask_contextual_inputs(document_name, chunk_preview, token_mapping)
     prompt = get_contextual_prefix_prompt(masked_name, document_type, masked_preview)
@@ -548,6 +552,8 @@ async def add_contextual_prefix_to_chunk_async(
                 "success": True,
                 "input_tokens": prompt_tokens,
                 "output_tokens": completion_tokens,
+                "contextual_prefix": context,
+                "source_text": source_text,
             })
         return node
 
@@ -608,6 +614,11 @@ async def _add_contextual_retrieval_async(
         "input_tokens": sum(outcome["input_tokens"] for outcome in known_usage) if known_usage else None,
         "output_tokens": sum(outcome.get("output_tokens", 0) for outcome in known_usage) if known_usage else None,
         "errors": [outcome.get("error") for outcome in failures if outcome.get("error")],
+        "contextual_prefixes": [
+            {"prefix": outcome["contextual_prefix"], "source_text": outcome["source_text"]}
+            for outcome in outcomes
+            if outcome.get("success") and outcome.get("contextual_prefix")
+        ],
     }
 
 
@@ -663,6 +674,7 @@ def add_contextual_retrieval(
             "status": "ok" if stats["failed"] == 0 else "degraded",
             "error": "; ".join(stats["errors"]) or None,
             "enrichment_success_rate": stats["succeeded"] / stats["attempted"],
+            "contextual_prefixes": stats["contextual_prefixes"],
         })
 
     return enhanced_nodes

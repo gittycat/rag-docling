@@ -3,6 +3,7 @@
 Measures answer quality using LLM-as-judge evaluation.
 """
 
+import asyncio
 from typing import Any
 
 from evals.config import resolve_judge_config
@@ -175,6 +176,204 @@ class AnswerCorrectness(BaseMetric):
             details={
                 "reasoning": result.reasoning,
                 "expected_answer": question.expected_answer[:200],
+            },
+        )
+
+
+class AnswerCompleteness(BaseMetric):
+    """Fraction of pre-derived reference facts entailed by the answer."""
+
+    def __init__(self, judge: LLMJudge | None = None):
+        self._judge = judge
+
+    @property
+    def judge(self) -> LLMJudge:
+        if self._judge is None:
+            self._judge = _lazy_judge()
+        return self._judge
+
+    @property
+    def name(self) -> str:
+        return "answer_completeness"
+
+    @property
+    def group(self) -> MetricGroup:
+        return MetricGroup.GENERATION
+
+    @property
+    def description(self) -> str:
+        return "Fraction of required answer nuggets covered by the answer"
+
+    @property
+    def requires_gold(self) -> bool:
+        return True
+
+    @property
+    def requires_judge(self) -> bool:
+        return True
+
+    async def compute(
+        self,
+        question: EvalQuestion,
+        response: EvalResponse,
+        **kwargs: Any,
+    ) -> MetricResult:
+        if not question.answer_nuggets:
+            return MetricResult(
+                name=self.name,
+                value=None,
+                group=self.group,
+                sample_size=0,
+                details={"note": "No answer nuggets defined for this question"},
+            )
+
+        verdicts = await asyncio.gather(
+            *(
+                self.judge.evaluate_entailment(claim=nugget, passage=response.answer)
+                for nugget in question.answer_nuggets
+            ),
+            return_exceptions=True,
+        )
+        scored = [
+            (nugget, verdict)
+            for nugget, verdict in zip(question.answer_nuggets, verdicts)
+            if not isinstance(verdict, BaseException)
+        ]
+        if not scored:
+            return MetricResult(
+                name=self.name,
+                value=None,
+                group=self.group,
+                sample_size=0,
+                details={"note": "Every nugget entailment call failed"},
+            )
+
+        scores = [verdict.score for _, verdict in scored]
+        return MetricResult(
+            name=self.name,
+            value=sum(scores) / len(scores),
+            group=self.group,
+            sample_size=1,
+            details={
+                "nugget_count": len(question.answer_nuggets),
+                "judged_nuggets": len(scored),
+                "nuggets": [
+                    {"text": nugget, "score": verdict.score, "reasoning": verdict.reasoning}
+                    for nugget, verdict in scored
+                ],
+                "missing_nuggets": [
+                    nugget for nugget, verdict in scored if verdict.score < 0.5
+                ],
+                "failed_nuggets": len(question.answer_nuggets) - len(scored),
+            },
+        )
+
+
+class ContextualPrefixFactuality(BaseMetric):
+    """Fraction of persisted contextual prefixes supported by their source text."""
+
+    def __init__(self, judge: LLMJudge, stages: list[Any]):
+        self.judge = judge
+        self.stages = stages
+
+    @property
+    def name(self) -> str:
+        return "contextual_prefix_factuality"
+
+    @property
+    def group(self) -> MetricGroup:
+        return MetricGroup.GROUNDEDNESS
+
+    @property
+    def description(self) -> str:
+        return "Fraction of contextual prefixes supported by their source chunk"
+
+    @property
+    def requires_gold(self) -> bool:
+        return False
+
+    @property
+    def requires_judge(self) -> bool:
+        return True
+
+    def compute(
+        self,
+        question: EvalQuestion,
+        response: EvalResponse,
+        **kwargs: Any,
+    ) -> MetricResult:
+        raise NotImplementedError("Contextual prefix factuality is computed from ingestion stages")
+
+    async def compute_batch(
+        self,
+        questions: list[EvalQuestion],
+        responses: list[EvalResponse],
+        progress_callback: Any | None = None,
+        concurrency: int = 10,
+        **kwargs: Any,
+    ) -> MetricResult:
+        records = [
+            record
+            for stage in self.stages
+            if stage.name == "contextual_enrich"
+            for record in stage.contextual_prefixes
+            if record.get("prefix") and record.get("source_text")
+        ]
+        if not records:
+            return MetricResult(
+                name=self.name,
+                value=None,
+                group=self.group,
+                sample_size=0,
+                details={"note": "No contextual prefix/source pairs were recorded"},
+            )
+
+        sem = asyncio.Semaphore(max(1, concurrency))
+        completed = 0
+
+        async def score(record: dict[str, str]):
+            nonlocal completed
+            async with sem:
+                try:
+                    return await self.judge.evaluate_entailment(
+                        claim=record["prefix"], passage=record["source_text"]
+                    )
+                finally:
+                    completed += 1
+                    if progress_callback:
+                        progress_callback(completed)
+
+        verdicts = await asyncio.gather(*(score(record) for record in records), return_exceptions=True)
+        scored = [
+            (record, verdict)
+            for record, verdict in zip(records, verdicts)
+            if not isinstance(verdict, BaseException)
+        ]
+        if not scored:
+            return MetricResult(
+                name=self.name,
+                value=None,
+                group=self.group,
+                sample_size=0,
+                details={"note": "Every contextual-prefix entailment call failed"},
+            )
+        scores = [verdict.score for _, verdict in scored]
+        return MetricResult(
+            name=self.name,
+            value=sum(scores) / len(scores),
+            group=self.group,
+            sample_size=len(scored),
+            details={
+                "individual_scores": scores,
+                "prefixes": [
+                    {
+                        "prefix": record["prefix"],
+                        "score": verdict.score,
+                        "reasoning": verdict.reasoning,
+                    }
+                    for record, verdict in scored
+                ],
+                "failed_prefixes": len(records) - len(scored),
             },
         )
 

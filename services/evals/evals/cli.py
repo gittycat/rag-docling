@@ -116,9 +116,7 @@ def main():
         "--groundedness",
         action="store_true",
         help=(
-            "Score claims individually and check each citation against the claim "
-            "citing it. Costs one judge call per claim plus one per claim-citation "
-            "link, on top of the three per question the other judged metrics use."
+            "Deprecated: claim groundedness now runs by default."
         ),
     )
     eval_parser.add_argument(
@@ -376,7 +374,7 @@ def cmd_eval(args):
                 judge=resolve_judge_config(
                     enabled=not args.no_judge, datasets=dataset_names, tier=tier
                 ),
-                metrics=MetricConfig(groundedness=args.groundedness),
+                metrics=MetricConfig(),
                 tier=tier,
                 retrieval_only=args.retrieval_only,
                 retrieval_source=args.retrieval_source,

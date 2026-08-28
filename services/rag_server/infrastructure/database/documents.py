@@ -195,8 +195,15 @@ async def add_ingestion_stages(
                 "status": stage.get("status", "ok"),
                 "error": stage.get("error"),
                 "details": json.dumps({
-                    "enrichment_success_rate": stage.get("enrichment_success_rate")
-                }) if stage.get("enrichment_success_rate") is not None else "{}",
+                    **(
+                        {"enrichment_success_rate": stage["enrichment_success_rate"]}
+                        if stage.get("enrichment_success_rate") is not None else {}
+                    ),
+                    **(
+                        {"contextual_prefixes": stage["contextual_prefixes"]}
+                        if stage.get("contextual_prefixes") else {}
+                    ),
+                }),
             }
             for stage in stages
         ],
@@ -229,6 +236,7 @@ async def get_ingestion_stages(
             "status": row.status,
             "error": row.error,
             "enrichment_success_rate": (row.details or {}).get("enrichment_success_rate"),
+            "contextual_prefixes": (row.details or {}).get("contextual_prefixes", []),
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }
         for row in result

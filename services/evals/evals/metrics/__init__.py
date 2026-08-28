@@ -18,6 +18,8 @@ from evals.metrics.retrieval import (
 from evals.metrics.generation import (
     Faithfulness,
     AnswerCorrectness,
+    AnswerCompleteness,
+    ContextualPrefixFactuality,
     AnswerRelevancy,
 )
 from evals.metrics.citation import (
@@ -53,13 +55,14 @@ METRIC_GROUPS = {
         FusionLift, RerankPromotions, RerankDemotions, CandidateRecallCeiling,
         EvidenceSetRecall, EvidenceContainment, EvidenceFragmentation, OrphanedEvidenceRate,
     ],
-    MetricGroup.GENERATION: [Faithfulness, AnswerCorrectness, AnswerRelevancy],
+    MetricGroup.GENERATION: [Faithfulness, AnswerCorrectness, AnswerCompleteness, AnswerRelevancy],
     MetricGroup.CITATION: [CitationPrecision, CitationRecall, SectionAccuracy],
     MetricGroup.GROUNDEDNESS: [
         ClaimGroundedness,
         CitationEntailment,
         ClaimCitationSupport,
         UncitedClaimRate,
+        ContextualPrefixFactuality,
     ],
     MetricGroup.ABSTENTION: [UnanswerableAccuracy, FalsePositiveRate, FalseNegativeRate],
     MetricGroup.PERFORMANCE: [
@@ -87,6 +90,8 @@ __all__ = [
     # Generation
     "Faithfulness",
     "AnswerCorrectness",
+    "AnswerCompleteness",
+    "ContextualPrefixFactuality",
     "AnswerRelevancy",
     # Citation
     "CitationPrecision",

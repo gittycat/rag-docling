@@ -152,6 +152,11 @@ class BaseMetric(ABC):
         details: dict[str, Any] = {
             "individual_scores": values,
             "per_question": {qid: r.value for qid, r in scored},
+            # Keep metric-specific verdict distributions (for example each
+            # completeness nugget) available after aggregation. A mean alone
+            # conceals which facts were missed and makes judge disagreement
+            # impossible to audit.
+            "per_question_details": {qid: r.details for qid, r in scored},
             "std_dev": self._compute_std(values),
         }
         if not_applicable:

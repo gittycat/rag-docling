@@ -93,6 +93,9 @@ class EvalQuestion:
     id: str
     question: str
     expected_answer: str | None
+    # Atomic facts a complete answer must cover. These are derived once when the
+    # dataset cache is built, never during an evaluation run.
+    answer_nuggets: list[str] = field(default_factory=list)
     gold_passages: list[GoldPassage] = field(default_factory=list)
     evidence: list[EvidenceLocator] = field(default_factory=list)
     context_passages: list[GoldPassage] = field(default_factory=list)

@@ -15,9 +15,8 @@ class TriggerRunRequest(BaseModel):
     samples: int = 100
     seed: int | None = 42
     judge_enabled: bool = True
-    # Claim-level grounding and claim-to-citation entailment. Off by default:
-    # it adds a judge call per claim and per claim-citation link.
-    groundedness: bool = False
+    # Claim-level grounding and claim-to-citation entailment run by default.
+    groundedness: bool = True
 
 
 # ── Responses ─────────────────────────────────────────────────────────────────
@@ -57,9 +56,10 @@ class QueuedJob(BaseModel):
 class DashboardMetrics(BaseModel):
     retrieval_relevance: float | None = None
     faithfulness: float | None = None
+    claim_groundedness: float | None = None
     answer_correctness: float | None = None
-    # None until a real completeness metric exists — never aliased to
-    # answer_correctness, which measures a different failure mode.
+    # Distinct from answer correctness: an answer can be right as far as it goes
+    # while omitting required facts.
     answer_completeness: float | None = None
     answer_relevance: float | None = None
     latency_p50_seconds: float | None = None

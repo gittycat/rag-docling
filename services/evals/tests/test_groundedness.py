@@ -398,13 +398,14 @@ class TestWiring:
         from evals.schemas import MetricGroup
 
         assert MetricGroup.GROUNDEDNESS in METRIC_GROUPS
-        assert len(METRIC_GROUPS[MetricGroup.GROUNDEDNESS]) == 4
+        assert len(METRIC_GROUPS[MetricGroup.GROUNDEDNESS]) == 5
 
-    def test_off_by_default(self):
+    def test_on_by_default(self):
         from evals.config import MetricConfig
 
-        # Enabling it multiplies the judge bill; it has to be a decision.
-        assert MetricConfig().groundedness is False
+        # Phase 5 makes hallucination visible by default; its scoring weight
+        # remains zero, so the headline score stays comparable.
+        assert MetricConfig().groundedness is True
 
     def test_uncited_claim_rate_is_inverted_in_the_weighted_score(self):
         import inspect

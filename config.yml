@@ -263,7 +263,7 @@ eval:
       # claim_citation_support, uncited_claim_rate). 0.0 means the metrics are
       # reported but do not move the headline score — raising it changes what the
       # headline rewards, so runs before and after the change are not comparable.
-      # The group only runs when an eval is started with --groundedness.
+      # The group runs by default, but remains informational at this weight.
       groundedness: 0.0
       retrieval: 0.15       # recall, precision, MRR, nDCG
       cost: 0.10            # cost per query
