@@ -445,6 +445,26 @@ now corrected rather than a code change.
 time. Not a substitute for a database, but it makes an accidental `rm` in the runs
 directory recoverable.
 
+### 2.10 `context_truncated` has no real measurement
+**What.** Failure attribution's `context_truncated` stage is meant to detect
+evidence that survived reranking but was dropped before generation — packed out of
+the context window, deduplicated away, etc. Measuring it requires a distinct trace
+of what was *actually assembled into the prompt*. The installed
+`CondensePlusContextChatEngine` returns `_aget_nodes()`'s output straight out of
+`_run_c3`, so the `context_assembly` trace attribution reads is the reranker's own
+node list, not an independent measurement — comparing it against itself can only
+ever agree.
+**Why it matters.** A label that can structurally never fire is worse than no
+label: it implies the stage is being checked. `attribute_question` now detects the
+mirrored list (`_same_items`) and marks the stage explicitly unassessable with a
+reason, rather than emitting `context_truncated=False` as if it had been checked
+and passed.
+**Effort.** M — needs the response synthesizer instrumented to emit what it
+actually received, which is a real engine change, not an attribution fix.
+**Where.** `services/evals/evals/attribution.py`,
+`services/rag_server/pipelines/inference.py`.
+**Status.** Open — worked around by making the gap explicit; not measured.
+
 ---
 
 ## 3. Configuration
@@ -897,6 +917,58 @@ Rationale in `docs/internal/design-decisions.md`; covered by
 Note that **4.11 does not close 3.6** — the duplicated, hardcoded cost tables are
 untouched by this change.
 
+### 4.12 PDF evidence locators were unusable for real Docling output
+**What.** Two defects on the same code path, found together while authoring
+source-coordinate PDF fixtures.
+
+*Bbox origin.* Docling emits PDF provenance with `coord_origin: BOTTOMLEFT`, where
+the top edge of a box has a *larger* y-coordinate than the bottom edge.
+`_valid_bbox` asserted `value[1] < value[3]`, which is only true for a
+top-left-origin box, so it rejected every real PDF bbox as malformed. Every PDF
+locator was therefore unusable and the whole PDF evidence path was a lineage
+failure by construction, never a real check.
+
+*Wrong locator field.* `_locator_is_usable` accepted only a `block_id` or a bbox.
+Docling's actual provenance carries `element_id` (its `self_ref`), not `block_id`,
+so a real Docling PDF chunk had neither an accepted id nor (until the first fix) a
+usable bbox — unusable twice over.
+
+**Why it matters.** Both defects together meant no PDF gold question could ever
+resolve to a chunk; the source-coordinate ground-truth work would have silently
+degraded to "PDF evidence never verifies" without ever raising an error to say so.
+**Effort.** S — both are narrow, already fixed.
+**Where.** `services/evals/evals/evidence.py` (`_normalized_bbox`,
+`_locator_is_usable`).
+**Status.** ✅ Done — 2026-08-29. Regression tests in
+`services/evals/tests/test_source_coordinate_authoring.py::TestDoclingBboxOrigin`.
+
+### 4.13 `init.sql`'s `CREATE TABLE IF NOT EXISTS` does not apply column additions to an already-initialized database
+**What.** `services/postgres/init.sql` runs only once, via
+`docker-entrypoint-initdb.d`, on an empty Postgres volume. Adding a column to an
+*existing* table's `CREATE TABLE IF NOT EXISTS` block (e.g. `document_chunks
+.source_locator JSONB`, added for source-coordinate evidence) is a silent no-op on
+any volume that already has that table — the file is byte-identical to "correct"
+and nothing about running it says the new column never applied. New tables in the
+same file **do** get created (`IF NOT EXISTS` is only a no-op for tables that
+already exist), which is why this was easy to miss: most of a given change lands
+fine and only the one altered pre-existing table silently doesn't.
+**Why it matters.** The failure surfaces far from the cause: every read of the new
+column raises `asyncpg.exceptions.UndefinedColumnError` / HTTP 500 at query time,
+not at container start, on a volume that looks fully migrated (`\dt` shows every
+table `init.sql` declares). This is not specific to the AWS demo's baked-AMI case
+already tracked in §7.2 — it hits any long-lived local dev Postgres volume the
+moment a change adds a column to a table that already existed, which is exactly
+what happened here: `document_chunks.source_locator` was missing from the running
+dev database and broke `GET /documents/{id}/chunks` until manually added with
+`ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS source_locator JSONB;`.
+**Effort.** M — needs either real migrations (§7.2 already tracks the AMI half of
+this) or, at minimum, a startup check that diagnoses a schema/init.sql mismatch
+with a clear error instead of a 500 from the first query that touches it.
+**Where.** `services/postgres/init.sql`; the live dev database (fixed manually,
+this session).
+**Status.** Open — worked around live for this session's dev database; no
+general fix implemented.
+
 > **Section 4 was complete as of 2026-08-03** for entries 4.1–4.10. Both suites
 > were green with no skips attributable to those entries: rag-server **147 passed,
 > 37 skipped, 1 xfailed**; evals **190 passed, 20 skipped** (the 11
@@ -970,6 +1042,7 @@ the parse/embed/write instrumentation added in **5.3** means a proper baseline r
 | **No request or correlation IDs** anywhere in logging. | Tracing a single request across webapp → rag-server → task-worker is impossible; debugging relies on timestamp correlation. | M | Open |
 | ~~**`EMBEDDING_MODEL` is never set** by any compose file, so `GET /models/info`'s `embedding_model` field always reports `unknown`.~~ | The API misreports the active embedding model, and any consumer relying on it — including run records — gets nothing. | S | ✅ **Resolved**, as part of the Ollama→TEI migration. `services/rag_server/api/routes/health.py`'s `get_models_info()` now reads `models_config.embedding.model` (i.e. `config.yml`, the same source of truth `GET /metrics/models` already used) instead of `os.getenv("EMBEDDING_MODEL", "unknown")`. `/models/info` now reports `Qwen/Qwen3-Embedding-0.6B`. |
 | **`RAG_SERVER_AUTH_TOKEN` (non-file variant)** is read as a fallback and set by no compose file. | Dead code path. | S | Open |
+| **`pytrec-eval-terrier` (pulled in by `ir-measures`, used for `R`/`RR`/`nDCG`/`P`) publishes no Linux aarch64 wheel** — 31 wheels cover macOS, Linux x86_64, and Windows, but not arm64, so `docker compose build evals` on Apple Silicon/arm64 hosts falls back to the sdist and fails with `gcc: No such file or directory`. | Blocks building the evals image on any arm64 host (OrbStack on Apple Silicon, Graviton). | S | ✅ Done — 2026-08-29. `gcc`/`g++`/`make` added to `services/evals/Dockerfile` before `uv sync`, with a comment naming the reason so it isn't later deleted as unused. Decision was to keep `ir_measures` and add the compiler rather than replace the dependency — recorded so the Dockerfile line isn't later "cleaned up" as unnecessary. |
 
 ---
 

@@ -496,6 +496,8 @@ class EvalConfig:
             "retrieval_only": self.retrieval_only,
             "retrieval_source": self.retrieval_source,
             "search_top_k": self.search_top_k,
+            "correctness_threshold": self.correctness_threshold,
+            "supporting_metric_threshold": self.supporting_metric_threshold,
         }
 
         with open(path, "w") as f:

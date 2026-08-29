@@ -1,5 +1,14 @@
 FROM python:3.13-slim
 
+# Build tools: pytrec-eval-terrier (pulled in by ir-measures) publishes wheels for
+# x86_64 but no Linux aarch64, so on arm64 hosts uv falls back to the sdist and
+# needs a C compiler to build it. Do not remove this thinking it's unused.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /usr/local/bin/uv
 

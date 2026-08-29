@@ -32,7 +32,7 @@ from evals.judges.llm_judge import LLMJudge, warn_if_judge_not_independent
 from evals.pricing import UsageTotals
 from evals.cache import ResponseCache, config_fingerprint
 from evals.samples import save_samples
-from evals.attribution import attribute_questions
+from evals.attribution import attribute_questions, FailureAttribution
 from evals.experiment_store import (
     ExperimentStore,
     code_version,
@@ -793,7 +793,7 @@ class EvaluationRunner:
 
         # Compute weighted score
         weighted_score = self._compute_weighted_score(scorecard)
-        attributions = attribute_questions(all_questions, all_responses, scorecard)
+        attributions = self._attribute_questions(all_questions, all_responses, scorecard)
         _report("saving")
 
         eval_run = EvalRun(
@@ -845,6 +845,13 @@ class EvaluationRunner:
                         self.config.tier
                     ),
                     "max_cost_per_query_usd": self.config.scoring.max_cost_per_query_usd,
+                },
+                # The bar a verdict was made under. Without this, a saved
+                # "generation_drift" attribution is not reproducible — the
+                # threshold that produced it isn't recoverable from the run alone.
+                "attribution_thresholds": {
+                    "correctness_threshold": self.config.correctness_threshold,
+                    "supporting_metric_threshold": self.config.supporting_metric_threshold,
                 },
             },
         )
@@ -1314,6 +1321,21 @@ class EvaluationRunner:
                     logger.error(f"[EVAL] Failed to compute cost metric: {e}")
 
         return scorecard
+
+    def _attribute_questions(
+        self,
+        questions: list[EvalQuestion],
+        responses: list[EvalResponse],
+        scorecard: Scorecard,
+    ) -> list[FailureAttribution]:
+        """Attribute questions using this run's configured thresholds."""
+        return attribute_questions(
+            questions,
+            responses,
+            scorecard,
+            correctness_threshold=self.config.correctness_threshold,
+            supporting_metric_threshold=self.config.supporting_metric_threshold,
+        )
 
     def _compute_weighted_score(self, scorecard: Scorecard) -> WeightedScore:
         """Compute the weighted overall score.
