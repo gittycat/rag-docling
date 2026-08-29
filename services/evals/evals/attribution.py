@@ -23,6 +23,26 @@ FAILURE_STAGES = (
     "correct",
 )
 
+# Verdict thresholds are configuration, so they live in evals.config and are
+# re-exported here for callers that already import this module. config.py must
+# not import this module in turn: attribution already depends on config.
+from evals.config import (  # noqa: E402
+    DEFAULT_CORRECTNESS_THRESHOLD,
+    DEFAULT_SUPPORTING_METRIC_THRESHOLD,
+)
+
+# Generation-quality signals consulted alongside answer_correctness before a
+# question is allowed to be labelled "correct". An answer can score full
+# correctness credit and still be unfaithful, incomplete, off-topic, or
+# ungrounded; any of those disqualifies "correct" and instead supports
+# generation_drift.
+SUPPORTING_GENERATION_METRICS: tuple[str, ...] = (
+    "faithfulness",
+    "answer_completeness",
+    "answer_relevancy",
+    "claim_groundedness",
+)
+
 
 @dataclass(frozen=True)
 class FailureAttribution:
@@ -47,6 +67,13 @@ def _stage(response: EvalResponse, name: str) -> StageTrace | None:
     if response.metrics is None:
         return None
     return next((trace for trace in response.metrics.stages if trace.name == name), None)
+
+
+def _same_items(left: StageTrace | None, right: StageTrace | None) -> bool:
+    """Whether two traces carry the identical ranked id list."""
+    if left is None or right is None or left.items is None or right.items is None:
+        return False
+    return [item.chunk_id for item in left.items] == [item.chunk_id for item in right.items]
 
 
 def _chunks(trace: StageTrace | None) -> list[RetrievedChunk] | None:
@@ -87,23 +114,37 @@ def _relevant_ids(
 def _stage_evidence(
     question: EvalQuestion, response: EvalResponse, stage_name: str
 ) -> tuple[bool | None, dict[str, Any]]:
+    """Whether a named pipeline stage's trace contains relevant evidence.
+
+    The evidence dict always carries ``trace_present`` so callers can tell a
+    stage that never ran (e.g. bm25 on a vector-only deployment — expected,
+    excludes the leg from assessment) apart from a stage that ran but degraded
+    (an operational failure that should make the *overall* verdict unassessable
+    rather than silently falling back to the other leg).
+    """
     trace = _stage(response, stage_name)
     if trace is None:
-        return None, {"assessable": False, "reason": f"{stage_name} trace was not emitted"}
+        return None, {
+            "assessable": False,
+            "trace_present": False,
+            "reason": f"{stage_name} trace was not emitted",
+        }
     chunks = _chunks(trace)
     if chunks is None:
         return None, {
             "assessable": False,
+            "trace_present": True,
             "status": trace.status,
             "error": trace.error,
             "reason": f"{stage_name} did not emit a usable ranking",
         }
     relevant_ids, failure = _relevant_ids(question, chunks)
     if relevant_ids is None:
-        return None, {"assessable": False, "reason": failure}
+        return None, {"assessable": False, "trace_present": True, "reason": failure}
     hits = sorted({chunk.chunk_id for chunk in chunks} & relevant_ids)
     return bool(hits), {
         "assessable": True,
+        "trace_present": True,
         "status": trace.status,
         "item_count": trace.item_count,
         "relevant_chunk_ids": hits,
@@ -142,13 +183,23 @@ def _record(
 
 
 def attribute_question(
-    question: EvalQuestion, response: EvalResponse, scorecard: Any
+    question: EvalQuestion,
+    response: EvalResponse,
+    scorecard: Any,
+    *,
+    correctness_threshold: float = DEFAULT_CORRECTNESS_THRESHOLD,
+    supporting_metric_threshold: float = DEFAULT_SUPPORTING_METRIC_THRESHOLD,
 ) -> FailureAttribution:
     """Attribute one result using only outputs that the evaluation already recorded.
 
     A label is only considered after every prerequisite stage has supplied the
     evidence it needs. In particular, no generation or citation label is emitted
     after an upstream evidence miss; those outcomes are unassessable, not failures.
+
+    Every stage that is genuinely assessable and genuinely failed is collected in
+    ``failure_labels``, even when it is not the causally earliest (``primary``)
+    one. A stage downstream of a prerequisite failure remains unassessable, not
+    failed, and is never added to ``failure_labels``.
     """
     evidence: dict[str, dict[str, Any]] = {}
     metrics = _metric_values(scorecard, question.id)
@@ -174,13 +225,25 @@ def attribute_question(
     rerank, rerank_evidence = _stage_evidence(question, response, "rerank")
     final, final_evidence = _final_evidence(question, response)
 
-    retrieval_assessable = bm25 is not None and vector is not None
-    retrieval_miss = retrieval_assessable and not bm25 and not vector
+    # Assess retrieval against whichever legs actually emitted a trace. A leg
+    # that never ran (e.g. bm25 on a vector-only deployment) is simply excluded
+    # from consideration. A leg that ran but degraded makes the whole verdict
+    # unassessable, because its emptiness is not proof the corpus lacked the
+    # answer — it might just be the outage.
+    retrieval_legs = {"bm25": (bm25, bm25_evidence), "vector": (vector, vector_evidence)}
+    present_legs = {name: hit for name, (hit, ev) in retrieval_legs.items() if hit is not None}
+    degraded_legs = sorted(
+        name for name, (hit, ev) in retrieval_legs.items() if hit is None and ev.get("trace_present")
+    )
+    retrieval_assessable = bool(present_legs) and not degraded_legs
+    retrieval_miss = retrieval_assessable and not any(present_legs.values())
     _record(
         evidence,
         "retrieval_miss",
         retrieval_miss,
         assessable=retrieval_assessable,
+        legs_used=sorted(present_legs),
+        legs_degraded=degraded_legs,
         bm25=bm25_evidence,
         vector=vector_evidence,
     )
@@ -217,16 +280,50 @@ def attribute_question(
         _record(evidence, "citation_error", False, assessable=False, reason="rerank_drop")
         return FailureAttribution(question.id, "rerank_drop", ["rerank_drop"], evidence)
 
-    context_assessable = rerank is True and final is not None
-    context_truncated = context_assessable and not final
-    _record(
-        evidence,
-        "context_truncated",
-        context_truncated,
-        assessable=context_assessable,
-        rerank=rerank_evidence,
-        final_context=final_evidence,
-    )
+    # context_truncated can only be observed with a distinct context-assembly
+    # trace (the items actually packed into the prompt after reranking) —
+    # comparing the reranker's own output against itself can never fire except
+    # on an empty source list. Until that trace exists (owned by inference.py),
+    # the stage stays explicitly unassessable rather than silently "correct".
+    context_trace = _stage(response, "context_assembly")
+    rerank_trace = _stage(response, "rerank")
+    if context_trace is None or _same_items(context_trace, rerank_trace):
+        # The installed CondensePlusContextChatEngine returns _aget_nodes()'s
+        # output straight out of _run_c3, so the context_assembly trace is the
+        # reranker's own list, not a measurement of what was packed into the
+        # prompt. Comparing a list against itself can only ever fire on an empty
+        # one. Report that honestly instead of shipping a label that cannot
+        # fire; when a genuinely distinct packed-context trace appears, the ids
+        # will differ and this branch stops applying on its own.
+        context_assessable = False
+        context_truncated = False
+        _record(
+            evidence,
+            "context_truncated",
+            False,
+            assessable=False,
+            rerank=rerank_evidence,
+            reason=(
+                "no distinct context_assembly measurement; the trace is the "
+                "reranker's own output, so the context actually packed into the "
+                "prompt is unmeasured"
+                if context_trace is not None
+                else "context_assembly stage trace not emitted; the context "
+                "actually packed into the prompt is not measured"
+            ),
+        )
+    else:
+        context_hit, context_stage_evidence = _stage_evidence(question, response, "context_assembly")
+        context_assessable = rerank is True and context_hit is not None
+        context_truncated = context_assessable and not context_hit
+        _record(
+            evidence,
+            "context_truncated",
+            context_truncated,
+            assessable=context_assessable,
+            rerank=rerank_evidence,
+            context_assembly=context_stage_evidence,
+        )
     if context_truncated:
         _record(evidence, "generation_drift", False, assessable=False, reason="context_truncated")
         _record(evidence, "citation_error", False, assessable=False, reason="context_truncated")
@@ -244,21 +341,46 @@ def attribute_question(
     if wrong_abstention:
         return FailureAttribution(question.id, "wrong_abstention", ["wrong_abstention"], evidence)
 
+    labels: list[str] = []
+    primary: str | None = None
+
+    def _claim_primary(label: str) -> None:
+        nonlocal primary
+        if primary is None:
+            primary = label
+
     correctness = metrics.get("answer_correctness")
     generation_assessable = final is True and correctness is not None
-    generation_drift = generation_assessable and correctness < 1.0
+    supporting_metrics = {
+        name: metrics[name] for name in SUPPORTING_GENERATION_METRICS if metrics.get(name) is not None
+    }
+    failing_supporting_metrics = {
+        name: value for name, value in supporting_metrics.items() if value < supporting_metric_threshold
+    }
+    generation_drift = generation_assessable and (
+        correctness < correctness_threshold or bool(failing_supporting_metrics)
+    )
     _record(
         evidence,
         "generation_drift",
         generation_drift,
         assessable=generation_assessable,
         answer_correctness=correctness,
+        correctness_threshold=correctness_threshold,
+        supporting_metrics=supporting_metrics,
+        supporting_metric_threshold=supporting_metric_threshold,
+        failing_supporting_metrics=failing_supporting_metrics,
         final_context=final_evidence,
     )
     if generation_drift:
-        _record(evidence, "citation_error", False, assessable=False, reason="generation_drift")
-        return FailureAttribution(question.id, "generation_drift", ["generation_drift"], evidence)
+        labels.append("generation_drift")
+        _claim_primary("generation_drift")
 
+    # Citation quality is assessable independently of whether correctness or
+    # the supporting generation metrics passed — a claim can be wrong and its
+    # citation can *also* be wrong, or a claim can be right with a bad citation.
+    # Both are genuinely-assessable, genuinely-failed stages and both belong in
+    # failure_labels even though only the earlier one is primary.
     citation_names = ("citation_precision", "citation_recall", "citation_entailment", "claim_citation_support")
     citation_values = {name: metrics[name] for name in citation_names if metrics.get(name) is not None}
     citation_assessable = generation_assessable and bool(citation_values)
@@ -271,15 +393,34 @@ def attribute_question(
         metrics=citation_values,
     )
     if citation_error:
-        return FailureAttribution(question.id, "citation_error", ["citation_error"], evidence)
+        labels.append("citation_error")
+        _claim_primary("citation_error")
 
-    correct = generation_assessable and correctness == 1.0
+    correct = generation_assessable and not generation_drift and not citation_error
     _record(evidence, "correct", correct, assessable=generation_assessable)
-    return FailureAttribution(question.id, "correct" if correct else None, ["correct"] if correct else [], evidence)
+    if correct:
+        labels.append("correct")
+        _claim_primary("correct")
+
+    return FailureAttribution(question.id, primary, labels, evidence)
 
 
 def attribute_questions(
-    questions: list[EvalQuestion], responses: list[EvalResponse], scorecard: Any
+    questions: list[EvalQuestion],
+    responses: list[EvalResponse],
+    scorecard: Any,
+    *,
+    correctness_threshold: float = DEFAULT_CORRECTNESS_THRESHOLD,
+    supporting_metric_threshold: float = DEFAULT_SUPPORTING_METRIC_THRESHOLD,
 ) -> list[FailureAttribution]:
     """Attribute aligned question/response pairs."""
-    return [attribute_question(question, response, scorecard) for question, response in zip(questions, responses)]
+    return [
+        attribute_question(
+            question,
+            response,
+            scorecard,
+            correctness_threshold=correctness_threshold,
+            supporting_metric_threshold=supporting_metric_threshold,
+        )
+        for question, response in zip(questions, responses)
+    ]

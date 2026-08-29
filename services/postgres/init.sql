@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS document_ingestion_stages (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id   UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     stage         TEXT NOT NULL,
+    -- Explicit pipeline order. Every row of one attempt is written in a single
+    -- transaction and therefore shares created_at, and the id tiebreak is a
+    -- random UUID, so ordering by those two returns stages in arbitrary order.
+    stage_index   INTEGER NOT NULL DEFAULT 0,
     duration_ms   DOUBLE PRECISION NOT NULL,
     input_tokens  INTEGER,
     output_tokens INTEGER,
@@ -64,7 +68,7 @@ CREATE TABLE IF NOT EXISTS document_ingestion_stages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_stages_doc
-    ON document_ingestion_stages(document_id);
+    ON document_ingestion_stages(document_id, stage_index);
 
 -- Chat sessions
 CREATE TABLE IF NOT EXISTS chat_sessions (

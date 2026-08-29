@@ -167,6 +167,14 @@ DEFAULT_WEIGHTS = {
     "latency": 0.05,  # Response time
 }
 
+# A verdict of "correct" requires answer_correctness to clear this bar, and every
+# consulted supporting generation metric to clear the one below it. Deliberately
+# NOT 1.0: these are continuous 0-1 LLM-judge scores, and demanding an exact 1.0
+# was the original defect. 0.5 is this repo's own calibrated convention for
+# booleanizing a judge score (calibration.py:175, `judged >= 0.5`).
+DEFAULT_CORRECTNESS_THRESHOLD = 0.5
+DEFAULT_SUPPORTING_METRIC_THRESHOLD = 0.5
+
 # Same role for the normalization thresholds latency and cost are scored against.
 DEFAULT_LATENCY_THRESHOLD_MS = {
     "generation": 5_000.0,
@@ -347,6 +355,12 @@ class EvalConfig:
     retrieval_only: bool = False
     retrieval_source: str = "rerank"
     search_top_k: int = 10
+    # Failure-attribution verdict thresholds. Continuous 0-1 judge scores are
+    # booleanized at 0.5, matching calibration.py's `judged >= 0.5` convention;
+    # an exact-1.0 bar made "correct" nearly unreachable and fired
+    # generation_drift on almost every question. Raise for a stricter study.
+    correctness_threshold: float = DEFAULT_CORRECTNESS_THRESHOLD
+    supporting_metric_threshold: float = DEFAULT_SUPPORTING_METRIC_THRESHOLD
 
     @property
     def weights(self) -> dict[str, float]:

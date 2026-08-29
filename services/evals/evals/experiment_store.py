@@ -10,7 +10,7 @@ from dataclasses import asdict
 from typing import Any
 from urllib.parse import quote
 
-from evals.attribution import FailureAttribution
+from evals.attribution import FAILURE_STAGES, FailureAttribution
 from evals.schemas import EvalQuestion, EvalResponse, EvalRun
 
 def _json(value: Any) -> Any:
@@ -35,8 +35,37 @@ def code_version() -> str:
         return "unknown"
 
 
+def _corpus_document_texts(questions: list[EvalQuestion]) -> dict[str, str]:
+    """Reproduce, byte-for-byte, the per-document text runner._ingest_documents uploads.
+
+    _ingest_documents (services/evals/evals/runner.py) collects gold + context
+    passage text per gold doc id, deduplicating by exact text and preserving
+    first-seen order, then joins each document's texts with "\\n\\n" into the
+    single .txt file it uploads. The snapshot id must hash exactly those bytes,
+    not just doc/chunk ids, or the corpus can change silently underneath a
+    snapshot id that claims nothing changed. This mirrors that composition
+    exactly; it does not perform any upload itself and must stay in sync with
+    runner.py's dedup/join logic (owned by Track A/E, read-only here).
+    """
+    doc_texts: dict[str, list[str]] = {}
+    for question in questions:
+        for passage in question.gold_passages + question.context_passages:
+            bucket = doc_texts.setdefault(passage.doc_id, [])
+            if passage.text not in bucket:
+                bucket.append(passage.text)
+    return {doc_id: "\n\n".join(texts) for doc_id, texts in doc_texts.items()}
+
+
 def corpus_snapshot_id(datasets: list[Any], questions: list[EvalQuestion]) -> str:
-    """Stable identifier for exactly the documents/questions an eval run used."""
+    """Stable identifier for exactly the documents/questions an eval run used.
+
+    Includes a content hash of the gold + distractor passage text actually
+    composed into the uploaded corpus documents (see _corpus_document_texts),
+    not just their doc/chunk ids and locator metadata — otherwise the corpus
+    can change (e.g. a dataset fixture edit) without the snapshot id moving,
+    which defeats the identity guarantee the experiment store depends on.
+    """
+    corpus_documents = _corpus_document_texts(questions)
     payload = {
         "datasets": [
             {"name": name, "version": version}
@@ -60,6 +89,10 @@ def corpus_snapshot_id(datasets: list[Any], questions: list[EvalQuestion]) -> st
                 ],
             }
             for question in sorted(questions, key=lambda item: item.id)
+        ],
+        "corpus_documents": [
+            {"doc_id": doc_id, "text_hash": hashlib.sha256(text.encode()).hexdigest()}
+            for doc_id, text in sorted(corpus_documents.items())
         ],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -279,7 +312,7 @@ class ExperimentStore:
             rows = await connection.fetch(
                 """
                 SELECT r.id AS run_id, r.name AS run_name, rq.question_id, rq.question,
-                       rq.primary_failure_stage, qs.evidence
+                       rq.primary_failure_stage, rq.failure_labels, qs.evidence
                 FROM question_stages qs
                 JOIN run_questions rq ON rq.id = qs.run_question_id
                 JOIN runs r ON r.id = rq.run_id
