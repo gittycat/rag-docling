@@ -146,7 +146,14 @@ class TestBatchAggregation:
             ),
         ]
 
-        result = await metric.compute_batch(questions, responses)
+        # The gold chunk stays in the catalog even for the question that missed
+        # it — that is what makes "miss" score 0.0 rather than drop out of the
+        # average as unassessable.
+        catalog = [
+            RetrievedChunk(doc_id="d1", chunk_id="c1", text="the answer text"),
+            RetrievedChunk(doc_id="d9", chunk_id="c9", text="unrelated"),
+        ]
+        result = await metric.compute_batch(questions, responses, chunk_catalog=catalog)
 
         assert result.details["per_question"] == {"hit": 1.0, "miss": 0.0}
         assert result.details["std_dev"] == pytest.approx(0.5)

@@ -18,6 +18,28 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+def _catalog(question, response):
+    """Every gold and retrieved chunk, as the current chunk catalog.
+
+    Retrieval metrics resolve their relevant-set against the catalog, never
+    against the ranking being scored. A gold passage the ranking missed must
+    still be present here — that is precisely what makes a total miss score
+    0.0 rather than reading as unassessable.
+    """
+    from evals.schemas import RetrievedChunk
+
+    chunks = []
+    seen = set()
+    for item in list(question.gold_passages) + list(response.retrieved_chunks):
+        if item.chunk_id is None or item.chunk_id in seen:
+            continue
+        seen.add(item.chunk_id)
+        chunks.append(
+            RetrievedChunk(doc_id=item.doc_id, chunk_id=item.chunk_id, text=item.text)
+        )
+    return chunks
+
+
 # =============================================================================
 # RETRIEVAL METRICS TESTS
 # =============================================================================
@@ -53,7 +75,9 @@ class TestRecallAtK:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.name == "recall_at_5"
         assert result.value == 1.0
@@ -87,7 +111,9 @@ class TestRecallAtK:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value == 0.5  # 2 of 4 gold chunks retrieved
         assert result.details["hits"] == 2
@@ -115,7 +141,9 @@ class TestRecallAtK:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value is None
         assert result.sample_size == 0
@@ -148,7 +176,9 @@ class TestRecallAtK:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value == 0.0  # Gold chunk is at rank 3, but k=2
         assert result.details["retrieved_count"] == 2
@@ -185,7 +215,9 @@ class TestPrecisionAtK:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.name == "precision_at_3"
         assert result.value == 1.0
@@ -218,7 +250,9 @@ class TestPrecisionAtK:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value == 0.5  # 2 of 4 retrieved are relevant
 
@@ -244,7 +278,9 @@ class TestPrecisionAtK:
             retrieved_chunks=[],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value == 0.0
         assert "No chunks retrieved" in result.details.get("note", "")
@@ -278,7 +314,9 @@ class TestMRR:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.name == "mrr"
         assert result.value == 1.0
@@ -309,7 +347,9 @@ class TestMRR:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value == 0.5
         assert result.details["first_relevant_rank"] == 2
@@ -339,7 +379,9 @@ class TestMRR:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value == 0.0
         assert result.details["first_relevant_rank"] is None
@@ -366,7 +408,9 @@ class TestMRR:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value is None
         assert result.sample_size == 0
@@ -404,7 +448,9 @@ class TestNDCG:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.name == "ndcg_at_3"
         assert result.value == pytest.approx(1.0, abs=0.001)
@@ -435,7 +481,9 @@ class TestNDCG:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         # NDCG should be less than 1.0 since ranking is suboptimal
         assert result.value < 1.0
@@ -463,7 +511,9 @@ class TestNDCG:
             ],
         )
 
-        result = metric.compute(question, response)
+        result = metric.compute(
+            question, response, chunk_catalog=_catalog(question, response)
+        )
 
         assert result.value is None
         assert result.sample_size == 0

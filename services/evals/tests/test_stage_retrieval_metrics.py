@@ -38,6 +38,19 @@ def _question() -> EvalQuestion:
     )
 
 
+def _stage_catalog() -> list[RetrievedChunk]:
+    """The current chunk catalog the stage fixtures resolve their gold against.
+
+    Both ids must be present even when a leg retrieves neither: the relevant-set
+    comes from the catalog, so a leg that missed scores 0.0 instead of dropping
+    out of the average as unassessable.
+    """
+    return [
+        RetrievedChunk(doc_id="doc", chunk_id="gold", text="gold evidence"),
+        RetrievedChunk(doc_id="doc", chunk_id="miss", text="miss"),
+    ]
+
+
 def _stage(name: str, *chunk_ids: str) -> StageTrace:
     return StageTrace(
         name=name,
@@ -64,7 +77,9 @@ async def test_per_leg_scores_stay_in_one_headline_metric_row() -> None:
         ),
     )
 
-    result = await RecallAtK(1).compute_batch([_question()], [response])
+    result = await RecallAtK(1).compute_batch(
+        [_question()], [response], chunk_catalog=_stage_catalog()
+    )
 
     assert result.name == "recall_at_1"
     assert result.details["stage_scores"] == {
@@ -91,9 +106,9 @@ def test_bad_reranker_has_demotions_without_lowering_candidate_ceiling() -> None
         ),
     )
 
-    assert CandidateRecallCeiling(1).compute(_question(), response).value == 1.0
-    assert RerankPromotions(1).compute(_question(), response).value == 0.0
-    assert RerankDemotions(1).compute(_question(), response).value == 1.0
+    assert CandidateRecallCeiling(1).compute(_question(), response, chunk_catalog=_stage_catalog()).value == 1.0
+    assert RerankPromotions(1).compute(_question(), response, chunk_catalog=_stage_catalog()).value == 0.0
+    assert RerankDemotions(1).compute(_question(), response, chunk_catalog=_stage_catalog()).value == 1.0
 
 
 def test_fusion_lift_compares_fusion_to_better_leg() -> None:
@@ -110,7 +125,7 @@ def test_fusion_lift_compares_fusion_to_better_leg() -> None:
         ),
     )
 
-    assert FusionLift().compute(_question(), response).value < 0.0
+    assert FusionLift().compute(_question(), response, chunk_catalog=_stage_catalog()).value < 0.0
 
 
 def _evidence() -> EvidenceLocator:
@@ -176,7 +191,7 @@ def test_ir_measures_parity_fixture_for_binary_ndcg() -> None:
     )
     # The retired implementation's binary DCG formula: 1 / log2(rank + 1).
     old_value = 1 / 1.584962500721156
-    assert NDCG(2).compute(question, response).value == pytest.approx(old_value)
+    assert NDCG(2).compute(question, response, chunk_catalog=_stage_catalog()).value == pytest.approx(old_value)
 
 
 def test_retrieval_only_mode_validates_its_stage_and_tier() -> None:
