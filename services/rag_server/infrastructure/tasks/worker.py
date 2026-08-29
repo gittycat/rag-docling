@@ -13,6 +13,7 @@ import logging
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from pipelines.ingestion import ingest_document, extract_file_metadata
@@ -25,6 +26,21 @@ from services import document_service
 DOCUMENT_STORAGE_PATH = Path("/app/documents")
 
 logger = logging.getLogger(__name__)
+
+
+async def _save_stages_quietly(
+    doc_id: str, stages: list[dict[str, Any]], task_id: str
+) -> None:
+    # Best-effort: this runs on the failure path, and losing the trace must
+    # never mask the original ingestion error that is about to be re-raised.
+    if not stages:
+        return
+    try:
+        async with get_session() as session:
+            await db_docs.add_ingestion_stages(session, UUID(doc_id), stages)
+        logger.info(f"[TASK {task_id}] Persisted {len(stages)} stage(s) from the failed ingestion")
+    except Exception as e:
+        logger.error(f"[TASK {task_id}] Could not persist failed ingestion stages: {e}")
 
 
 async def process_document_async(file_path: str, filename: str, batch_id: str, task_id: str) -> dict:
@@ -100,16 +116,25 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
         # duration. This also lets it safely use asyncio.run() internally for
         # concurrent contextual-retrieval LLM calls.
         logger.info(f"[TASK {task_id}] Running ingestion pipeline...")
-        result = await main_loop.run_in_executor(
-            None,
-            functools.partial(
-                ingest_document,
-                file_path=file_path,
-                document_id=doc_id,
-                filename=filename,
-                progress_callback=embedding_progress,
-            ),
-        )
+        # The stage list is caller-owned so a parse/chunk/embed exception still
+        # leaves the partial trace — including the `status: failed` record the
+        # chunkers wrote — reachable here to persist before re-raising.
+        ingest_stages: list[dict[str, Any]] = []
+        try:
+            result = await main_loop.run_in_executor(
+                None,
+                functools.partial(
+                    ingest_document,
+                    file_path=file_path,
+                    document_id=doc_id,
+                    filename=filename,
+                    progress_callback=embedding_progress,
+                    stages_out=ingest_stages,
+                ),
+            )
+        except Exception:
+            await _save_stages_quietly(doc_id, ingest_stages, task_id)
+            raise
 
         # Persist chunk text/metadata/embeddings in PostgreSQL — this single write
         # populates the BM25 index, the vector index and document introspection
@@ -152,6 +177,10 @@ async def process_document_async(file_path: str, filename: str, batch_id: str, t
                 "status": "failed",
                 "error": str(e),
             })
+            # The failing session above is unusable; persist the trace on a
+            # fresh one. Previously this appended the failed row and raised
+            # without ever writing it.
+            await _save_stages_quietly(doc_id, stages, task_id)
             raise
         write_duration = time.perf_counter() - write_start
 

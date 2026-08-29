@@ -476,7 +476,6 @@ def add_contextual_prefix_to_chunk(
     logger.info(f"[CONTEXTUAL] Generating contextual prefix for chunk via LLM...")
     start_time = time.time()
 
-    source_text = node.text
     chunk_preview = node.get_content()[:400]
     masked_name, masked_preview, pii_mapping = _mask_contextual_inputs(document_name, chunk_preview, token_mapping)
     prompt = get_contextual_prefix_prompt(masked_name, document_type, masked_preview)
@@ -503,7 +502,6 @@ def add_contextual_prefix_to_chunk(
                 "input_tokens": prompt_tokens,
                 "output_tokens": completion_tokens,
                 "contextual_prefix": context,
-                "source_text": source_text,
             })
         return node
 
@@ -526,7 +524,6 @@ async def add_contextual_prefix_to_chunk_async(
     logger.info(f"[CONTEXTUAL] Generating contextual prefix for chunk via LLM...")
     start_time = time.time()
 
-    source_text = node.text
     chunk_preview = node.get_content()[:400]
     masked_name, masked_preview, pii_mapping = _mask_contextual_inputs(document_name, chunk_preview, token_mapping)
     prompt = get_contextual_prefix_prompt(masked_name, document_type, masked_preview)
@@ -553,7 +550,6 @@ async def add_contextual_prefix_to_chunk_async(
                 "input_tokens": prompt_tokens,
                 "output_tokens": completion_tokens,
                 "contextual_prefix": context,
-                "source_text": source_text,
             })
         return node
 
@@ -614,9 +610,16 @@ async def _add_contextual_retrieval_async(
         "input_tokens": sum(outcome["input_tokens"] for outcome in known_usage) if known_usage else None,
         "output_tokens": sum(outcome.get("output_tokens", 0) for outcome in known_usage) if known_usage else None,
         "errors": [outcome.get("error") for outcome in failures if outcome.get("error")],
+        # The chunk index, not the chunk text: storing source_text here
+        # duplicated the whole corpus into an unindexed JSONB blob, unmasked
+        # even when PII masking was enabled in this same function. Consumers
+        # join back to document_chunks on (document_id, chunk_index), which is
+        # also the retriever's chunk id `{document_id}-chunk-{chunk_index}`.
+        # outcomes is positional and gather preserves order, so the index here
+        # is the chunk_index later assigned in add_document_metadata().
         "contextual_prefixes": [
-            {"prefix": outcome["contextual_prefix"], "source_text": outcome["source_text"]}
-            for outcome in outcomes
+            {"prefix": outcome["contextual_prefix"], "chunk_index": index}
+            for index, outcome in enumerate(outcomes)
             if outcome.get("success") and outcome.get("contextual_prefix")
         ],
     }
@@ -894,7 +897,8 @@ def ingest_document(
     file_path: str,
     document_id: str,
     filename: str,
-    progress_callback: Optional[Callable[[int, int], None]] = None
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    stages_out: Optional[list[dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Complete document ingestion pipeline.
@@ -916,6 +920,11 @@ def ingest_document(
         document_id: Unique document identifier
         filename: Display name for document
         progress_callback: Optional callback for progress tracking (current, total)
+        stages_out: Optional caller-owned list to accumulate stage records into.
+            Pass one to keep the partial trace reachable when this function
+            raises — the `status: failed` stage rows are the whole point of the
+            table, and a trace returned only on success loses exactly the runs
+            worth recording.
 
     Returns:
         Dictionary with ingestion results:
@@ -937,7 +946,7 @@ def ingest_document(
 
     # STEP 2: Chunk document
     logger.info(f"[INGESTION] Step 2: Chunking document...")
-    stages: list[dict[str, Any]] = []
+    stages: list[dict[str, Any]] = stages_out if stages_out is not None else []
     chunk_start = time.perf_counter()
     nodes = chunk_document(file_path, stages=stages, document_hash=metadata["file_hash"])
     chunk_duration = time.perf_counter() - chunk_start

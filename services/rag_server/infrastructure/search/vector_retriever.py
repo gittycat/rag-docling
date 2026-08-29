@@ -1,7 +1,9 @@
 """Vector retriever using pgvector + pgvectorscale (StreamingDiskANN) in PostgreSQL."""
 
+import contextvars
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from llama_index.core import Settings
@@ -17,11 +19,52 @@ logger = logging.getLogger(__name__)
 # Vector failures are non-fatal — a missing extension, a dropped index or an
 # unreachable embedding model silently downgrades every hybrid query to
 # BM25-only. Track the outcome of the last search so /metrics/system can surface
-# the degradation instead of it living in the logs.
+# the degradation instead of it living in the logs. This is deliberately
+# process-global — /metrics/system and `just demo-check` want process-wide state.
 _last_error: str | None = None
 _last_error_at: float | None = None
 _last_success_at: float | None = None
 _failure_count: int = 0
+
+
+@dataclass
+class _QueryHealth:
+    last_error: str | None = None
+
+
+# Per-query health, isolated across concurrently running queries. Under
+# query_concurrency > 1 the module globals above are shared by every in-flight
+# query — one query's failure would mark another query's trace degraded, and
+# one query's success would clear another's error before its trace read it
+# (docs/eval-pipeline-remediation.md Track D #3). A box set in a task's context
+# before it spawns sub-tasks (e.g. HybridRRFRetriever's bm25/vector legs) is
+# visible to those sub-tasks too — asyncio.Task copies the current context at
+# creation time, and mutating the box in place (rather than re-`.set()`ing the
+# ContextVar) means the mutation is visible back in the parent task once the
+# sub-tasks complete, which a bare `.set()` from the child would not be.
+_query_health_var: "contextvars.ContextVar[_QueryHealth | None]" = contextvars.ContextVar(
+    "vector_query_health", default=None
+)
+
+
+def new_query_health_scope() -> tuple[_QueryHealth, "contextvars.Token"]:
+    """Activate a fresh per-query health box in the current context. Caller
+    must reset with the returned token once the query's trace has been built."""
+    box = _QueryHealth()
+    token = _query_health_var.set(box)
+    return box, token
+
+
+def reset_query_health_scope(token: "contextvars.Token") -> None:
+    _query_health_var.reset(token)
+
+
+def get_query_vector_health() -> dict[str, Any]:
+    """Health scoped to the current query. Falls back to 'no error' outside a
+    scope (e.g. a direct call from a test or from /metrics/system's own probe,
+    which uses get_vector_health() instead)."""
+    box = _query_health_var.get()
+    return {"last_error": box.last_error if box is not None else None}
 
 
 def _record_success() -> None:
@@ -30,13 +73,20 @@ def _record_success() -> None:
     _last_error = None
     _last_error_at = None
     _failure_count = 0
+    box = _query_health_var.get()
+    if box is not None:
+        box.last_error = None
 
 
 def _record_failure(error: Exception) -> None:
     global _last_error, _last_error_at, _failure_count
-    _last_error = f"{type(error).__name__}: {error}"
+    message = f"{type(error).__name__}: {error}"
+    _last_error = message
     _last_error_at = time.time()
     _failure_count += 1
+    box = _query_health_var.get()
+    if box is not None:
+        box.last_error = message
 
 
 def _to_pgvector_literal(embedding: list[float]) -> str:

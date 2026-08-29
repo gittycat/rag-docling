@@ -113,13 +113,18 @@ class HybridRRFRetriever(BaseRetriever):
         vector_duration_ms: float,
         fusion_duration_ms: float,
     ) -> list[dict[str, Any]]:
-        from infrastructure.search.bm25_retriever import get_bm25_health
-        from infrastructure.search.vector_retriever import get_vector_health
+        # Query-scoped, not the process-global get_bm25_health()/get_vector_health():
+        # under concurrent queries, a global read here can observe another
+        # in-flight query's failure or success (Track D #3).
+        from infrastructure.search.bm25_retriever import get_query_bm25_health
+        from infrastructure.search.vector_retriever import get_query_vector_health
 
-        bm25_health = get_bm25_health()
-        vector_health = get_vector_health()
-        bm25_trace = self._stage_trace("bm25", bm25_results, bm25_duration_ms, bm25_health)
-        vector_trace = self._stage_trace("vector", vector_results, vector_duration_ms, vector_health)
+        bm25_health = get_query_bm25_health()
+        vector_health = get_query_vector_health()
+        # Both legs run concurrently (see _aretrieve) — their durations overlap
+        # wall time and must not be naively summed against latency_ms.
+        bm25_trace = self._stage_trace("bm25", bm25_results, bm25_duration_ms, bm25_health, parallel=True)
+        vector_trace = self._stage_trace("vector", vector_results, vector_duration_ms, vector_health, parallel=True)
         degraded = [trace for trace in (bm25_trace, vector_trace) if trace["status"] == "degraded"]
         fusion_error = "; ".join(trace["error"] for trace in degraded if trace["error"]) or None
         return [
@@ -157,6 +162,8 @@ class HybridRRFRetriever(BaseRetriever):
         results: list[NodeWithScore],
         duration_ms: float,
         health: dict[str, Any],
+        *,
+        parallel: bool = False,
     ) -> dict[str, Any]:
         error = health.get("last_error")
         return {
@@ -166,6 +173,10 @@ class HybridRRFRetriever(BaseRetriever):
             "items": self._stage_items(results),
             "status": "degraded" if error else "ok",
             "error": error,
+            # Stage-nesting contract: entries marked parallel share wall-clock
+            # time with their siblings of the same name-group rather than
+            # adding to it — see pipelines.inference.total_stage_duration_ms.
+            "parallel": parallel,
         }
 
     def _fuse_results(

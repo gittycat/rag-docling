@@ -83,8 +83,14 @@ async def get_documents(
 
 
 @router.get("/documents/{document_id}/chunks")
-async def get_document_chunks(document_id: str):
-    """Return chunk lineage for evaluation without exposing chunk content."""
+async def get_document_chunks(document_id: str, include_text: bool = False):
+    """Return chunk lineage for evaluation; chunk content only on explicit opt-in.
+
+    `include_text` exists for the one consumer that cannot work without the
+    source text — the contextual-prefix factuality judge, which scores an
+    LLM-written prefix against the chunk it was written from. It is off by
+    default so the ordinary lineage/catalog path stays content-free.
+    """
     try:
         doc_uuid = uuid.UUID(document_id)
     except ValueError:
@@ -99,13 +105,20 @@ async def get_document_chunks(document_id: str):
         return {
             "chunks": [
                 {
-                    "chunk_id": str(chunk.id),
+                    # Unified with the retrievers' node id scheme
+                    # (bm25_retriever.py / vector_retriever.py) so eval-side
+                    # stage traces and this catalog are joinable by id. The
+                    # DB row UUID is kept separately as `row_id` for anything
+                    # that still needs it.
+                    "chunk_id": f"{chunk.document_id}-chunk-{chunk.chunk_index}",
+                    "row_id": str(chunk.id),
                     "doc_id": str(chunk.document_id),
                     "rank": chunk.chunk_index + 1,
                     "metadata": {
                         "file_hash": document["file_hash"],
                         "source_locator": chunk.source_locator,
                     },
+                    **({"text": chunk.content} if include_text else {}),
                 }
                 for chunk in chunks
             ]

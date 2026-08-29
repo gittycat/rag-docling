@@ -177,10 +177,10 @@ async def add_ingestion_stages(
         text(
             """
             INSERT INTO document_ingestion_stages
-                (document_id, stage, duration_ms, input_tokens, output_tokens,
+                (document_id, stage, stage_index, duration_ms, input_tokens, output_tokens,
                  item_count, status, error, details)
             VALUES
-                (:document_id, :stage, :duration_ms, :input_tokens, :output_tokens,
+                (:document_id, :stage, :stage_index, :duration_ms, :input_tokens, :output_tokens,
                  :item_count, :status, :error, CAST(:details AS jsonb))
             """
         ),
@@ -188,6 +188,7 @@ async def add_ingestion_stages(
             {
                 "document_id": str(document_id),
                 "stage": stage["name"],
+                "stage_index": index,
                 "duration_ms": stage["duration_ms"],
                 "input_tokens": stage.get("input_tokens"),
                 "output_tokens": stage.get("output_tokens"),
@@ -205,7 +206,7 @@ async def add_ingestion_stages(
                     ),
                 }),
             }
-            for stage in stages
+            for index, stage in enumerate(stages)
         ],
     )
 
@@ -221,7 +222,7 @@ async def get_ingestion_stages(
                    status, error, details, created_at
             FROM document_ingestion_stages
             WHERE document_id = :document_id
-            ORDER BY created_at, id
+            ORDER BY stage_index, created_at, id
             """
         ),
         {"document_id": str(document_id)},

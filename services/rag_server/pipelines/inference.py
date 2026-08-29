@@ -12,6 +12,8 @@ Complete flow for query processing and answer generation:
 
 from typing import AsyncGenerator, Dict, List, Optional, Generator
 import asyncio
+import contextlib
+import contextvars
 import json
 import logging
 import time
@@ -65,33 +67,80 @@ _memory_cache: "OrderedDict[str, _MemoryEntry]" = OrderedDict()
 # Temporary session cache (in-memory only, cleared on restart)
 _temporary_sessions: "OrderedDict[str, _MemoryEntry]" = OrderedDict()
 
-# Token counting handler (global, reset before each query)
-_token_counter: Optional[TokenCountingHandler] = None
+# Token counting: reset_token_counter()/get_token_counts() used to share one
+# process-global TokenCountingHandler, reset at the start of every query. Under
+# concurrent queries (the evaluator runs query_concurrency: 10) that reset from
+# query B would wipe query A's in-flight counts, and query A's later read could
+# pick up tokens query B accumulated in between — cross-contaminated cost
+# figures (Track D #4). Settings.callback_manager itself must stay a single
+# global (llama_index reads it once per component construction), so the fix
+# routes every event through one permanently-installed wrapper handler that
+# forwards to whichever per-query TokenCountingHandler is active in the
+# *calling* asyncio task's context. A ContextVar sets are task-local, but a
+# task's children (e.g. HybridRRFRetriever's bm25/vector legs, spawned via
+# asyncio.create_task after reset_token_counter() has already run) copy the
+# parent's context at creation time, so they still route into the same
+# handler instance — concurrent sibling queries never see each other's.
+_active_token_counter: "contextvars.ContextVar[Optional[TokenCountingHandler]]" = contextvars.ContextVar(
+    "active_token_counter", default=None
+)
+
+_callback_manager_ready = False
 
 
-def _get_token_counter() -> TokenCountingHandler:
-    """Get or initialize the global token counter."""
-    global _token_counter
-    if _token_counter is None:
-        _token_counter = TokenCountingHandler(verbose=False)
-        Settings.callback_manager = CallbackManager([_token_counter])
-        logger.info("[TOKEN] Initialized TokenCountingHandler")
-    return _token_counter
+class _ContextScopedTokenCountingHandler(TokenCountingHandler):
+    """Installed once as the process-wide callback handler. Every event is
+    forwarded to the per-query handler active in the calling task's context
+    (see reset_token_counter()) instead of accumulating on itself, so this
+    instance's own counters are always empty and unused."""
+
+    def start_trace(self, trace_id: Optional[str] = None) -> None:
+        handler = _active_token_counter.get()
+        if handler is not None:
+            handler.start_trace(trace_id)
+
+    def end_trace(self, trace_id=None, trace_map=None) -> None:
+        handler = _active_token_counter.get()
+        if handler is not None:
+            handler.end_trace(trace_id, trace_map)
+
+    def on_event_start(self, event_type, payload=None, event_id="", parent_id="", **kwargs) -> str:
+        handler = _active_token_counter.get()
+        if handler is not None:
+            return handler.on_event_start(event_type, payload=payload, event_id=event_id, parent_id=parent_id, **kwargs)
+        return event_id
+
+    def on_event_end(self, event_type, payload=None, event_id="", **kwargs) -> None:
+        handler = _active_token_counter.get()
+        if handler is not None:
+            handler.on_event_end(event_type, payload=payload, event_id=event_id, **kwargs)
+
+
+def _ensure_context_scoped_callback_manager() -> None:
+    global _callback_manager_ready
+    if not _callback_manager_ready:
+        Settings.callback_manager = CallbackManager([_ContextScopedTokenCountingHandler(verbose=False)])
+        _callback_manager_ready = True
+        logger.info("[TOKEN] Installed context-scoped token counting handler")
 
 
 def reset_token_counter() -> None:
-    """Reset token counts before a new query."""
-    counter = _get_token_counter()
-    counter.reset_counts()
+    """Start a fresh, per-query token counter and activate it for the calling
+    task's context. Must run before any retrieval/generation work for this
+    query so that sub-tasks it spawns inherit the right handler."""
+    _ensure_context_scoped_callback_manager()
+    _active_token_counter.set(TokenCountingHandler(verbose=False))
 
 
 def get_token_counts() -> Dict[str, int]:
-    """Get current token counts from the handler."""
-    counter = _get_token_counter()
+    """Token counts for the calling task's active query (see reset_token_counter)."""
+    handler = _active_token_counter.get()
+    if handler is None:
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     return {
-        "prompt_tokens": counter.prompt_llm_token_count,
-        "completion_tokens": counter.completion_llm_token_count,
-        "total_tokens": counter.total_llm_token_count,
+        "prompt_tokens": handler.prompt_llm_token_count,
+        "completion_tokens": handler.completion_llm_token_count,
+        "total_tokens": handler.total_llm_token_count,
     }
 
 
@@ -607,6 +656,51 @@ def _context_assembly_duration_ms(chat_engine) -> float:
     return value if isinstance(value, (int, float)) else 0.0
 
 
+def _nested_stage_duration_ms(stage_traces: list[Dict] | None) -> float:
+    """Wall time already accounted for by stages nested inside _run_c3.
+
+    The installed CondensePlusContextChatEngine calls _aget_nodes() from inside
+    _run_c3, so retrieval and reranking happen *within* the context-assembly
+    span and are also emitted as their own stages. Their durations are
+    subtracted from the emitted context_assembly figure so the stage list nests:
+    summing it can never exceed the query's latency_ms.
+    """
+    if not stage_traces:
+        return 0.0
+    return sum(
+        trace.get("duration_ms", 0.0)
+        for trace in stage_traces
+        if trace.get("name") in ("bm25", "vector", "fusion", "rerank")
+        and not trace.get("parallel")
+    ) + _parallel_group_duration_ms(stage_traces)
+
+
+def _parallel_group_duration_ms(stage_traces: list[Dict] | None) -> float:
+    """Concurrent legs overlap wall time, so the group costs its slowest leg."""
+    if not stage_traces:
+        return 0.0
+    parallel = [t.get("duration_ms", 0.0) for t in stage_traces if t.get("parallel")]
+    return max(parallel) if parallel else 0.0
+
+
+def total_stage_duration_ms(stage_traces: list[Dict] | None) -> float:
+    """The stage list's wall-clock cost, honouring the nesting contract.
+
+    Stages marked `parallel` ran concurrently with their siblings and are
+    counted once at the slowest leg rather than summed. Every other stage is
+    exclusive of the others by construction. This is the quantity the phase-1
+    bound applies to: it must never exceed the query's measured latency_ms.
+    """
+    if not stage_traces:
+        return 0.0
+    sequential = sum(
+        trace.get("duration_ms", 0.0)
+        for trace in stage_traces
+        if not trace.get("parallel")
+    )
+    return sequential + _parallel_group_duration_ms(stage_traces)
+
+
 def _retriever_stage_traces(
     retriever, nodes: List[NodeWithScore], duration_ms: float
 ) -> list[Dict]:
@@ -668,10 +762,14 @@ class _StageTracingCondensePlusContextChatEngine(CondensePlusContextChatEngine):
         result = super()._run_c3(*args, **kwargs)
         self._last_context_assembly_ms = (time.perf_counter() - started) * 1000
         stage_traces = getattr(self, "_stage_traces", None)
+        traces = stage_traces if isinstance(stage_traces, list) else None
         _append_stage_trace(
-            stage_traces if isinstance(stage_traces, list) else None,
+            traces,
             "context_assembly",
-            self._last_context_assembly_ms,
+            # Exclusive: retrieval and rerank run inside _run_c3 and are already
+            # emitted as their own stages. `_last_context_assembly_ms` stays
+            # inclusive because `generation` subtracts it for the same reason.
+            max(self._last_context_assembly_ms - _nested_stage_duration_ms(traces), 0.0),
             result[2],
         )
         return result
@@ -721,10 +819,14 @@ class _AsyncSafeCondensePlusContextChatEngine(_StageTracingCondensePlusContextCh
         result = await super()._arun_c3(*args, **kwargs)
         self._last_context_assembly_ms = (time.perf_counter() - started) * 1000
         stage_traces = getattr(self, "_stage_traces", None)
+        traces = stage_traces if isinstance(stage_traces, list) else None
         _append_stage_trace(
-            stage_traces if isinstance(stage_traces, list) else None,
+            traces,
             "context_assembly",
-            self._last_context_assembly_ms,
+            # Exclusive: retrieval and rerank run inside _run_c3 and are already
+            # emitted as their own stages. `_last_context_assembly_ms` stays
+            # inclusive because `generation` subtracts it for the same reason.
+            max(self._last_context_assembly_ms - _nested_stage_duration_ms(traces), 0.0),
             result[2],
         )
         return result

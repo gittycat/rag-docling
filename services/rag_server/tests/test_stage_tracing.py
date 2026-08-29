@@ -79,11 +79,13 @@ def test_failed_vector_leg_is_explicitly_degraded():
         _StaticRetriever([]),
     )
 
+    # The trace reads query-scoped health, never the process-global surface:
+    # under concurrency a global read observes other queries' outcomes.
     with patch(
-        "infrastructure.search.bm25_retriever.get_bm25_health",
+        "infrastructure.search.bm25_retriever.get_query_bm25_health",
         return_value={"last_error": None},
     ), patch(
-        "infrastructure.search.vector_retriever.get_vector_health",
+        "infrastructure.search.vector_retriever.get_query_vector_health",
         return_value={"last_error": "ConnectionError: embedder unavailable"},
     ):
         retriever.retrieve("where is the evidence?")
