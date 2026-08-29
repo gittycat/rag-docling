@@ -34,7 +34,21 @@ preflight:
 # Start all services (rag-server, task-worker, webapp, evals, postgres)
 [group('core')]
 up: preflight
+    docker compose up -d postgres
+    docker compose exec -T postgres bash -c \
+      'until pg_isready -U "$(cat /run/secrets/POSTGRES_SUPERUSER)" -d ragbench > /dev/null 2>&1; do sleep 1; done'
+    just db-reconcile
     docker compose up -d
+
+# Re-apply init.sql against a running postgres (docker-entrypoint-initdb.d only
+# runs on an empty volume, so a column/index added to init.sql after a
+# developer's volume already exists needs this to actually land — see
+# docs/suggestions.md §4.13)
+[group('core')]
+db-reconcile:
+    docker compose exec -T postgres bash -c \
+      'psql -v ON_ERROR_STOP=1 -U "$(cat /run/secrets/POSTGRES_SUPERUSER)" -d ragbench \
+        -f /docker-entrypoint-initdb.d/01-init.sql'
 
 # Stop all services
 [group('core')]

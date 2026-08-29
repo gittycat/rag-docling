@@ -961,13 +961,18 @@ moment a change adds a column to a table that already existed, which is exactly
 what happened here: `document_chunks.source_locator` was missing from the running
 dev database and broke `GET /documents/{id}/chunks` until manually added with
 `ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS source_locator JSONB;`.
-**Effort.** M — needs either real migrations (§7.2 already tracks the AMI half of
-this) or, at minimum, a startup check that diagnoses a schema/init.sql mismatch
-with a clear error instead of a 500 from the first query that touches it.
-**Where.** `services/postgres/init.sql`; the live dev database (fixed manually,
-this session).
-**Status.** Open — worked around live for this session's dev database; no
-general fix implemented.
+**Effort.** S — no migration tooling needed while this project is in development,
+not production (see `CLAUDE.md`); a real migration path is deferred until that
+changes. The dev-mode fix is making `init.sql` idempotent and re-runnable.
+**Where.** `services/postgres/init.sql`, `justfile`.
+**Status.** ✅ Done — 2026-08-29. Every statement in `init.sql` is now safe to
+re-run against an already-initialized database: `CREATE INDEX` uses
+`IF NOT EXISTS` throughout, and `document_chunks` gets an explicit
+`ALTER TABLE ADD COLUMN IF NOT EXISTS source_locator JSONB` (the pattern to
+repeat for the next column added to an existing table). `just db-reconcile`
+re-applies `init.sql` against the running container, and `just up` now calls it
+automatically after postgres is healthy, so drift self-heals on every start
+instead of requiring a manual `ALTER TABLE`.
 
 > **Section 4 was complete as of 2026-08-03** for entries 4.1–4.10. Both suites
 > were green with no skips attributable to those entries: rag-server **147 passed,

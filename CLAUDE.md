@@ -1,3 +1,16 @@
+## Project Status
+
+**In development, not in production — no data migration needed.** Schema
+changes can assume all volumes are disposable (`docker compose down -v` and
+reinit, or an idempotent `init.sql` re-run) rather than requiring a real
+migration path. Do not propose or build migration tooling (Alembic, etc.) for
+this reason alone.
+
+> ⚠️ **REMOVE THIS SECTION** once this project goes to production (timing
+> unknown as of 2026-08-29). At that point, data migration must be planned for
+> — re-open `docs/suggestions.md` §7.2 (no database migrations run) as a real
+> blocker, not an accepted demo trade-off.
+
 ## Library and Tool documentation
 Use the Svelte MCP server for any Svelte related coding, question or documentation.
 

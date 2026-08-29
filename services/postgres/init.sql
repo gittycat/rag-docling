@@ -1,5 +1,9 @@
 -- PostgreSQL initialization script for RAG system
--- Run by docker-entrypoint-initdb.d on first container start
+-- Run by docker-entrypoint-initdb.d on first container start, and safe to
+-- re-run against an already-initialized database (`just db-reconcile`) —
+-- every statement is idempotent. CREATE TABLE IF NOT EXISTS's column list is
+-- a no-op on a table that already exists, so a column added to an existing
+-- table also needs an explicit ALTER TABLE ADD COLUMN IF NOT EXISTS below.
 
 -- Extensions: pg_textsearch for BM25 search, pgvector + pgvectorscale for vectors
 CREATE EXTENSION IF NOT EXISTS pg_textsearch;
@@ -38,12 +42,17 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     UNIQUE(document_id, chunk_index)
 );
 
+-- Column reconciliation for document_chunks: a no-op on a fresh database
+-- (already covered by CREATE TABLE above), but the only thing that actually
+-- adds a column added later to CREATE TABLE's list on a pre-existing table.
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS source_locator JSONB;
+
 -- BM25 index via pg_textsearch (Timescale) for ranked full-text search
-CREATE INDEX idx_chunks_bm25 ON document_chunks
+CREATE INDEX IF NOT EXISTS idx_chunks_bm25 ON document_chunks
 USING bm25 (content) WITH (text_config='english');
 
 -- Vector index via pgvectorscale StreamingDiskANN; cosine distance only
-CREATE INDEX idx_chunks_embedding ON document_chunks
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON document_chunks
 USING diskann (embedding vector_cosine_ops);
 
 -- Per-document timing, token usage and outcome for the ingestion pipeline.
