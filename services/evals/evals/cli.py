@@ -295,6 +295,28 @@ def main():
         help=f"Directory holding run files (default: {RUNS_DIR})",
     )
 
+    contextual_parser = subparsers.add_parser(
+        "contextual-ab",
+        help="Paired A/B: run the same questions with contextual retrieval on and off",
+    )
+    contextual_parser.add_argument(
+        "--datasets", type=str, default="golden",
+        help="Comma-separated dataset names (default: golden)",
+    )
+    contextual_parser.add_argument("--samples", type=int, default=None, help="Samples per dataset")
+    contextual_parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    contextual_parser.add_argument(
+        "--rag-url", type=str, default="http://localhost:8001", help="RAG server URL"
+    )
+    contextual_parser.add_argument(
+        "--output", type=str, default=str(RUNS_DIR), help="Directory for run files"
+    )
+    contextual_parser.add_argument("--no-judge", action="store_true", help="Disable the LLM judge")
+    contextual_parser.add_argument(
+        "--bootstrap-samples", type=int, default=None,
+        help=f"Bootstrap resamples (default {DEFAULT_BOOTSTRAP_SAMPLES})",
+    )
+
     failures_parser = subparsers.add_parser(
         "failures", help="Query per-question failure attribution from Postgres"
     )
@@ -327,6 +349,8 @@ def main():
         cmd_export(args)
     elif args.command == "compare":
         cmd_compare(args)
+    elif args.command == "contextual-ab":
+        cmd_contextual_ab(args)
     elif args.command == "failures":
         cmd_failures(args)
     elif args.command == "cache":
@@ -824,6 +848,76 @@ def cmd_compare(args):
         _print_pareto_analysis(pareto_points)
 
 
+def cmd_contextual_ab(args):
+    """Run the paired contextual-retrieval A/B and print the deltas."""
+    import asyncio
+
+    from evals.contextual_ab import run_contextual_ab
+
+    dataset_names = [DatasetName(ds.strip()) for ds in args.datasets.split(",")]
+    tier = EvalTier.END_TO_END
+    config = EvalConfig(
+        datasets=dataset_names,
+        samples_per_dataset=args.samples,
+        seed=args.seed,
+        rag_server_url=args.rag_url,
+        runs_dir=Path(args.output),
+        judge=resolve_judge_config(
+            enabled=not args.no_judge, datasets=dataset_names, tier=tier
+        ),
+        metrics=MetricConfig(),
+        tier=tier,
+    )
+
+    console = Console()
+    console.print("[bold]Contextual retrieval A/B[/bold]")
+    console.print(f"Datasets: {[ds.value for ds in dataset_names]}")
+    console.print("Ingesting the corpus twice — once with contextual retrieval on, once off.")
+    console.rule()
+
+    try:
+        report = asyncio.run(
+            run_contextual_ab(
+                config,
+                n_resamples=args.bootstrap_samples or DEFAULT_BOOTSTRAP_SAMPLES,
+            )
+        )
+    except ValueError as e:
+        print(f"\nERROR: {e}")
+        sys.exit(1)
+
+    def _row(delta):
+        def fmt(value):
+            return "n/a" if value is None else f"{value:.4f}"
+        arrow = ""
+        if delta.delta is not None:
+            arrow = "+" if delta.delta > 0 else ""
+        change = "n/a" if delta.delta is None else f"{arrow}{delta.delta:.4f}"
+        return f"  {delta.name:<34} {fmt(delta.contextual_on):>12} {fmt(delta.contextual_off):>12} {change:>12}"
+
+    header = f"  {'Metric':<34} {'contextual on':>12} {'off':>12} {'delta':>12}"
+    print()
+    print("Retrieval")
+    print(header)
+    for delta in report.retrieval_deltas:
+        print(_row(delta))
+
+    print()
+    print("Ingestion cost / wall-clock per document")
+    print(header)
+    for delta in report.ingestion_deltas:
+        print(_row(delta))
+
+    for note in report.notes:
+        print(f"\nNOTE: {note}")
+
+    if report.significance is not None:
+        print()
+        _print_significance(report.significance, "contextual off", "contextual on")
+
+    print(f"\nRuns: contextual-on={report.run_on_id}  contextual-off={report.run_off_id}")
+
+
 def cmd_failures(args):
     """Read attributed questions directly from the experiment store."""
     store = ExperimentStore.from_environment()
@@ -836,7 +930,13 @@ def cmd_failures(args):
         return
     for row in rows:
         question = row["question"]
-        print(f"{row['run_id']} {row['question_id']} [{row['primary_failure_stage']}]")
+        labels = row.get("failure_labels") or []
+        primary = row["primary_failure_stage"]
+        # A queried label can be a genuinely-supported non-primary failure
+        # (e.g. citation_error alongside a primary generation_drift), so show
+        # the full label set, not just the primary one.
+        label_display = primary if labels in ([], [primary]) else f"{primary} + {', '.join(l for l in labels if l != primary)}"
+        print(f"{row['run_id']} {row['question_id']} [{label_display}]")
         print(f"  {question.get('question', '')}")
         print(f"  evidence: {json.dumps(row['evidence'], sort_keys=True)}")
 

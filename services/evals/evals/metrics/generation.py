@@ -275,9 +275,12 @@ class AnswerCompleteness(BaseMetric):
 class ContextualPrefixFactuality(BaseMetric):
     """Fraction of persisted contextual prefixes supported by their source text."""
 
-    def __init__(self, judge: LLMJudge, stages: list[Any]):
+    def __init__(self, judge: LLMJudge, stages: list[Any], chunk_text: dict[str, str] | None = None):
         self.judge = judge
         self.stages = stages
+        # chunk_id -> text, supplied by the runner. Ingestion stage rows record
+        # only the chunk index, so the source text is joined at metric time.
+        self._chunk_text = chunk_text
 
     @property
     def name(self) -> str:
@@ -315,20 +318,43 @@ class ContextualPrefixFactuality(BaseMetric):
         concurrency: int = 10,
         **kwargs: Any,
     ) -> MetricResult:
-        records = [
-            record
+        # Stage rows carry the prefix and the chunk it was written from by
+        # index, not a second copy of the chunk text; join it back here.
+        chunk_text = self._chunk_text or {}
+        pending = [
+            (stage, record)
             for stage in self.stages
             if stage.name == "contextual_enrich"
             for record in stage.contextual_prefixes
-            if record.get("prefix") and record.get("source_text")
+            if record.get("prefix")
         ]
+        records = []
+        unjoined = 0
+        for stage, record in pending:
+            index = record.get("chunk_index")
+            source = (
+                chunk_text.get(f"{stage.document_id}-chunk-{index}")
+                if index is not None
+                else None
+            ) or record.get("source_text")
+            if not source:
+                unjoined += 1
+                continue
+            records.append({"prefix": record["prefix"], "source_text": source})
         if not records:
+            note = (
+                "Contextual prefixes were recorded but their source chunks could "
+                "not be joined; the metric needs chunk text, which the runner "
+                "fetches only when the groundedness judge is enabled."
+                if unjoined
+                else "No contextual prefix/source pairs were recorded"
+            )
             return MetricResult(
                 name=self.name,
                 value=None,
                 group=self.group,
                 sample_size=0,
-                details={"note": "No contextual prefix/source pairs were recorded"},
+                details={"note": note, "unjoined_prefixes": unjoined},
             )
 
         sem = asyncio.Semaphore(max(1, concurrency))
