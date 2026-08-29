@@ -86,10 +86,13 @@ class Faithfulness(BaseMetric):
         if not context:
             return MetricResult(
                 name=self.name,
-                value=0.0,
+                # A retrieval miss makes grounding unassessable: calling it an
+                # unfaithful answer would attribute an upstream absence of
+                # evidence to generation. Keep it distinct from a judged 0.0.
+                value=None,
                 group=self.group,
-                sample_size=1,
-                details={"note": "No context retrieved"},
+                sample_size=0,
+                details={"note": "No context retrieved; faithfulness is unassessable"},
             )
 
         result = await self.judge.evaluate_faithfulness(

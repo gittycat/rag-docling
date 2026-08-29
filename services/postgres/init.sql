@@ -118,4 +118,89 @@ CREATE INDEX IF NOT EXISTS idx_tasks_batch ON job_tasks(batch_id);
 -- Partial index: only pending tasks for fast SKIP LOCKED claims
 CREATE INDEX IF NOT EXISTS idx_tasks_claimable ON job_tasks(created_at) WHERE status = 'pending';
 
+-- Evaluation experiment store. A run remains independently exportable as JSON
+-- during the dual-write transition, while these normalized rows make stage-level
+-- failure questions queryable without reparsing a JSON artifact.
+CREATE TABLE IF NOT EXISTS experiments (
+    id                       TEXT PRIMARY KEY,
+    name                     TEXT NOT NULL,
+    corpus_snapshot_id       TEXT NOT NULL,
+    chunking_config          JSONB NOT NULL DEFAULT '{}',
+    embedding_model          TEXT NOT NULL,
+    retrieval_settings       JSONB NOT NULL DEFAULT '{}',
+    reranker_model           TEXT,
+    prompts_hash             TEXT,
+    judge_model              TEXT,
+    judge_execution_boundary TEXT,
+    judging_mode             TEXT NOT NULL CHECK (judging_mode IN ('inline', 'out_of_band', 'none')),
+    code_version             TEXT NOT NULL,
+    identity                 JSONB NOT NULL DEFAULT '{}',
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_experiments_snapshot ON experiments(corpus_snapshot_id);
+
+CREATE TABLE IF NOT EXISTS runs (
+    id               TEXT PRIMARY KEY,
+    experiment_id    TEXT NOT NULL REFERENCES experiments(id),
+    name             TEXT NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL,
+    completed_at     TIMESTAMPTZ,
+    datasets         JSONB NOT NULL DEFAULT '[]',
+    question_count   INTEGER NOT NULL,
+    error_count      INTEGER NOT NULL DEFAULT 0,
+    config           JSONB NOT NULL DEFAULT '{}',
+    metadata         JSONB NOT NULL DEFAULT '{}',
+    weighted_score   JSONB,
+    created_on       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_experiment ON runs(experiment_id);
+
+CREATE TABLE IF NOT EXISTS run_metrics (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id         TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    metric_name    TEXT NOT NULL,
+    metric_group   TEXT NOT NULL,
+    value          DOUBLE PRECISION,
+    sample_size    INTEGER NOT NULL,
+    details        JSONB NOT NULL DEFAULT '{}',
+    UNIQUE(run_id, metric_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_metrics_name ON run_metrics(metric_name);
+
+CREATE TABLE IF NOT EXISTS run_questions (
+    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id                TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    question_id           TEXT NOT NULL,
+    question              JSONB NOT NULL,
+    response              JSONB NOT NULL,
+    primary_failure_stage TEXT,
+    failure_labels        TEXT[] NOT NULL DEFAULT '{}',
+    UNIQUE(run_id, question_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_questions_primary_failure
+    ON run_questions(primary_failure_stage);
+CREATE INDEX IF NOT EXISTS idx_run_questions_failure_labels
+    ON run_questions USING GIN(failure_labels);
+
+CREATE TABLE IF NOT EXISTS question_stages (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_question_id BIGINT NOT NULL REFERENCES run_questions(id) ON DELETE CASCADE,
+    stage           TEXT NOT NULL CHECK (stage IN (
+        'retrieval_miss', 'fusion_miss', 'rerank_drop', 'context_truncated',
+        'generation_drift', 'citation_error', 'wrong_abstention',
+        'missed_abstention', 'correct'
+    )),
+    supported       BOOLEAN NOT NULL DEFAULT FALSE,
+    assessable      BOOLEAN NOT NULL DEFAULT FALSE,
+    evidence        JSONB NOT NULL DEFAULT '{}',
+    UNIQUE(run_question_id, stage)
+);
+
+CREATE INDEX IF NOT EXISTS idx_question_stages_supported
+    ON question_stages(stage, run_question_id) WHERE supported;
+
 -- Grants are handled in 02-grants.sh using secrets-backed roles.

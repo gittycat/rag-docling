@@ -32,6 +32,13 @@ from evals.judges.llm_judge import LLMJudge, warn_if_judge_not_independent
 from evals.pricing import UsageTotals
 from evals.cache import ResponseCache, config_fingerprint
 from evals.samples import save_samples
+from evals.attribution import attribute_questions
+from evals.experiment_store import (
+    ExperimentStore,
+    code_version,
+    corpus_snapshot_id,
+    judging_mode,
+)
 from evals.metrics import (
     METRIC_GROUPS,
     RecallAtK,
@@ -617,6 +624,7 @@ class EvaluationRunner:
             for question in all_questions_to_run
             if question.evidence or question.gold_passages
         }) or ["none"]
+        snapshot_id = corpus_snapshot_id(datasets, all_questions_to_run)
 
         logger.info(f"[EVAL] Total questions: {len(all_questions_to_run)}")
         _report(
@@ -741,6 +749,7 @@ class EvaluationRunner:
 
         # Compute weighted score
         weighted_score = self._compute_weighted_score(scorecard)
+        attributions = attribute_questions(all_questions, all_responses, scorecard)
         _report("saving")
 
         eval_run = EvalRun(
@@ -762,6 +771,9 @@ class EvaluationRunner:
                 # different questions after re-chunking, so never blend them
                 # under an unlabeled scorecard.
                 "ground_truth": ground_truth_modes,
+                "corpus_snapshot_id": snapshot_id,
+                "code_version": code_version(),
+                "judging_mode": judging_mode(self.config.judge.enabled),
                 "judge_model": self.config.judge.model if self.config.judge.enabled else None,
                 "judge_provider": self.config.judge.provider if self.config.judge.enabled else None,
                 "judge_execution_boundary": (
@@ -792,6 +804,29 @@ class EvaluationRunner:
                 },
             },
         )
+
+        store = ExperimentStore.from_environment()
+        if store is None:
+            eval_run.metadata["experiment_store"] = "not_configured"
+            logger.warning(
+                "[EVAL] Experiment store not configured; retaining the JSON run artifact only. "
+                "Mount the database credentials for dual-write persistence."
+            )
+        else:
+            try:
+                experiment_id = await store.persist_run(
+                    eval_run, all_questions, all_responses, attributions
+                )
+                eval_run.metadata["experiment_store"] = {
+                    "status": "persisted", "experiment_id": experiment_id,
+                }
+            except Exception as e:
+                # JSON is still a durable recovery artifact during the dual-write
+                # transition. A database outage must not discard an expensive run.
+                eval_run.metadata["experiment_store"] = {
+                    "status": "failed", "error": str(e),
+                }
+                logger.exception("[EVAL] Could not persist experiment store record")
 
         run_path = self._save_run(eval_run)
         try:
@@ -1331,6 +1366,10 @@ class EvaluationRunner:
                 "retrieval_top_k": run.config.retrieval_top_k,
                 "hybrid_search_enabled": run.config.hybrid_search_enabled,
                 "contextual_retrieval_enabled": run.config.contextual_retrieval_enabled,
+                "chunk_size": run.config.chunk_size,
+                "chunk_overlap": run.config.chunk_overlap,
+                "chunker": run.config.chunker,
+                "prompt_fingerprint": run.config.prompt_fingerprint,
                 # Full server response: rrf_k, reranker top_n, final_top_n and the
                 # rest of the tuning surface a later comparison may need
                 "additional": run.config.additional,

@@ -50,6 +50,7 @@ from evals.cache import (
 from evals.config import EvalConfig, DatasetName, EvalTier, DATASET_TIER_SUPPORT, MetricConfig, resolve_judge_config
 from evals.datasets.registry import list_datasets, get_dataset, clear_cache, CACHE_DIR
 from evals.export import export_for_review, export_run_report, export_scorecard
+from evals.experiment_store import ExperimentStore
 from evals.judges.llm_judge import warn_if_judge_not_independent
 from evals.runner import EvaluationRunner, run_evaluation, compute_pareto_frontier
 from evals.samples import SAMPLES_SUFFIX, load_samples, samples_path_for
@@ -294,6 +295,22 @@ def main():
         help=f"Directory holding run files (default: {RUNS_DIR})",
     )
 
+    failures_parser = subparsers.add_parser(
+        "failures", help="Query per-question failure attribution from Postgres"
+    )
+    failures_parser.add_argument(
+        "label",
+        choices=[
+            "retrieval_miss", "fusion_miss", "rerank_drop", "context_truncated",
+            "generation_drift", "citation_error", "wrong_abstention",
+            "missed_abstention", "correct",
+        ],
+        help="Failure label to query",
+    )
+    failures_parser.add_argument(
+        "--limit", type=int, default=50, help="Maximum questions to return (default: 50)"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -310,6 +327,8 @@ def main():
         cmd_export(args)
     elif args.command == "compare":
         cmd_compare(args)
+    elif args.command == "failures":
+        cmd_failures(args)
     elif args.command == "cache":
         cmd_cache(args)
     elif args.command == "calibrate":
@@ -629,6 +648,10 @@ def _run_from_dict(data: dict) -> EvalRun:
             retrieval_top_k=cfg.get("retrieval_top_k"),
             hybrid_search_enabled=cfg.get("hybrid_search_enabled"),
             contextual_retrieval_enabled=cfg.get("contextual_retrieval_enabled"),
+            chunk_size=cfg.get("chunk_size"),
+            chunk_overlap=cfg.get("chunk_overlap"),
+            chunker=cfg.get("chunker"),
+            prompt_fingerprint=cfg.get("prompt_fingerprint"),
             additional=cfg.get("additional", {}),
         ),
         datasets=data.get("datasets", []),
@@ -799,6 +822,23 @@ def cmd_compare(args):
         print("=" * 80)
         pareto_points = _compute_pareto_from_dicts(runs)
         _print_pareto_analysis(pareto_points)
+
+
+def cmd_failures(args):
+    """Read attributed questions directly from the experiment store."""
+    store = ExperimentStore.from_environment()
+    if store is None:
+        print("ERROR: Experiment store is not configured (set EVAL_DATABASE_URL or mount database secrets).")
+        sys.exit(1)
+    rows = asyncio.run(store.questions_with_failure_label(args.label, args.limit))
+    if not rows:
+        print(f"No questions with supported label '{args.label}'.")
+        return
+    for row in rows:
+        question = row["question"]
+        print(f"{row['run_id']} {row['question_id']} [{row['primary_failure_stage']}]")
+        print(f"  {question.get('question', '')}")
+        print(f"  evidence: {json.dumps(row['evidence'], sort_keys=True)}")
 
 
 def _print_significance(report, name_a: str, name_b: str) -> None:
