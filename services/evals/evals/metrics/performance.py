@@ -386,6 +386,25 @@ class CostPerQuery(BaseMetric):
             )
             avg_cost = total_cost / query_count
 
+        # `value` is generation + judge + ingestion over query_count, so the
+        # per-question series has to carry the same three components or a paired
+        # bootstrap over it would not describe the point estimate printed beside
+        # it. Judge usage is only ever aggregate (three calls per query, summed
+        # by the judge sink) and ingestion is a whole-corpus quantity, so both
+        # are amortised evenly — stated here rather than left for a reader to
+        # infer from a mean that does not reconcile.
+        shared_cost = (judge_cost or 0.0) + (self._ingestion_cost_usd or 0.0)
+        shared_per_question = shared_cost / query_count if query_count else 0.0
+        if unpriced:
+            # A series that cannot reconcile with a None value is worse than no
+            # series: it would bootstrap cleanly and mean nothing.
+            per_question = {}
+        else:
+            per_question = {
+                question_id: cost + shared_per_question
+                for question_id, cost in per_question.items()
+            }
+
         details: dict[str, Any] = {
             "avg_cost_usd": avg_cost,
             "total_cost_usd": total_cost,
@@ -395,8 +414,33 @@ class CostPerQuery(BaseMetric):
             "ingestion_cost_usd": self._ingestion_cost_usd,
             "per_question": per_question,
             "query_count": query_count,
+            "per_question_composition": (
+                "generation + evenly amortised judge + evenly amortised ingestion"
+            ),
+            "judge_cost_per_question": (
+                (judge_cost / query_count) if judge_cost and query_count else 0.0
+            ),
+            "ingestion_cost_per_question": (
+                (self._ingestion_cost_usd / query_count)
+                if self._ingestion_cost_usd and query_count
+                else 0.0
+            ),
             **self._rate_details(),
         }
+
+        if self._ingestion_cost_usd:
+            # Whole-corpus ingestion divided by however many questions this run
+            # sampled: the same corpus at --samples 5 and --samples 50 yields
+            # different cost_per_query for reasons that have nothing to do with
+            # the system under test.
+            details["sample_size_dependent"] = True
+            details["comparability_note"] = (
+                f"Whole-corpus ingestion cost (${self._ingestion_cost_usd:.6f}) is "
+                f"amortised over {query_count} question(s). Runs with different "
+                "sample counts are not directly comparable on this metric; "
+                "compare generation_cost_usd, or renormalise using "
+                "ingestion_cost_usd and query_count."
+            )
 
         if judge is not None:
             details["judge"] = {
