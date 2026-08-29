@@ -108,5 +108,23 @@ async def test_rag_client_reads_chunk_lineage_catalog():
     client._client.get = AsyncMock(return_value=response)
 
     assert await client.get_document_chunks("doc-1") == [{"chunk_id": "chunk-1"}]
-    client._client.get.assert_awaited_once_with("http://rag.test/documents/doc-1/chunks")
+    # No text by default: the catalog path stays content-free.
+    client._client.get.assert_awaited_once_with(
+        "http://rag.test/documents/doc-1/chunks", params=None
+    )
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_rag_client_requests_chunk_text_only_on_opt_in():
+    client = RAGClient("http://rag.test")
+    response = MagicMock()
+    response.json.return_value = {"chunks": [{"chunk_id": "chunk-1", "text": "body"}]}
+    client._client.get = AsyncMock(return_value=response)
+
+    await client.get_document_chunks("doc-1", include_text=True)
+
+    client._client.get.assert_awaited_once_with(
+        "http://rag.test/documents/doc-1/chunks", params={"include_text": "true"}
+    )
     await client.close()

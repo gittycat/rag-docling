@@ -68,5 +68,45 @@
     "document": "conformism.html",
     "context_hint": "The essay discusses historical safe spaces for independent thinkers",
     "query_type": "factual"
+  },
+  {
+    "question": "What is the capital of Freedonia and when was it founded?",
+    "answer": "The capital is Sylvania City, founded in 1873.",
+    "document": "freedonia_facts.txt",
+    "source_file": "freedonia_facts.txt",
+    "query_type": "factual",
+    "context_hint": "Second paragraph of the reference document",
+    "evidence": [
+      {
+        "text": "The capital of Freedonia is Sylvania City, founded in 1873 by settlers who arrived along the eastern river.",
+        "locator": {
+          "element_path": "document",
+          "start_char": 264,
+          "end_char": 371
+        }
+      }
+    ]
+  },
+  {
+    "question": "When was the Sylvania municipal water authority established?",
+    "answer": "It was established in 1912.",
+    "document": "sylvania_report.pdf",
+    "source_file": "sylvania_report.pdf",
+    "query_type": "factual",
+    "context_hint": "First page of the municipal report",
+    "evidence": [
+      {
+        "text": "The municipal water authority was established in 1912 and draws from the eastern river above the second weir.",
+        "locator": {
+          "page": 1,
+          "bbox": [
+            40.0,
+            725.0,
+            550.0,
+            748.0
+          ]
+        }
+      }
+    ]
   }
 ]

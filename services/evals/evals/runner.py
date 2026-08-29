@@ -155,6 +155,24 @@ class RAGClient:
         response.raise_for_status()
         return response.json()["batch_id"]
 
+    async def upload_file_as_document(self, path: str) -> str:
+        """Upload a real source file's bytes verbatim. Returns batch_id.
+
+        Source-coordinate evidence anchors to the sha256 of the original file,
+        which is what documents.file_hash records. Re-encoding or synthesizing
+        the document here would change that hash and make every locator
+        unresolvable, so the bytes go up exactly as they are on disk.
+        """
+        import mimetypes
+        from pathlib import Path as _Path
+
+        file_path = _Path(path)
+        content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        files = [("files", (file_path.name, file_path.read_bytes(), content_type))]
+        response = await self._client.post(f"{self.base_url}/upload", files=files)
+        response.raise_for_status()
+        return response.json()["batch_id"]
+
     async def wait_for_batch(self, batch_id: str, timeout: float = 300.0, poll_interval: float = 2.0) -> bool:
         """Poll batch status until all tasks complete or timeout."""
         start = time.time()
@@ -189,9 +207,19 @@ class RAGClient:
         response.raise_for_status()
         return response.json().get("stages", [])
 
-    async def get_document_chunks(self, document_id: str) -> list[dict[str, Any]]:
-        """Read a document's current chunk ids and source lineage, without text."""
-        response = await self._client.get(f"{self.base_url}/documents/{document_id}/chunks")
+    async def get_document_chunks(
+        self, document_id: str, *, include_text: bool = False
+    ) -> list[dict[str, Any]]:
+        """Read a document's current chunk ids and source lineage.
+
+        Text is omitted unless explicitly requested — only the contextual-prefix
+        factuality judge needs it, and it already sends chunk content to a judge
+        that passed enforce_judge_boundary().
+        """
+        response = await self._client.get(
+            f"{self.base_url}/documents/{document_id}/chunks",
+            params={"include_text": "true"} if include_text else None,
+        )
         response.raise_for_status()
         return response.json().get("chunks", [])
 
@@ -203,6 +231,22 @@ class RAGClient:
         except Exception as e:
             logger.warning(f"[RAG_CLIENT] Failed to delete document {document_id}: {e}")
             return False
+
+    async def get_settings(self) -> dict[str, Any]:
+        """GET /settings — the toggleable server settings."""
+        response = await self._client.get(f"{self.base_url}/settings")
+        response.raise_for_status()
+        return response.json()
+
+    async def set_contextual_retrieval(self, enabled: bool) -> dict[str, Any]:
+        """Toggle contextual retrieval. Writes config.yml, so both the server and
+        the task worker pick it up — which is what makes an A/B over ingestion
+        behaviour possible without restarting the stack."""
+        response = await self._client.patch(
+            f"{self.base_url}/settings", json={"contextual_retrieval_enabled": enabled}
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def get_config(self) -> dict[str, Any]:
         """Get the current RAG server configuration."""
@@ -887,21 +931,57 @@ class EvaluationRunner:
         Distractor (context) passages are ingested too so retrieval metrics are
         measured against a corpus that contains irrelevant documents.
         """
+        # Questions carrying source-coordinate evidence need their ORIGINAL file
+        # ingested: the locator's document_hash is the sha256 of those bytes and
+        # equals documents.file_hash only if the bytes go up unchanged. A
+        # synthesized .txt assembled from passage text would hash differently
+        # and every locator would be unresolvable — which is exactly why the
+        # source-coordinate path was dead code before this.
+        source_files: dict[str, str] = {}
+        for q in questions:
+            if not q.evidence:
+                continue
+            source_path = (q.metadata or {}).get("source_path")
+            if source_path:
+                source_files[Path(source_path).name] = source_path
+
         doc_texts: dict[str, list[str]] = {}
         for q in questions:
+            # A question whose evidence is ingested from its real source must not
+            # ALSO be synthesized into a second .txt copy of the same content:
+            # that would put two documents in the corpus for one source and
+            # inflate the retrieval denominator.
+            if q.evidence and (q.metadata or {}).get("source_path"):
+                for gp in q.context_passages:
+                    doc_texts.setdefault(gp.doc_id, [])
+                    if gp.text not in doc_texts[gp.doc_id]:
+                        doc_texts[gp.doc_id].append(gp.text)
+                continue
             for gp in q.gold_passages + q.context_passages:
                 if gp.doc_id not in doc_texts:
                     doc_texts[gp.doc_id] = []
                 if gp.text not in doc_texts[gp.doc_id]:
                     doc_texts[gp.doc_id].append(gp.text)
 
-        if not doc_texts:
+        if not doc_texts and not source_files:
             return {}
 
-        logger.info(f"[EVAL] Ingesting {len(doc_texts)} unique documents for END_TO_END eval")
+        logger.info(
+            f"[EVAL] Ingesting {len(doc_texts)} synthesized and "
+            f"{len(source_files)} real source document(s) for END_TO_END eval"
+        )
 
         filename_to_gold_id: dict[str, str] = {}
         batch_ids: list[str] = []
+
+        for filename, source_path in source_files.items():
+            try:
+                batch_id = await self.client.upload_file_as_document(source_path)
+                batch_ids.append(batch_id)
+                filename_to_gold_id[filename] = filename
+                logger.info(f"[EVAL] Uploaded source document {filename} → batch {batch_id}")
+            except Exception as e:
+                logger.error(f"[EVAL] Failed to upload source document {source_path}: {e}")
 
         for gold_doc_id, texts in doc_texts.items():
             filename = gold_doc_id.replace(":", "_").replace(" ", "_") + ".txt"
@@ -935,6 +1015,15 @@ class EvaluationRunner:
         logger.info(f"[EVAL] Mapped {len(gold_to_rag)} of {len(doc_texts)} documents to RAG IDs")
         self._ingestion_stages = []
         self._chunk_catalog = []
+        # Only the contextual-prefix factuality judge needs chunk text: it scores
+        # an LLM-written prefix against the chunk it was written from, and the
+        # ingestion stage rows deliberately no longer duplicate the corpus.
+        want_chunk_text = (
+            self.config.tier == EvalTier.END_TO_END
+            and self.config.metrics.groundedness
+            and self.config.judge.enabled
+        )
+        self._chunk_text_by_id: dict[str, str] = {}
         for document_id in gold_to_rag.values():
             try:
                 stages = await self.client.get_document_ingestion_stages(document_id)
@@ -946,16 +1035,27 @@ class EvaluationRunner:
                     f"[EVAL] Could not read ingestion stages for {document_id}: {e}"
                 )
             try:
+                chunk_rows = await self.client.get_document_chunks(
+                    document_id, include_text=want_chunk_text
+                )
                 self._chunk_catalog.extend(
                     RetrievedChunk(
                         doc_id=chunk["doc_id"],
                         chunk_id=chunk["chunk_id"],
-                        text="",
+                        text=chunk.get("text", ""),
                         rank=chunk.get("rank"),
                         metadata=chunk.get("metadata", {}),
                     )
-                    for chunk in await self.client.get_document_chunks(document_id)
+                    for chunk in chunk_rows
                 )
+                if want_chunk_text:
+                    self._chunk_text_by_id.update(
+                        {
+                            f'{document_id}-chunk-{chunk["rank"] - 1}': chunk["text"]
+                            for chunk in chunk_rows
+                            if chunk.get("text") and chunk.get("rank")
+                        }
+                    )
             except Exception as e:
                 logger.warning(
                     f"[EVAL] Could not read chunk lineage for {document_id}: {e}"
@@ -1062,7 +1162,13 @@ class EvaluationRunner:
                     kwargs: dict[str, Any] = {}
                     if metric.requires_judge:
                         kwargs["judge"] = self.judge
-                    if isinstance(metric, (EvidenceContainment, EvidenceFragmentation, OrphanedEvidenceRate)):
+                    if group == MetricGroup.RETRIEVAL:
+                        # Every ranking and attribution metric resolves its
+                        # relevant-set against the full current chunk catalog,
+                        # not against the ranking being scored — see
+                        # metrics/retrieval.py's `_relevance`. An absent
+                        # catalog (chunking metrics included) makes the metric
+                        # explicitly undefined rather than silently wrong.
                         kwargs["chunk_catalog"] = self._chunk_catalog
 
                     if metric.requires_judge:
@@ -1111,7 +1217,9 @@ class EvaluationRunner:
             and self.config.judge.enabled
         ):
             try:
-                prefix_metric = ContextualPrefixFactuality(self.judge, self._ingestion_stages)
+                prefix_metric = ContextualPrefixFactuality(
+                    self.judge, self._ingestion_stages, getattr(self, "_chunk_text_by_id", None)
+                )
                 prefix_result = await prefix_metric.compute_batch(
                     questions, responses, concurrency=self.config.judge_concurrency,
                 )

@@ -1,7 +1,9 @@
 """Golden dataset loader for local curated Q&A pairs."""
 
+import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 from evals.datasets.base import BaseDatasetLoader
 from evals.schemas import EvalDataset, EvalQuestion, GoldPassage, QueryType, Difficulty
+from evals.schemas.dataset import EvidenceLocator
 
 
 class GoldenDatasetLoader(BaseDatasetLoader):
@@ -23,6 +26,18 @@ class GoldenDatasetLoader(BaseDatasetLoader):
     GOLDEN_PATH = Path("evals/data/golden_qa.json")
     # Path inside Docker container
     GOLDEN_PATH_DOCKER = Path("/app/evals/data/golden_qa.json")
+
+    # The corpus contract: source documents a question's evidence can anchor to.
+    # A locator's document_hash is the sha256 of the file's bytes, which is what
+    # documents.file_hash records after ingestion — so a locator authored here
+    # resolves against the real ingested document rather than a synthesized one.
+    CORPUS_DIR = Path("evals/data/documents")
+    CORPUS_DIR_DOCKER = Path("/app/evals/data/documents")
+
+    SOURCE_FORMAT_BY_SUFFIX = {
+        ".txt": "txt", ".md": "md", ".html": "html", ".htm": "htm",
+        ".pdf": "pdf", ".docx": "docx", ".pptx": "pptx", ".xlsx": "xlsx",
+    }
 
     @property
     def name(self) -> str:
@@ -43,6 +58,114 @@ class GoldenDatasetLoader(BaseDatasetLoader):
     @property
     def domains(self) -> list[str]:
         return ["user documents"]
+
+    def _corpus_dir(self) -> Path | None:
+        for candidate in (self.CORPUS_DIR_DOCKER, self.CORPUS_DIR):
+            if candidate.is_dir():
+                return candidate
+        return None
+
+    def _source_path(self, document: str | None) -> Path | None:
+        corpus = self._corpus_dir()
+        if corpus is None or not document:
+            return None
+        # Basename only: a dataset file must not be able to read outside the corpus.
+        candidate = corpus / Path(document).name
+        return candidate if candidate.is_file() else None
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        # Same rule the server applies when it records chunk lineage
+        # (rag_server/pipelines/ingestion.py `_normalized_text`), so an authored
+        # evidence hash is comparable to an ingested chunk's.
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _parse_evidence(self, item: dict[str, Any], idx: int) -> list[EvidenceLocator]:
+        """Build source-coordinate locators anchored to a real corpus file.
+
+        Authored per the plan's rules: from the source document, never from a
+        chunk. A locator whose source file is missing is dropped with a warning
+        rather than anchored to a hash that will never match anything — a
+        silently unresolvable locator is worse than an absent one.
+        """
+        raw_evidence = item.get("evidence") or []
+        if not raw_evidence:
+            return []
+
+        document = item.get("source_file") or item.get("document")
+        source_path = self._source_path(document)
+        if source_path is None:
+            logger.warning(
+                "[GOLDEN] Question %d declares evidence but its source document "
+                "%r is not in the corpus directory; dropping the locators. "
+                "Retrieval metrics fall back to the chunk_id ground truth.",
+                idx, document,
+            )
+            return []
+
+        document_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        source_format = self.SOURCE_FORMAT_BY_SUFFIX.get(source_path.suffix.lower())
+        if source_format is None:
+            logger.warning(
+                "[GOLDEN] Unsupported source format %r for question %d; dropping locators.",
+                source_path.suffix, idx,
+            )
+            return []
+
+        locators: list[EvidenceLocator] = []
+        for position, raw in enumerate(raw_evidence):
+            text = raw.get("text") or raw.get("normalized_text") or ""
+            if not text or not raw.get("locator"):
+                logger.warning(
+                    "[GOLDEN] Question %d evidence %d needs both 'text' and "
+                    "'locator'; skipping it.", idx, position,
+                )
+                continue
+            normalized = self._normalize(text)
+            locators.append(
+                EvidenceLocator(
+                    document_hash=document_hash,
+                    source_format=raw.get("source_format") or source_format,
+                    locator=raw["locator"],
+                    normalized_text=normalized,
+                    normalized_text_hash=hashlib.sha256(normalized.encode()).hexdigest(),
+                    evidence_set_id=raw.get("evidence_set_id"),
+                )
+            )
+        return locators
+
+    def fingerprint(self) -> dict[str, Any]:
+        """Cache-key inputs. The locator payload and the bytes of every corpus
+        file it anchors to are included: re-authoring a locator, or replacing a
+        source document, must not be served a cache entry built against the old
+        one.
+        """
+        try:
+            path = self._get_path()
+            with open(path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+        evidence_payload = [
+            {"index": idx, "evidence": item.get("evidence"),
+             "source_file": item.get("source_file") or item.get("document")}
+            for idx, item in enumerate(data)
+            if item.get("evidence")
+        ]
+        source_hashes = {}
+        for entry in evidence_payload:
+            source_path = self._source_path(entry["source_file"])
+            if source_path is not None:
+                source_hashes[source_path.name] = hashlib.sha256(
+                    source_path.read_bytes()
+                ).hexdigest()
+        if not evidence_payload:
+            return {}
+        return {
+            "evidence": json.dumps(evidence_payload, sort_keys=True),
+            "source_documents": source_hashes,
+        }
 
     def _get_path(self) -> Path:
         """Get the appropriate path based on environment."""
@@ -143,11 +266,14 @@ class GoldenDatasetLoader(BaseDatasetLoader):
             if gold_passages:
                 annotated += 1
 
+            evidence = self._parse_evidence(item, idx)
+            source_path = self._source_path(item.get("source_file") or item.get("document"))
             question = EvalQuestion(
                 id=self._create_question_id("golden", idx),
                 question=item["question"],
                 expected_answer=item.get("answer"),
                 gold_passages=gold_passages,
+                evidence=evidence,
                 context_passages=context_passages,
                 query_type=self._map_query_type(item.get("query_type", "factual")),
                 difficulty=Difficulty.MEDIUM,
@@ -156,6 +282,9 @@ class GoldenDatasetLoader(BaseDatasetLoader):
                 metadata={
                     "document": item.get("document"),
                     "context_hint": item.get("context_hint"),
+                    # The runner uploads these bytes verbatim so the ingested
+                    # document's file_hash equals the locator's document_hash.
+                    "source_path": str(source_path) if source_path else None,
                 },
             )
             questions.append(question)
