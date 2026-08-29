@@ -75,7 +75,7 @@ can produce a result that describes neither configuration.
 | Most settings | None after saving |
 | Embedding model | Restart and fully re-ingest |
 | Reranker model | Cache it with `just init`, then restart |
-| Chunk size or overlap | Edit code, rebuild, and fully re-ingest |
+| Chunk size or overlap | Edit `config.yml` or `PATCH /settings`, then fully re-ingest |
 | Contextual retrieval | Fully re-ingest to rebuild chunks |
 
 ## Step 4: rerun identically

@@ -89,8 +89,7 @@ Still, exact reproduction is not guaranteed:
 - `config.yml` can reload during a run;
 - cloud providers may update a model behind a stable name;
 - temperature zero reduces but does not remove nondeterminism;
-- judge caching makes a rerun non-independent by default;
-- chunk size and overlap are code constants, not recorded user settings; and
+- judge caching makes a rerun non-independent by default; and
 - query-cache keys do not include the indexed corpus.
 
 Freeze configuration and corpus during an experiment, keep the seed fixed, and
@@ -129,7 +128,7 @@ choice, and editing them makes older scores incomparable.
 - ensemble judges and agreement reporting;
 - multi-turn evaluation;
 - significance results in the dashboard;
-- configurable chunk size, overlap, and RRF source weights; and
+- configurable RRF source weights; and
 - custom end-to-end evaluation against an existing corpus.
 
 See [`docs/suggestions.md`](../suggestions.md) for proposed improvements.

@@ -130,14 +130,23 @@ docker compose exec postgres sh -c \
   'psql -U "$(cat /run/secrets/POSTGRES_SUPERUSER)" -d ragbench -c "\\dx"'
 ```
 
-`\dx` must list `vector` and `vectorscale`. Both are installed by the `postgres`
-image and enabled by `init.sql` on first start only, so a database volume created
-before they were added will not have them. Rebuild the image
-(`docker compose build postgres`), then recreate the volume and re-ingest.
+`\dx` must list `vector` and `vectorscale`. `docker-entrypoint-initdb.d` only
+runs `init.sql` on a brand-new volume, so a database volume created before an
+extension or index was added to that file won't have it. Fix it in place first:
 
-A missing index is the other cause: the probe checks `idx_chunks_embedding` by
-name, because a dropped diskann index degrades to a sequential scan over every
-chunk rather than erroring. Recreate it with the statement in `init.sql`.
+```bash
+just db-reconcile
+```
+
+Every statement in `init.sql` is idempotent (`CREATE EXTENSION IF NOT EXISTS`,
+`CREATE INDEX IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`), so
+re-running it against a live database adds only what's missing — no rebuild, no
+volume recreation, no lost data. `just up` now runs this automatically, so it's
+usually only needed as a manual step right after pulling code that changed
+`init.sql`, before restarting the stack. Only rebuild the image
+(`docker compose build postgres`) and recreate the volume if `\dx` still doesn't
+list an extension after reconciling — that means the extension binary itself
+isn't in the image, not just uncreated in the database.
 
 ### The RAG server fails after enabling PII
 

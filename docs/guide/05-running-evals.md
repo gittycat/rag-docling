@@ -193,6 +193,23 @@ The file also records the dataset, tier, config snapshot, duration, question cou
 scorecard, and weighted-score breakdown. Per-question samples are stored in a
 sidecar file.
 
+### Finding why questions failed
+
+Every question is also attributed to a failure stage (`retrieval_miss`,
+`fusion_miss`, `rerank_drop`, `context_truncated`, `generation_drift`,
+`citation_error`, `wrong_abstention`, `missed_abstention`, or `correct`) and
+written to Postgres. Query across every run that has one, not just the run
+you're looking at:
+
+```bash
+docker compose exec evals .venv/bin/python -m evals.cli failures retrieval_miss --limit 20
+```
+
+Each row shows the run and question ID, every supported label (a question can
+carry more than one), the question text, and the evidence behind the label.
+Useful for finding a pattern — e.g. most `retrieval_miss` questions sharing a
+document — instead of reading review exports one by one.
+
 ### Comparing runs
 
 ```bash

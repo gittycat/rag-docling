@@ -17,7 +17,7 @@ evaluation: one run could then contain two configurations.
 | Startup-validated setting | Restart the affected service |
 | Reranker model | Run `just init MODEL=<hugging-face-id>`, then restart |
 | Embedding model | Restart and fully re-ingest |
-| Chunk size or overlap | Edit code, rebuild, and fully re-ingest |
+| Chunk size or overlap | Edit `config.yml` (or `PATCH /settings`) and re-ingest — no rebuild |
 | Contextual retrieval | Re-ingest documents to test its effect |
 
 Never query an index built by another embedding model. A dimension mismatch fails
@@ -133,10 +133,18 @@ cloud input cost, and may add irrelevant context.
 
 ### Chunking
 
-Chunk size and overlap are currently hardcoded to 500 and 50 tokens in
-`services/rag_server/core/config.py`. They are high-impact settings but are not in
-`config.yml`. Testing them requires a code change, image rebuild, and full
-re-ingestion.
+```yaml
+chunking:
+  chunk_size: 500
+  chunk_overlap: 50
+```
+
+Change chunk size and overlap by editing `config.yml`, or at runtime with
+`PATCH /settings` (the same endpoint the Settings page uses for contextual
+retrieval — it does not have chunking controls in the UI yet). Neither path
+needs a rebuild. Either way the new values apply only to documents ingested
+after the change; existing chunks are not resized, so a real comparison still
+needs a full re-ingestion.
 
 Smaller chunks retrieve precisely but can split an answer. Larger chunks preserve
 more context but may blur the topic represented by an embedding.

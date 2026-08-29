@@ -82,17 +82,26 @@ private vLLM as free.
 
 ## Recipe 3 — Chunk size
 
-Chunk size and overlap are hardcoded:
+Change chunk size and overlap in `config.yml`:
 
-```python
-Settings.chunk_size = 500
-Settings.chunk_overlap = 50
+```yaml
+chunking:
+  chunk_size: 500
+  chunk_overlap: 50
 ```
 
-Change them in `services/rag_server/core/config.py`, rebuild, and re-ingest:
+Or set them at runtime without touching `config.yml`:
 
 ```bash
-just build
+curl -X PATCH http://localhost:8001/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"chunk_size": 800, "chunk_overlap": 80}'
+```
+
+No rebuild is needed either way. The new values apply only to documents
+ingested after the change, so re-ingest to test them:
+
+```bash
 just up
 ```
 
@@ -112,22 +121,41 @@ evaluation is not built in.
 
 ## Recipe 4 — Contextual retrieval on or off
 
-Change:
+A dedicated command runs this whole comparison for you:
+
+```bash
+docker compose exec evals .venv/bin/python -m evals.cli contextual-ab \
+  --datasets golden --samples 40
+```
+
+It ingests the dataset's documents twice — once with contextual retrieval on,
+once off — against the RAG server it points at (`--rag-url`, default
+`localhost:8001`), restores whatever the setting was before it started (even if
+a run fails), and prints the retrieval metric deltas alongside ingestion cost
+and latency per document, plus significance. It always runs at `end_to_end`,
+since ingestion is what's being compared, and defaults to the `golden` dataset.
+
+Because it flips the live `contextual_retrieval_enabled` setting on the server
+and ingests documents into whatever index that server is using, point
+`--rag-url` at a disposable or eval-only instance if you don't want the
+comparison mixed into a shared index.
+
+To do it by hand instead, change:
 
 ```yaml
 retrieval:
   enable_contextual_retrieval: true
 ```
 
-Re-ingest after each change. The setting affects stored chunk embeddings, not only
-future queries.
+and re-ingest after each change — the setting affects stored chunk embeddings,
+not only future queries.
 
 | Item | Choice |
 |---|---|
 | Tier | `end_to_end` |
 | Dataset | An annotated end-to-end dataset |
 | Primary metric | `recall_at_5` |
-| Guardrails | `mrr`, faithfulness, ingestion duration and cost |
+| Guardrails | `mrr`, faithfulness, `ingestion_cost_per_document`, `ingestion_latency_per_document_ms` |
 
 Contextual retrieval adds an LLM-written description to each chunk. It is most
 useful when chunks are ambiguous outside their document. It also adds one LLM call

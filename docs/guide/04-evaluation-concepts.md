@@ -136,10 +136,15 @@ incomparable.
 | `latency_p95_ms` | Slow-tail experience |
 | `latency_avg_ms` | Mean and per-question comparison data |
 | `cost_per_query` | Estimated API cost from token counts — answer generation **and** judging |
+| `ingestion_cost_per_document` | Estimated ingestion cost per document — contextual enrichment plus embedding (`end_to_end` only) |
+| `ingestion_latency_per_document_ms` | Wall-clock ingestion time per document, with a stage breakdown (`end_to_end` only) |
 
 Eval queries run concurrently, so latency is useful for like-for-like comparisons,
 not as an absolute user-experience measurement. Cost uses hardcoded price tables;
-use it to compare configurations, not forecast a bill.
+use it to compare configurations, not forecast a bill. The two ingestion metrics
+read persisted per-document stage records, so they need documents ingested during
+the run — they are how [Recipe 4](07-experiment-cookbook.md) (contextual
+retrieval on or off) prices contextual retrieval.
 
 ## The weighted score
 
