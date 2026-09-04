@@ -54,7 +54,6 @@ class QueuedJob(BaseModel):
 
 
 class DashboardMetrics(BaseModel):
-    retrieval_relevance: float | None = None
     faithfulness: float | None = None
     claim_groundedness: float | None = None
     answer_correctness: float | None = None
@@ -62,6 +61,13 @@ class DashboardMetrics(BaseModel):
     # while omitting required facts.
     answer_completeness: float | None = None
     answer_relevance: float | None = None
+    # Retrieval is reported as the funnel's two real numbers rather than a
+    # composite. `retrieval_ceiling` is the recall of the candidate list handed
+    # to the reranker; `retrieval_final` is what the model actually saw. Their
+    # gap is the reranker's cost, and 1 - ceiling is what ingestion never found.
+    retrieval_ceiling: float | None = None
+    retrieval_final: float | None = None
+    retrieval_bottleneck: str | None = None
     latency_p50_seconds: float | None = None
     latency_p95_seconds: float | None = None
     latency_avg_seconds: float | None = None
@@ -70,6 +76,29 @@ class DashboardMetrics(BaseModel):
     total_prompt_tokens: int | None = None
     total_completion_tokens: int | None = None
     cost_model: str | None = None
+
+
+class FunnelStageOut(BaseModel):
+    name: str
+    recall: float | None = None
+    secondary: dict[str, float] = Field(default_factory=dict)
+    questions_scored: int = 0
+    delta: float | None = None
+
+
+class RetrievalFunnelOut(BaseModel):
+    """Stage-by-stage retrieval recall, and which half of the system to fix."""
+
+    stages: list[FunnelStageOut] = Field(default_factory=list)
+    ceiling: float | None = None
+    final: float | None = None
+    lost_before_candidates: float | None = None
+    lost_in_rerank: float | None = None
+    bottleneck: str | None = None
+    diagnosis: str | None = None
+    leg_recall: dict[str, float] = Field(default_factory=dict)
+    fusion_lift: float | None = None
+    note: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -85,6 +114,7 @@ class RunSummary(BaseModel):
     weighted_score: float | None = None
     llm_model: str | None = None
     dashboard_metrics: DashboardMetrics | None = None
+    retrieval_funnel: RetrievalFunnelOut | None = None
     # None = the metric was undefined for this run's data (e.g. citation metrics
     # with no gold passages). Distinct from the key being absent.
     metrics: dict[str, float | None] = Field(default_factory=dict)
@@ -113,6 +143,7 @@ class RunDetailResponse(BaseModel):
     duration_seconds: float | None = None
     metadata: dict = Field(default_factory=dict)
     dashboard_metrics: DashboardMetrics | None = None
+    retrieval_funnel: RetrievalFunnelOut | None = None
 
 
 class MetricSignificance(BaseModel):

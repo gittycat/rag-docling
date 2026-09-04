@@ -24,6 +24,7 @@ from api.schemas import (
     DashboardMetrics,
     ProgressInfo,
     QueuedJob,
+    RetrievalFunnelOut,
     RunDetailResponse,
     RunSummary,
 )
@@ -324,7 +325,8 @@ class JobManager:
     def run_to_summary(self, data: dict) -> RunSummary:
         tier = data.get("metadata", {}).get("tier", "")
         scorecard = data.get("scorecard") or {}
-        dm = compute_dashboard_metrics(scorecard, tier=tier)
+        funnel = data.get("retrieval_funnel")
+        dm = compute_dashboard_metrics(scorecard, tier=tier, funnel=funnel)
         ws = data.get("weighted_score", {})
         metrics = {m["name"]: m["value"] for m in scorecard.get("metrics", [])}
         groups = scorecard.get("by_group", {})
@@ -341,13 +343,15 @@ class JobManager:
             weighted_score=ws.get("score") if ws else None,
             llm_model=data.get("config", {}).get("llm_model"),
             dashboard_metrics=dm,
+            retrieval_funnel=RetrievalFunnelOut(**funnel) if funnel else None,
             metrics=metrics,
             groups=groups,
         )
 
     def run_to_detail(self, data: dict) -> RunDetailResponse:
         tier = data.get("metadata", {}).get("tier", "")
-        dm = compute_dashboard_metrics(data.get("scorecard"), tier=tier)
+        funnel = data.get("retrieval_funnel")
+        dm = compute_dashboard_metrics(data.get("scorecard"), tier=tier, funnel=funnel)
         ws = data.get("weighted_score", {})
         return RunDetailResponse(
             id=data["id"],
@@ -364,4 +368,5 @@ class JobManager:
             duration_seconds=_extract_duration(data),
             metadata=data.get("metadata", {}),
             dashboard_metrics=dm,
+            retrieval_funnel=RetrievalFunnelOut(**funnel) if funnel else None,
         )

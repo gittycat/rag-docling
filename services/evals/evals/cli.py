@@ -50,6 +50,7 @@ from evals.cache import (
 from evals.config import EvalConfig, DatasetName, EvalTier, DATASET_TIER_SUPPORT, MetricConfig, resolve_judge_config
 from evals.datasets.registry import list_datasets, get_dataset, clear_cache, CACHE_DIR
 from evals.export import export_for_review, export_run_report, export_scorecard
+from evals.funnel import FunnelStage, RetrievalFunnel, build_funnel
 from evals.experiment_store import ExperimentStore
 from evals.judges.llm_judge import warn_if_judge_not_independent
 from evals.runner import EvaluationRunner, run_evaluation, compute_pareto_frontier
@@ -688,7 +689,19 @@ def _run_from_dict(data: dict) -> EvalRun:
         ) if ws else None,
         question_count=data.get("question_count", 0),
         error_count=data.get("error_count", 0),
+        retrieval_funnel=_funnel_from_run(data, scorecard),
         metadata=data.get("metadata", {}),
+    )
+
+
+def _funnel_from_run(data: dict, scorecard: Scorecard) -> RetrievalFunnel:
+    """Prefer the saved funnel; re-derive for runs saved before it existed."""
+    saved = data.get("retrieval_funnel")
+    if not saved:
+        return build_funnel(scorecard)
+    return RetrievalFunnel(
+        stages=[FunnelStage(**stage) for stage in saved.get("stages", [])],
+        **{k: v for k, v in saved.items() if k != "stages"},
     )
 
 
@@ -1206,6 +1219,42 @@ def cmd_cache(args):
         sys.exit(1)
 
 
+# Reading order: the funnel first, because it is the only part of the report
+# that names what to go and change.
+def print_retrieval_funnel(funnel: RetrievalFunnel | None) -> None:
+    """Print the stage-by-stage recall and the one-line diagnosis."""
+    print("\n" + "-" * 40)
+    print("RETRIEVAL FUNNEL (recall@5 by pipeline stage)")
+
+    if funnel is None or not funnel.measured:
+        note = funnel.note if funnel else "No funnel computed for this run"
+        print(f"  n/a — {note}")
+        return
+
+    for stage in funnel.stages:
+        if stage.recall is None:
+            print(f"  {stage.name:<8} n/a")
+            continue
+        delta = f"{stage.delta:+.1%}".rjust(8) if stage.delta is not None else " " * 8
+        bar = "#" * round(stage.recall * 20)
+        n = f"n={stage.questions_scored}" if stage.questions_scored else ""
+        print(f"  {stage.name:<8} {stage.recall:>6.1%} {delta}  {bar:<20} {n}")
+
+    if funnel.fusion_lift is not None:
+        print(f"\n  Fusion lift over the better leg (nDCG@10): {funnel.fusion_lift:+.3f}")
+
+    print(
+        f"\n  Never retrieved:   {funnel.lost_before_candidates:>6.1%}  "
+        "(evidence absent from the candidate list)"
+    )
+    print(
+        f"  Dropped by rerank: {funnel.lost_in_rerank:>6.1%}  "
+        "(evidence retrieved, then ranked out)"
+    )
+    if funnel.diagnosis:
+        print(f"\n  → {funnel.diagnosis}")
+
+
 def print_run_summary(run: EvalRun):
     """Print a summary of an evaluation run."""
     print("\n" + "=" * 60)
@@ -1232,6 +1281,8 @@ def print_run_summary(run: EvalRun):
         for note in run.scorecard.notes:
             print(f"NOTE: {note}")
 
+    print_retrieval_funnel(run.retrieval_funnel)
+
     if run.scorecard:
         print("\n" + "-" * 40)
         print("Metrics by Group:")
@@ -1245,9 +1296,11 @@ def print_run_summary(run: EvalRun):
                     print(f"    {metric.name}: {metric.value:.3f}")
 
     if run.weighted_score:
+        # Kept for continuity with older runs, deliberately not the headline: the
+        # objectives it blends are in different units and its weights are a
+        # preference, not a measurement. Read the funnel and the groups above.
         print("\n" + "-" * 40)
-        print(f"WEIGHTED SCORE: {run.weighted_score.score:.3f}")
-        print("\nObjective contributions:")
+        print(f"Weighted score (aggregate, see docs): {run.weighted_score.score:.3f}")
         for obj, contrib in sorted(
             run.weighted_score.contributions.items(),
             key=lambda x: -x[1]

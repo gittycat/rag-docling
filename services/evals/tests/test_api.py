@@ -117,9 +117,13 @@ class TestTelemetryDerivation:
         assert dm.cost_model is None
 
     def test_retrieval_null_for_generation_tier(self):
+        # A generation-tier run retrieves nothing, so the funnel is absent rather
+        # than a zero that would read as total retrieval failure.
         scorecard = _scorecard(tier="generation", include_retrieval=False)
         dm = compute_dashboard_metrics(scorecard, tier="generation")
-        assert dm.retrieval_relevance is None
+        assert dm.retrieval_ceiling is None
+        assert dm.retrieval_final is None
+        assert dm.retrieval_bottleneck is None
 
     def test_claim_groundedness_is_a_dashboard_headline(self):
         dm = compute_dashboard_metrics(_scorecard(), tier="end_to_end")

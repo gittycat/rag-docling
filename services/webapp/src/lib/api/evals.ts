@@ -101,8 +101,36 @@ export interface ActiveEvalJob {
 	progress: ProgressInfo;
 }
 
+export interface FunnelStage {
+	name: string;
+	recall: number | null;
+	secondary: Record<string, number>;
+	questions_scored: number;
+	/** Recall change against this stage's real predecessor; null where it has none. */
+	delta: number | null;
+}
+
+export interface RetrievalFunnel {
+	stages: FunnelStage[];
+	/** Recall of the candidate list handed to the reranker. */
+	ceiling: number | null;
+	/** Recall of what the model actually saw. */
+	final: number | null;
+	lost_before_candidates: number | null;
+	lost_in_rerank: number | null;
+	bottleneck: 'ingestion' | 'rerank' | null;
+	diagnosis: string | null;
+	leg_recall: Record<string, number>;
+	fusion_lift: number | null;
+	note: string | null;
+}
+
 export interface EvalDashboardMetrics {
-	retrieval_relevance: number | null;
+	/** The funnel's two ends. Replaced a single blended "relevance" score, which
+	 * averaged a set metric with a rank metric and so could not be acted on. */
+	retrieval_ceiling: number | null;
+	retrieval_final: number | null;
+	retrieval_bottleneck: string | null;
 	faithfulness: number | null;
 	answer_correctness: number | null;
 	// Not measured anywhere yet — always null until a completeness metric exists.
@@ -133,6 +161,7 @@ export interface EvalRunSummary {
 	weighted_score: number | null;
 	llm_model: string | null;
 	dashboard_metrics: EvalDashboardMetrics | null;
+	retrieval_funnel: RetrievalFunnel | null;
 	// null = the metric was undefined for this run's data (e.g. citation metrics
 	// with no gold passages). Never render it as 0.
 	metrics: Record<string, number | null>;
@@ -205,6 +234,7 @@ export interface EvalRunDetail {
 	duration_seconds: number | null;
 	metadata: EvalRunMetadata;
 	dashboard_metrics: EvalDashboardMetrics | null;
+	retrieval_funnel: RetrievalFunnel | null;
 }
 
 export interface MetricSignificance {

@@ -188,6 +188,7 @@ class EvalRun:
         datasets: Names of datasets used
         scorecard: Complete metric scorecard
         weighted_score: Overall weighted score
+        retrieval_funnel: Stage-by-stage retrieval recall and its diagnosis
         question_count: Total questions evaluated
         error_count: Number of questions that errored
         metadata: Additional run metadata
@@ -200,6 +201,9 @@ class EvalRun:
     datasets: list[str] = field(default_factory=list)
     scorecard: Scorecard | None = None
     weighted_score: WeightedScore | None = None
+    # Typed as Any to keep this schema module free of a dependency on evals.funnel,
+    # which imports nothing from here. Holds a RetrievalFunnel.
+    retrieval_funnel: Any = None
     completed_at: datetime | None = None
     question_count: int = 0
     error_count: int = 0

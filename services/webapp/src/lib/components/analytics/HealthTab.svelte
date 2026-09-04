@@ -15,13 +15,13 @@
 		type BandedMetric,
 		type Health
 	} from '$lib/utils/stageHealth';
-	import { getMetricThreshold, deltaColorClass } from '$lib/utils/thresholds';
-	import { formatDelta, metricLabel, metricDescription, panelDescription } from '$lib/utils/metricInfo';
+	import { deltaColorClass } from '$lib/utils/thresholds';
+	import { formatDelta, metricLabel, metricDescription } from '$lib/utils/metricInfo';
 	import StatPanel from './StatPanel.svelte';
 	import LatencyPanel from './LatencyPanel.svelte';
 	import MetricBreakdown from './MetricBreakdown.svelte';
 	import ConfigContext from './ConfigContext.svelte';
-	import WeightedScoreBreakdown from './WeightedScoreBreakdown.svelte';
+	import RetrievalFunnel from './RetrievalFunnel.svelte';
 
 	interface Props {
 		metrics: SystemMetrics;
@@ -85,20 +85,18 @@
 
 	// ---- Stat panel values ---------------------------------------------------
 
-	function band(name: string, value: number | null | undefined): Health {
-		if (value == null) return 'unknown';
-		const t = getMetricThreshold(name);
-		if (t.direction === 'higher') {
-			if (value >= t.good) return 'good';
-			if (value >= t.warn) return 'warn';
-			return 'bad';
-		}
-		return 'unknown';
-	}
-
-	let weightedScore = $derived(detail?.weighted_score?.score ?? null);
-	let weightedDelta = $derived(
-		weightedScore != null && prev?.weighted_score != null ? weightedScore - prev.weighted_score : null
+	let funnel = $derived(detail?.retrieval_funnel ?? null);
+	let funnelDelta = $derived(
+		funnel?.final != null && prev?.retrieval_funnel?.final != null
+			? funnel.final - prev.retrieval_funnel.final
+			: null
+	);
+	const BOTTLENECK_LABEL: Record<string, string> = {
+		ingestion: 'Ingestion',
+		rerank: 'Reranker'
+	};
+	let bottleneckLabel = $derived(
+		funnel?.final == null ? '—' : (BOTTLENECK_LABEL[funnel.bottleneck ?? ''] ?? 'None')
 	);
 
 	let cost = $derived(detail?.dashboard_metrics?.avg_cost_usd ?? null);
@@ -163,25 +161,28 @@
 	<!-- Stat panels: most-critical top-left. Rendered even with no data (values '—'). -->
 	<div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2">
 		<StatPanel
-			label="Weighted score"
-			tip={panelDescription('weighted_score')}
-			value={pct(weightedScore)}
-			health={band('weighted_score', weightedScore)}
-			showBadge
-			emphasis
-			delta={weightedDelta != null ? `${formatDelta(weightedDelta, 'pts')} vs prev` : null}
-			deltaClass={deltaColorClass('weighted_score', weightedDelta)}
-		/>
-
-		<StatPanel
-			label="Retrieval"
-			value={retrievalDriver ? pct(retrievalDriver.metric.value) : '—'}
+			label="Retrieval recall"
+			tip="Recall@5 of what the model actually saw — the last stage of the retrieval funnel. Nothing downstream can answer from evidence that never got here."
+			value={pct(funnel?.final ?? null)}
 			health={bracketHealth.retrieval.health}
 			showBadge
-			delta={retrievalDriver && driverDelta(retrievalDriver) != null
-				? `${formatDelta(driverDelta(retrievalDriver)!, 'pts')} vs prev`
-				: null}
-			deltaClass={retrievalDriver ? deltaColorClass(retrievalDriver.metric.name, driverDelta(retrievalDriver)) : ''}
+			emphasis
+			delta={funnelDelta != null ? `${formatDelta(funnelDelta, 'pts')} vs prev` : null}
+			deltaClass={deltaColorClass('recall_at_5', funnelDelta)}
+		>
+			{#if funnel?.ceiling != null}
+				<div class="text-[10px] font-mono text-base-content/50">
+					ceiling {pct(funnel.ceiling)}
+				</div>
+			{/if}
+		</StatPanel>
+
+		<StatPanel
+			label="Retrieval bottleneck"
+			tip="Which half of the system is losing the evidence: ingestion (it was never retrieved) or the reranker (it was retrieved, then ranked out)."
+			value={bottleneckLabel}
+			health={funnel?.bottleneck ? 'warn' : funnel?.final != null ? 'good' : 'unknown'}
+			showBadge
 		>
 			{#if retrievalDriver}
 				<div class="text-[10px] font-mono text-base-content/50">weakest: {metricLabel(retrievalDriver.metric.name)}</div>
@@ -220,8 +221,8 @@
 		/>
 	</div>
 
-	<!-- How the headline number was reached -->
-	<WeightedScoreBreakdown weighted={detail?.weighted_score} />
+	<!-- Where the evidence was lost: the diagnostic that names what to change -->
+	<RetrievalFunnel {funnel} />
 
 	<!-- Config context: what is being measured (system config exists even with no runs) -->
 	<ConfigContext config={detail?.config ?? {}} {metrics} {modelsInfo} />

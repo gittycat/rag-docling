@@ -28,6 +28,7 @@ from evals.config import (
     DEFAULT_WEIGHTS,
 )
 from evals.datasets.registry import get_dataset, load_datasets
+from evals.funnel import build_funnel
 from evals.judges.llm_judge import LLMJudge, warn_if_judge_not_independent
 from evals.pricing import UsageTotals
 from evals.cache import ResponseCache, config_fingerprint
@@ -793,6 +794,10 @@ class EvaluationRunner:
 
         # Compute weighted score
         weighted_score = self._compute_weighted_score(scorecard)
+        # The funnel is derived, not measured: it re-reads the per-stage scores the
+        # ranking metrics already computed. Building it here means every saved run
+        # carries it, so the dashboard and `compare` never re-derive it differently.
+        retrieval_funnel = build_funnel(scorecard)
         attributions = self._attribute_questions(all_questions, all_responses, scorecard)
         _report("saving")
 
@@ -805,6 +810,7 @@ class EvaluationRunner:
             datasets=[ds.value for ds in self.config.datasets],
             scorecard=scorecard,
             weighted_score=weighted_score,
+            retrieval_funnel=retrieval_funnel,
             question_count=len(all_questions) + error_count,
             error_count=error_count,
             metadata={
@@ -1512,6 +1518,7 @@ class EvaluationRunner:
                 "contributions": run.weighted_score.contributions,
                 "objectives": run.weighted_score.objectives,
             } if run.weighted_score else None,
+            "retrieval_funnel": run.retrieval_funnel.to_dict() if run.retrieval_funnel else None,
             "question_count": run.question_count,
             "error_count": run.error_count,
             "duration_seconds": run.duration_seconds,

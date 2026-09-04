@@ -467,6 +467,73 @@ actually received, which is a real engine change, not an attribution fix.
 
 ---
 
+### 2.11 ★ The headline numbers were composites nobody could act on
+**What.** The dashboard led with `weighted_score` — accuracy, faithfulness,
+citation, retrieval, cost and latency blended by configured weights — and with a
+`retrieval_relevance` tile computed as `avg(recall_at_5, mrr)`. Meanwhile the
+per-stage retrieval scores that *do* name a cause were computed on every run and
+left unread in `MetricResult.details["stage_scores"]`.
+**Why it matters.** Neither composite is a quantity. `avg(recall_at_5, mrr)`
+averages a set metric with a rank metric in different units; the weighted score
+additionally averages `recall@1`, `recall@5`, `mrr` and `nDCG@10` into one
+"retrieval" objective and then weights that against an LLM-judge score. Both can
+move without anything having improved and improve without moving, so neither can
+end an argument about whether a change helped. With 33 metrics computed and no
+headline that names a cause, the run report could not answer the only question a
+tuning loop asks: *did retrieval get better, and where is it still losing?*
+**Fix.** Promote the per-stage scores into a first-class **retrieval funnel** and
+lead with it; drop the composites from the surfaces people read.
+**Effort.** M.
+**Where.** `services/evals/evals/funnel.py` (new),
+`services/evals/api/dashboard.py`, `services/evals/evals/cli.py`,
+`services/webapp/src/lib/components/analytics/RetrievalFunnel.svelte` (new).
+**Status.** ✅ Done — 2026-09-04.
+
+**✅ FIXED (2026-09-04).** `evals/funnel.py` derives a `RetrievalFunnel` from the
+scores the ranking metrics already compute — recall@5 at bm25, vector, fusion and
+rerank — and splits total retrieval loss into the only two kinds that exist:
+
+- `lost_before_candidates` (`1 - ceiling`) — evidence never reached the candidate
+  list, so reranking could not have helped. Upstream: chunking, embeddings, the
+  BM25/vector balance, `top_k`.
+- `lost_in_rerank` (`ceiling - final`) — evidence was retrieved and then ranked
+  out. The reranker or `final_top_n`.
+
+They point at opposite halves of the system, which is the entire reason for
+splitting them. The larger one is named as the bottleneck with a one-line action;
+under a 5% combined loss the diagnosis says the question set can no longer tell
+configurations apart, rather than inventing work.
+
+Deliberate choices worth keeping: recall is the funnel measure because it asks
+"is the evidence here at all", the only question each stage can answer strictly
+worse than the last — nDCG can rise at rerank while recall falls. `lost_in_rerank`
+is clamped at zero because reranking reorders candidates and cannot add any, so a
+negative is stage-population noise, not a gain. BM25 and vector carry no delta:
+they run in parallel, so neither is the other's predecessor; fusion is judged
+against the better leg and rerank against the candidate list it was handed. A
+generation-tier run, or one whose questions carry no resolvable gold, reports an
+unmeasured funnel with the reason — never a zero, which would read as total
+retrieval failure.
+
+The funnel is built once in the runner and saved on the run, so the CLI report,
+the API and the dashboard cannot derive it differently; runs saved before it
+existed are re-derived on read. `just eval` prints it above the metric dump.
+`retrieval_relevance` is deleted; `DashboardMetrics` now carries
+`retrieval_ceiling`, `retrieval_final` and `retrieval_bottleneck`.
+Covered by `tests/test_funnel.py`.
+
+**Not done — the `weighted_score` backend remains.** The dashboard panel and
+breakdown component are gone and the CLI no longer headlines it, but the field is
+still computed in `runner._compute_weighted_score`, saved on every run, and read
+by `api/routes.py` (comparison deltas), `experiment_store`, `export.py`, the
+Experiments-tab sparkline and `utils/export.ts`. Removing it properly means
+deciding what `compute_pareto_frontier` ranges over, since it consumes
+`weighted_score.objectives`. The honest replacement is a Pareto frontier over
+*chosen* axes — final recall, faithfulness, cost, latency — rather than over
+averaged buckets, which is a design change, not a deletion. Until then the field
+is retained for continuity with existing runs and documented as not-a-headline in
+`docs/guide/09-reading-the-dashboard.md`. Tracked here rather than half-removed.
+
 ## 3. Configuration
 
 ### 3.1 ★ Chunk size and overlap are not configurable

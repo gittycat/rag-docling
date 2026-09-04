@@ -313,7 +313,50 @@ succeeded. Genuine `0.0` scores are still possible and are a distinct case — n
 context retrieved (`faithfulness`) or no expected answer defined
 (`answer_correctness`) both legitimately score `0.0` rather than being excluded.
 
+## Retrieval funnel
+
+`evals/funnel.py` derives the funnel from scores the ranking metrics already
+compute. `_RankingMetric.compute_batch` scores each pipeline stage separately —
+`bm25`, `vector`, `fusion`, `rerank` — against the same resolved relevant set, and
+leaves the results in `MetricResult.details["stage_scores"]`, keyed
+`recall_at_5{leg=bm25}`. `build_funnel` inverts that into a per-stage table and
+reduces it to the two numbers a retrieval change is judged on:
+
+| Field | Meaning |
+|---|---|
+| `ceiling` | Recall@5 of the candidate list handed to the reranker (`fusion`, or the better single leg) |
+| `final` | Recall@5 of the last stage — what the model actually saw |
+| `lost_before_candidates` | `1 - ceiling`: evidence never retrieved. Upstream of the reranker |
+| `lost_in_rerank` | `ceiling - final`: evidence retrieved, then ranked out |
+| `bottleneck` | Whichever loss is larger, or `None` under a 5% combined loss |
+
+Recall is the funnel measure because it asks "is the evidence present", the one
+question each stage can only answer worse than the last; a rank metric like nDCG
+can legitimately rise at rerank while recall falls, which would make the funnel
+non-monotonic and unreadable. `lost_in_rerank` is clamped at zero — reranking
+reorders candidates and cannot introduce new ones, so a negative value is noise
+between stage populations rather than a gain.
+
+Stage deltas follow the real pipeline topology, not the display order: `bm25` and
+`vector` run in parallel over the same query and so carry no delta against each
+other, `fusion` is scored against the better leg, and `rerank` against the
+candidate list it was given.
+
+The funnel is built once in `runner.run()` and saved on the run, so the CLI
+report, the eval API and the dashboard cannot derive it differently. Runs saved
+before the funnel existed are re-derived on read (`_funnel_from_run` in the CLI,
+`compute_dashboard_metrics` in the API). A run with no per-stage scores — a
+generation tier run, or questions with no resolvable gold evidence — yields an
+unmeasured funnel carrying the reason, never a zero.
+
 ## Weighted score
+
+> Retained for continuity with existing runs, and **not** a headline. Its
+> retrieval objective averages `recall@1`, `recall@5`, `mrr` and `nDCG@10` — a set
+> metric and rank metrics in different units — and then weights the result against
+> an LLM-judge score, so it can move without anything improving. Read the
+> retrieval funnel and the per-group metrics instead. See `docs/suggestions.md`
+> §2.11 for what removing it properly requires.
 
 A single weighted score combines metric groups using objective weights read from
 `eval.scoring` in the repo-root `config.yml`: accuracy 0.30, faithfulness 0.20,
