@@ -76,6 +76,8 @@ ordering dependency in `routes.py`, not incidental.
 `id`, `name`, `created_at`, `completed_at`, `tier`, `datasets`,
 `question_count`, `error_count`, `duration_seconds`, `weighted_score` (bare
 float or `null`), `llm_model`, `dashboard_metrics` (`DashboardMetrics | null`),
+`retrieval_funnel` (`RetrievalFunnel | null` — the per-stage recall table plus
+ceiling, final, the two losses and the bottleneck),
 `metrics` (`dict[metric_name, value]` flattened from the scorecard), `groups`
 (`dict[group_name, list[metric_name]]`).
 
@@ -106,9 +108,13 @@ is missing or unparsable, it is `null`.
 ### `DashboardMetrics` (nested in both `RunSummary` and `RunDetailResponse`)
 
 Computed by `compute_dashboard_metrics()` in `api/dashboard.py` from the raw
-scorecard, not stored separately: `retrieval_relevance` (average of
-`recall_at_5` and `mrr`; always `null` for `tier="generation"` runs, since
-retrieval isn't scored in that tier), `faithfulness`, `answer_completeness`
+scorecard, not stored separately: `retrieval_ceiling` and `retrieval_final`
+(the two ends of the retrieval funnel — recall@5 of the candidate list, and of
+what the model actually saw), `retrieval_bottleneck` (`"ingestion"`, `"rerank"`
+or `null`). All three are `null` for `tier="generation"` runs, which retrieve
+nothing, and for runs whose questions carry no resolvable gold evidence — `null`
+rather than `0.0`, which would read as total retrieval failure. Then
+`faithfulness`, `answer_completeness`
 (from the `answer_correctness` metric), `answer_relevance` (from
 `answer_relevancy`), `latency_p50_seconds`/`latency_p95_seconds`/
 `latency_avg_seconds` (converted from the scorecard's millisecond values),

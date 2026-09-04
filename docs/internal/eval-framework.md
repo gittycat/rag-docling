@@ -145,9 +145,10 @@ anything. A citation naming a source index that was never retrieved is counted i
 judge against. A failed judge call drops that pair, never scores it 0.0.
 
 **Weighted score.** `groundedness` is its own objective, weighted `0.0` in
-`config.yml`, so the metrics are reported without moving the headline number.
+`config.yml`, so the metrics are reported without moving the weighted score.
 Folding them into `citation` or `faithfulness` would silently redefine what those
-objectives measure and make every past run's headline incomparable to a new one.
+objectives measure and make every past run's weighted score incomparable to a new
+one.
 Raising the weight is an operator decision and is itself a scoring change.
 
 ### `None` is not `0.0`
@@ -364,7 +365,7 @@ citation 0.20, retrieval 0.15, cost 0.10, latency 0.05 by default. The latency a
 cost normalization thresholds live there too
 (`latency_threshold_ms_generation` / `latency_threshold_ms_end_to_end`,
 `max_cost_per_query_usd`) — they used to be constants in the runner, so a
-latency-sensitive deployment could not change what the headline number rewarded
+latency-sensitive deployment could not change what the weighted score rewarded
 without editing code. `ScoringConfig.from_models_config()` reads them, falling
 back to the module constants when the config is unavailable. The resolved values
 are recorded in each run's `metadata.scoring`, so an old run stays interpretable

@@ -534,6 +534,59 @@ averaged buckets, which is a design change, not a deletion. Until then the field
 is retained for continuity with existing runs and documented as not-a-headline in
 `docs/guide/09-reading-the-dashboard.md`. Tracked here rather than half-removed.
 
+### 2.12 ★ Gold evidence can only be authored by hand, so own-corpus retrieval is unmeasured
+**What.** The *resolution* side of source-coordinate evidence is complete and well
+tested — `evidence.py` resolves an evidence record to chunk ids by structural
+coordinate plus text containment, survives re-chunking, and fails closed with a
+`lineage_failure` rather than a fabricated score. The *authoring* side does not
+exist. To add one gold question an annotator must open the source file, count
+`start_char`/`end_char` by hand (or read Docling's `page`/`bbox`/`element_id`
+output, including its bottom-left coordinate origin), compute the sha256 of the
+exact bytes that will be uploaded, and hand-write the JSON `evidence` block.
+No CLI subcommand helps: `eval`, `calibrate`, `cache`, `stats`, `datasets`,
+`export`, `compare`, `contextual` and `failures` are the complete list.
+**Why it matters.** This is the binding constraint on measuring retrieval against
+a real corpus, and therefore on the retrieval funnel (§2.11) being useful for
+anything but public benchmarks. The shipped `golden_qa.json` shows the cost
+directly: 12 questions over 5 documents, of which exactly **2** carry `evidence`
+(`freedonia_facts.txt`, `sylvania_report.pdf`) and **none** carry `gold_passages`.
+The other 10 — every one of the Paul Graham HTML essays — have no retrieval ground
+truth at all, so recall, precision, MRR, nDCG, the citation group and the whole
+funnel are `None` for them. The annotated pair exists to prove the machinery
+works, not to measure anything. Meanwhile the public datasets that *do* carry
+annotations ship roughly five documents per question, so they measure
+needle-in-a-small-haystack: they cannot show recall decay at corpus scale,
+near-duplicate confusion, or chunk-boundary loss, which are the failures that
+actually bite a deployment.
+**Fix.** An authoring path, roughly in value order:
+1. `evals annotate <file>` — run the same parse the ingester runs, print each
+   element with its locator (`element_path` + char range for text/HTML, `page` +
+   `bbox` + `element_id` for Docling formats) so a human picks a coordinate
+   instead of counting one. This is the piece that removes the most manual work.
+2. `evals validate-gold` — run `_parse_evidence`, `_locator_is_usable` and
+   `derive_relevant_chunk_ids` against a live-ingested copy and report whether a
+   new entry actually resolves. Today the only way to find out is to run a full
+   end-to-end eval and read `orphaned_evidence_rate`.
+3. A `document_hash` helper, so nobody shells out to `sha256sum` against the
+   wrong bytes.
+4. Widen the corpus directory: `golden.py` resolves basenames against the single
+   hardcoded `evals/data/documents/`, no subdirectories, and every
+   evidence-bearing file is uploaded whole on every run — both need revisiting
+   before a real corpus goes in.
+**Constraint any design must respect.** `document_hash` is the sha256 of the exact
+uploaded bytes, so evidence can only be authored against files ingested via
+`upload_file_as_document`; the synthesized-text path used for plain
+`gold_passages` produces a blob whose hash relates to no original document. Any
+edit to a source file — whitespace included — invalidates every locator pointing
+at it. And locators must be authored against the file on disk, never derived from
+an ingested chunk's boundaries, or the gold silently re-anchors to today's
+chunking instead of to the document.
+**Effort.** M for (1)+(3), S for (2), M for (4).
+**Where.** `services/evals/evals/cli.py`, `evals/datasets/golden.py`,
+`evals/evidence.py`, `services/rag_server/pipelines/ingestion.py` (read-only —
+the locator shapes must match what it emits).
+**Status.** Open — scoped 2026-09-04, not started.
+
 ## 3. Configuration
 
 ### 3.1 ★ Chunk size and overlap are not configurable

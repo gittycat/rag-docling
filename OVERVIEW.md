@@ -33,7 +33,7 @@ Retrieval-Augmented Generation (RAG) has become the most common way enterprises 
 
 ### 📊 Observability & Evaluation
 - **Built-in evaluation service** — a standalone API that runs automated quality assessments against multiple datasets (RAGBench, SQuAD 2.0, QASPER, HotpotQA, MS MARCO) plus your own golden Q&A.
-- **Five headline metrics** — Retrieval Relevance, Faithfulness, Answer Completeness, Answer Relevance, and Response Latency, distilled for at-a-glance dashboards.
+- **Five headline metrics** — Retrieval Recall, Faithfulness, Answer Completeness, Answer Relevance, and Response Latency, distilled for at-a-glance dashboards. Retrieval recall comes with a funnel that names *which* pipeline stage lost the evidence, so a bad number points at the thing to change.
 - **LLM-as-judge scoring** — a configurable judge model (OpenAI or Anthropic, selected by `active.eval`) scores faithfulness, answer correctness, and answer relevancy. Retrieval, citation, and abstention metrics are computed without a judge, so they are deterministic and free.
 - **Run comparison & trends** — compare configurations side-by-side to find the best model/setting mix for your data and cost constraints. See [the tuning workflow](docs/guide/06-tuning-workflow.md) for how to tell a real difference from noise.
 

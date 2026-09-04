@@ -48,7 +48,7 @@ Measures how accurately the system cites its sources.
 
 Claim-level grounding and claim-to-citation entailment. Where the citation group asks whether a cited chunk is one of the gold passages, this asks whether that chunk entails the sentence citing it — a citation can pass the first test and fail this one. Sentence-level claims are segmented deterministically (`evals/claims.py`), including the inline `[1]` markers attached to each claim.
 
-Runs by default: it costs one judge call per claim plus one per claim-citation link, against three per question for the whole generation group. The groundedness scoring weight remains 0.0, so collecting the extra signal does not change the headline score. Capped at 5 claims/answer and 2 citations/claim, with truncation reported per question.
+Runs by default: it costs one judge call per claim plus one per claim-citation link, against three per question for the whole generation group. The groundedness scoring weight remains 0.0, so collecting the extra signal does not change the weighted score. Capped at 5 claims/answer and 2 citations/claim, with truncation reported per question.
 
 The two citation-link metrics need `eval.citation_scope: explicit` in `config.yml`; under the default `retrieved` the model is never asked for markers and they report `n/a`.
 
@@ -82,12 +82,34 @@ Operational metrics. Not factored into accuracy scoring.
 | `latency_p95` | 95th percentile query latency | milliseconds |
 | `cost_per_query` | Dollar cost from token usage — generation plus judging, each priced at its own model's rates | USD |
 
+### Retrieval funnel
+
+The headline retrieval artifact, built by `evals/funnel.py` from the per-stage scores the
+ranking metrics already compute (`MetricResult.details["stage_scores"]`). It reports recall@5
+at each stage — `bm25`, `vector`, `fusion`, `rerank` — and splits total retrieval loss into the
+only two kinds there are:
+
+| Field | Meaning | Points at |
+|---|---|---|
+| `lost_before_candidates` | `1 - ceiling`: evidence never reached the candidate list | chunking, embeddings, BM25/vector balance, `top_k` |
+| `lost_in_rerank` | `ceiling - final`: evidence retrieved, then ranked out | the reranker, `final_top_n` |
+
+`bottleneck` names whichever is larger, or `None` when their sum is under 5% — at which point
+the question set can no longer tell configurations apart. Built once in the runner and saved on
+the run, so the CLI report, the eval API and the dashboard cannot derive it differently. A run
+with no per-stage scores yields an unmeasured funnel carrying the reason, never a zero.
+
 ### Weighted Scoring
+
+> Retained for continuity with existing runs and **not** a headline — its retrieval objective
+> averages `recall@1`, `recall@5`, `mrr` and `nDCG@10`, metrics in different units, then weights
+> the result against an LLM-judge score. Read the funnel and the per-group metrics instead.
+> `docs/suggestions.md` §2.11 records what removing it properly requires.
 
 All metric groups (except performance) are combined into a single weighted score. The weights
 and the latency/cost normalization thresholds live under `eval.scoring` in the repo-root
-`config.yml` — a deployment with a different latency or cost profile changes what the headline
-number rewards there, not in code.
+`config.yml` — a deployment with a different latency or cost profile changes what the weighted
+score rewards there, not in code.
 
 | Objective | Default Weight | Fed by |
 |---|---|---|
@@ -194,7 +216,7 @@ When you run an evaluation, the runner performs these steps:
                           (embed query → hybrid retrieval → rerank → LLM generation)
                           → measure latency, parse response
 5. Compute metrics      Run all metric classes against question/response pairs
-6. Score                Compute weighted score across objectives
+6. Score                Build the retrieval funnel; compute the weighted score
 7. Save                 Write run results as JSON to data/eval_runs/, a copy to
                         data/eval_runs/backup/, and the per-question samples to
                         data/eval_runs/{run}_samples.json (used by the review exports)
@@ -224,6 +246,7 @@ evals/
 ├── cli.py                   CLI commands: eval, stats, datasets, export, compare, calibrate
 ├── config.py                EvalConfig, DatasetName enum, model cost table, weights
 ├── runner.py                EvaluationRunner + RAGClient (HTTP client to RAG server)
+├── funnel.py                Retrieval funnel: per-stage recall, the two losses, the bottleneck
 ├── calibration.py           Judge calibration vs RAGBench TRACe ground-truth labels
 ├── export.py                Export results to JSON/CSV/Markdown for manual review
 ├── samples.py               Per-question sample sidecar (save/load)
@@ -299,6 +322,20 @@ Results are saved to `data/eval_runs/{run_id}_{timestamp}.json` with this struct
       "retrieval": ["recall_at_1", "recall_at_3", "recall_at_5", "precision_at_5", "mrr", "ndcg_at_10"],
       "generation": ["faithfulness", "answer_correctness", "answer_relevancy"]
     }
+  },
+  "retrieval_funnel": {
+    "stages": [
+      {"name": "bm25",   "recall": 0.55, "delta": null, "questions_scored": 40},
+      {"name": "vector", "recall": 0.72, "delta": null, "questions_scored": 40},
+      {"name": "fusion", "recall": 0.81, "delta": 0.09, "questions_scored": 40},
+      {"name": "rerank", "recall": 0.54, "delta": -0.27, "questions_scored": 40}
+    ],
+    "ceiling": 0.81,
+    "final": 0.54,
+    "lost_before_candidates": 0.19,
+    "lost_in_rerank": 0.27,
+    "bottleneck": "rerank",
+    "diagnosis": "The candidate list contains the evidence 81% of the time, but only 54% survives reranking..."
   },
   "weighted_score": {
     "score": 0.73,

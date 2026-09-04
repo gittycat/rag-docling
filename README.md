@@ -221,7 +221,7 @@ Quality (accuracy, groundedness, relevance) and operations (cost, latency) are
 both measured. The built-in evaluation service runs automated assessments against
 public datasets and your own golden Q&A, distilled into five dashboard metrics:
 
-- **Retrieval Relevance** — are we finding the right content?
+- **Retrieval Recall** — did the evidence reach the model, and if not, where was it lost?
 - **Faithfulness** — is the answer grounded in retrieved context?
 - **Answer Completeness** — does it cover all key points?
 - **Answer Relevance** — does it address the question asked?
